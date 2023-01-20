@@ -1,0 +1,45 @@
+cc_library_shared {
+    name: "uwb_uci.helios",
+    defaults: [
+        "hidl_defaults",
+    ],
+    proprietary: true,
+    srcs: [
+        "halimpl/fwd/sr1xx/*.cc",
+        "halimpl/inc/common/*.cc",
+        "halimpl/hal/*.cc",
+        "halimpl/log/*.cc",
+        "halimpl/tml/*.cc",
+        "halimpl/utils/*.cc",
+    ],
+    shared_libs: [
+        "android.hardware.uwb-V1-ndk",
+        "libcutils",
+        "liblog",
+        "libhardware",
+        "libbase",
+        "libchrome",
+        "libutils",
+        "libdl",
+        "libhidlbase"
+    ],
+    local_include_dirs: [
+        "halimpl/fwd/sr1xx",
+        "halimpl/inc",
+        "halimpl/inc/common",
+        "halimpl/hal",
+        "halimpl/log",
+        "halimpl/tml",
+        "halimpl/utils",
+        "extns/inc",
+    ],
+
+    cflags: [
+        "-DGENERIC",
+        "-DSOC_DEFAULT",
+        "-DBUILDCFG=1",
+        "-Wno-deprecated-register",
+        "-Wno-unused-parameter",
+        "-Wno-missing-field-initializers",
+    ],
+}
