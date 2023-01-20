@@ -1,0 +1,52 @@
+cc_binary {
+    name: "android.hardware.uwb-service.nxp",
+    relative_install_path: "hw",
+    init_rc: ["nxp-uwb-service.rc"],
+    vintf_fragments: ["nxp-uwb-service.xml"],
+    vendor: true,
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-g",
+    ],
+    shared_libs: [
+        "uwb_uci.helios",
+        "liblog",
+        "libbinder_ndk",
+    ],
+    static_libs: [
+        "libbase",
+        "libutils",
+        "android.hardware.uwb-V1-ndk",
+        "libnxpuwbexampleimpl",
+    ],
+    srcs: [
+        "service.cpp",
+    ],
+}
+cc_library_static {
+    name: "libnxpuwbexampleimpl",
+    vendor: true,
+    shared_libs: [
+        "liblog",
+        "libbinder_ndk",
+    ],
+    static_libs: [
+        "libbase",
+        "libutils",
+        "android.hardware.uwb-V1-ndk",
+    ],
+    srcs: [
+        "uwb.cpp",
+        "uwb_chip.cpp",
+    ],
+    include_dirs: [
+        "hardware/nxp/uwb/extns/inc",
+        "hardware/nxp/uwb/halimpl/inc",
+    ],
+    cflags: [
+        "-Wall",
+        "-Wextra",
+        "-g",
+    ],
+}
