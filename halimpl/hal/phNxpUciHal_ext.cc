@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2020,2022 NXP
+ * Copyright 2012-2019, 2022-2023 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -167,6 +167,10 @@ tHAL_UWB_STATUS phNxpUciHal_write_ext(uint16_t* cmd_len, uint8_t* p_cmd_data,
 tHAL_UWB_STATUS phNxpUciHal_send_ext_cmd(uint16_t cmd_len, const uint8_t* p_cmd) {
   tHAL_UWB_STATUS status;
 
+  if (cmd_len >= UCI_MAX_DATA_LEN) {
+    status = UWBSTATUS_FAILED;
+    return status;
+  }
   HAL_ENABLE_EXT();
   nxpucihal_ctrl.cmd_len = cmd_len;
   memcpy(nxpucihal_ctrl.p_cmd_data, p_cmd, cmd_len);
