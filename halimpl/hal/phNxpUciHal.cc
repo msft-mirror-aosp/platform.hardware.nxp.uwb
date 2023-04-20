@@ -329,10 +329,13 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback,
   if (uwb_dev_node == NULL) {
       NXPLOG_UCIHAL_E("malloc of uwb_dev_node failed ");
       goto clean_and_return;
-    } else {
-      NXPLOG_UCIHAL_E("Assinging the default helios Node: dev/srxxx");
-      strcpy(uwb_dev_node, "/dev/srxxx");
-    }
+  }
+
+  if (!GetNxpConfigStrValue(NAME_NXP_UWB_DEVICE_NODE, uwb_dev_node, max_len)) {
+    strcpy(uwb_dev_node, "/dev/srxxx");
+  }
+  NXPLOG_UCIHAL_E("Assigning the helios Node: %s", uwb_dev_node);
+
   /* By default HAL status is HAL_STATUS_OPEN */
   nxpucihal_ctrl.halStatus = HAL_STATUS_OPEN;
 
