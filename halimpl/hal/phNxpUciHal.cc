@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019, 2022 NXP
+ * Copyright 2012-2019, 2022-2023 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -79,6 +79,7 @@ static void phNxpUciHal_print_response_status(uint8_t *p_rx_data,
  *******************************************************************************/
 bool get_input_map(const uint8_t* i_data, uint16_t iData_len) {
   vector<uint16_t> input_vec;
+  bool ret = true;
   uint16_t i = 0, j = 0, tag = 0, len = 0;
   i = UCI_PKT_HDR_LEN + UCI_PKT_PAYLOAD_STATUS_LEN + UCI_PKT_NUM_CAPS_LEN;
   if (i_data == NULL) {
@@ -86,20 +87,36 @@ bool get_input_map(const uint8_t* i_data, uint16_t iData_len) {
     return false;
   }
   while (i < iData_len) {
+    if (i + 1 >= iData_len) {
+      ret = false;
+      break;
+    }
     tag = i_data[i++];
     // Tag IDs from 0xE0 to 0xE2 are extended tag IDs with 2 bytes length.
     if((tag >= 0xE0) && (tag <= 0xE2)) {
+       if (i + 1 >= iData_len) {
+        ret = false;
+        break;
+       }
       tag = (tag << 8) | i_data[i++];
+    }
+    if (i + 1 >= iData_len) {
+      ret = false;
+      break;
     }
     len = i_data[i++];
     input_vec.insert(input_vec.begin(), len);
+    if (i + len > iData_len) {
+      ret = false;
+      break;
+    }
     for (j = 1; j <= len; j++) {
       input_vec.insert(input_vec.begin() + j, i_data[i++]);
     }
     input_map[tag] = input_vec;
     input_vec.clear();
   }
-  return true;
+  return ret;
 }
 
 /*******************************************************************************
@@ -113,26 +130,43 @@ bool get_input_map(const uint8_t* i_data, uint16_t iData_len) {
  *******************************************************************************/
 bool get_conf_map(uint8_t* c_data, uint16_t cData_len) {
   vector<uint16_t> conf_vec;
+  bool ret = true;
   uint16_t i = 0, j = 0, tag = 0, len = 0;
   if (c_data == NULL) {
     NXPLOG_UCIHAL_D("Country code conf map creation failed, c_data is NULL" );
     return false;
   }
   while (i < cData_len) {
+    if (i + 1 >= cData_len) {
+      ret = false;
+      break;
+    }
     tag = c_data[i++];
     // Tag IDs from 0xE0 to 0xE2 are extended tag IDs with 2 bytes length.
     if ((tag >= 0xE0) && (tag <= 0xE2)) {
+      if (i + 1 >= cData_len) {
+        ret = false;
+        break;
+      }
       tag = (tag<<8) | c_data[i++];
+    }
+    if (i + 1 >= cData_len) {
+      ret = false;
+      break;
     }
     len = c_data[i++];
     conf_vec.insert(conf_vec.begin(),len);
+    if (i + len > cData_len) {
+      ret = false;
+      break;
+    }
     for (j = 1; j <= len; j++) {
       conf_vec.insert(conf_vec.begin() + j, c_data[i++]);
     }
     conf_map[tag] = conf_vec;
     conf_vec.clear();
   }
-  return true;
+  return ret;
 }
 
 /******************************************************************************
@@ -295,10 +329,13 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback,
   if (uwb_dev_node == NULL) {
       NXPLOG_UCIHAL_E("malloc of uwb_dev_node failed ");
       goto clean_and_return;
-    } else {
-      NXPLOG_UCIHAL_E("Assinging the default helios Node: dev/srxxx");
-      strcpy(uwb_dev_node, "/dev/srxxx");
-    }
+  }
+
+  if (!GetNxpConfigStrValue(NAME_NXP_UWB_DEVICE_NODE, uwb_dev_node, max_len)) {
+    strcpy(uwb_dev_node, "/dev/srxxx");
+  }
+  NXPLOG_UCIHAL_E("Assigning the helios Node: %s", uwb_dev_node);
+
   /* By default HAL status is HAL_STATUS_OPEN */
   nxpucihal_ctrl.halStatus = HAL_STATUS_OPEN;
 
@@ -642,8 +679,8 @@ tHAL_UWB_STATUS phNxpUciHal_write_unlocked(uint16_t data_len, const uint8_t* p_d
     goto clean_and_return;
   }
 
-  if(data_len > UCI_MAX_DATA_LEN){
-    NXPLOG_UCIHAL_E("data_lensize exceeds the UCI_MAX_DATA_LEN");
+  if ((data_len > UCI_MAX_DATA_LEN) || (data_len < UCI_PKT_HDR_LEN)) {
+    NXPLOG_UCIHAL_E("Invalid data_len");
     data_len = 0;
     goto clean_and_return;
   }
