@@ -557,6 +557,10 @@ bool phNxpUciHal_parse(uint16_t data_len, const uint8_t* p_data) {
 
   if ( mt == UCI_MT_CMD) {
     if ((gid == UCI_GID_ANDROID) && (oid == UCI_MSG_ANDROID_SET_COUNTRY_CODE)) {
+      if (data_len < 6) {
+        return true;
+      }
+
       country_code[0] = (char) p_data[4];
       country_code[1] = (char) p_data[5];
       if ((country_code[0] == '0') && (country_code[1] == '0')) {
