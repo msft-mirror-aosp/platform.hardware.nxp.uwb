@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2020 NXP
+ * Copyright 2012-2020, 2023 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,9 +18,11 @@
 #define _PHNXPUCIHAL_UTILS_H_
 
 #include <assert.h>
+#include <map>
 #include <phUwbStatus.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <vector>
 
 /********************* Definitions and structures *****************************/
 
@@ -87,6 +89,9 @@ void phNxpUciHal_print_packet(const char* pString, const uint8_t* p_data,
                               uint16_t len);
 void phNxpUciHal_emergency_recovery(void);
 double phNxpUciHal_byteArrayToDouble(const uint8_t* p_data);
+bool get_input_map(const uint8_t *i_data, uint16_t iData_len,
+                   uint8_t startIndex);
+bool get_conf_map(uint8_t *c_data, uint16_t cData_len);
 
 /* Lock unlock helper macros */
 /* Lock unlock helper macros */
