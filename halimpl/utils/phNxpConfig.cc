@@ -1,7 +1,7 @@
 /******************************************************************************
  *
  *  Copyright (C) 2011-2012 Broadcom Corporation
- *  Copyright 2018-2019 NXP.
+ *  Copyright 2018-2019, 2023 NXP
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -33,15 +33,13 @@ using android::base::StringPrintf;
 extern bool uwb_debug_enabled;
 
 #define nxp_config_name             "libuwb-nxp.conf"
-#define uci_config_name             "libuwb-uci.conf"
-
+#define country_code_config_name "libuwb-countrycode.conf"
 
 const char alternative_config_path[] = "/vendor/etc/";
 
 #define extra_config_base "libuwb-"
 #define extra_config_ext ".conf"
 
-#define extra_config_ext        ".conf"
 #define     IsStringValue       0x80000000
 
 const char nxp_uci_config_path[] = "/vendor/etc/libuwb-uci.conf";
@@ -70,7 +68,7 @@ public:
     virtual ~CUwbNxpConfig();
     static CUwbNxpConfig& GetInstance();
     friend void readOptionalConfig(const char* optional);
-
+    friend void readCountryCodeConfig(const char *path);
     bool    getValue(const char* name, char* pValue, size_t len) const;
     bool    getValue(const char* name, unsigned long& rValue) const;
     bool    getValue(const char* name, unsigned short & rValue) const;
@@ -404,9 +402,10 @@ bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
                 Set(IsStringValue);
                 numValue = 0;
                 i = 0;
-            }
-            else
-            {
+            } else if (c == '"') {
+                state = STR_VALUE;
+                base = 0;
+            } else {
                 if (c == '\n' || c == '\r')
                 {
                     if(bflag == 0 )
@@ -450,6 +449,8 @@ bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
         case END_LINE:
             if (c == '\n' || c == '\r')
                 state = BEGIN_LINE;
+            else if (c == ',')
+                state = BEGIN_QUOTE;
             break;
         default:
             break;
@@ -872,6 +873,25 @@ void readOptionalConfig(const char* extra)
 
 /*******************************************************************************
 **
+** Function:    readCountryCodeConfig()
+**
+** Description: read Config settings from a country code conf file
+**
+** Returns:     none
+**
+*******************************************************************************/
+void readCountryCodeConfig(const char *path) {
+
+    string strPath;
+    if (path[0] != '\0')
+        strPath.assign(path);
+
+    strPath += country_code_config_name;
+
+    CUwbNxpConfig::GetInstance().readConfig(strPath.c_str(), false);
+}
+/*******************************************************************************
+**
 ** Function:    GetStrValue
 **
 ** Description: API function for getting a string value of a setting
@@ -911,7 +931,21 @@ extern "C" int GetNxpConfigCountryCodeByteArrayValue(const char* name,const char
     DLOG_IF(INFO, true) << StringPrintf("GetNxpConfigCountryCodeByteArrayValue exit....");
     return rConfig.getValue(name, pValue, bufflen,len);
 }
+extern "C" int GetNxpConfigCountryCodeVersion(const char *name,
+                                              const char *path, char *pValue,
+                                              long bufflen) {
+    CUwbNxpConfig &rConfig = CUwbNxpConfig::GetInstance();
+    readCountryCodeConfig(path);
+    return rConfig.getValue(name, pValue, bufflen);
+}
 
+extern "C" int GetNxpConfigCountryCodeCapsByteArrayValue(
+    const char *name, const char *cc_path, const char *country_code,
+    char *pValue, long bufflen, long *len) {
+    CUwbNxpConfig &rConfig = CUwbNxpConfig::GetInstance();
+    readCountryCodeConfig(cc_path);
+    return rConfig.getValue(name, pValue, bufflen, len);
+}
 /*******************************************************************************
 **
 ** Function:    GetNxpConfigUciByteArrayValue()
