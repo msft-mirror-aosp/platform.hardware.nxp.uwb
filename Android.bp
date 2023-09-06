@@ -48,7 +48,11 @@ cc_library_shared {
         "halimpl/utils",
         "extns/inc",
     ],
-
+    required: [
+        "libuwb-uci.conf",
+        "libuwb-nxp.conf",
+        "libuwb-countrycode.conf",
+    ],
     cflags: [
         "-DGENERIC",
         "-DSOC_DEFAULT",
