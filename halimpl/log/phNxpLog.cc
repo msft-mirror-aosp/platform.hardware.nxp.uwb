@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2018 NXP
+ * Copyright 2012-2018, 2023 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,11 +15,12 @@
  */
 
 #define LOG_TAG "NxpUwbHal"
-#include <stdio.h>
-#include <string.h>
 #include "phNxpLog.h"
+#include "phNxpConfig.h"
 #include <cutils/properties.h>
 #include <log/log.h>
+#include <stdio.h>
+#include <string.h>
 
 const char* NXPLOG_ITEM_EXTNS = "NxpExtns";
 const char* NXPLOG_ITEM_UCIHAL = "NxpUwbHal";
@@ -52,16 +53,15 @@ extern bool uwb_debug_enabled;
  ******************************************************************************/
 static uint8_t phNxpLog_SetGlobalLogLevel(void) {
   uint8_t level = NXPLOG_DEFAULT_LOGLEVEL;
-  // unsigned long num = 0;
-  // char valueStr[PROPERTY_VALUE_MAX] = {0};
+  unsigned long num = 0;
+  char valueStr[PROPERTY_VALUE_MAX] = {0};
 
-  // int len = property_get(PROP_NAME_NXPLOG_GLOBAL_LOGLEVEL, valueStr, "");
-  // if (len > 0) {
-  //    let Android property override .conf variable
-  //   sscanf(valueStr, "%lu", &num);
-  //   level = (unsigned char)num;
-  // }
-  // TODO: if neeeded to control via config file then enable above code
+  int len = property_get(PROP_NAME_NXPLOG_GLOBAL_LOGLEVEL, valueStr, "");
+  if (len > 0) {
+    // let Android property override .conf variable
+    sscanf(valueStr, "%lu", &num);
+    level = (unsigned char)num;
+  }
   memset(&gLog_level, level, sizeof(uci_log_level_t));
   return level;
 }
@@ -76,24 +76,23 @@ static uint8_t phNxpLog_SetGlobalLogLevel(void) {
  *
  ******************************************************************************/
 static void phNxpLog_SetHALLogLevel(uint8_t level) {
-  // unsigned long num = 0;
-  // int len;
-  // char valueStr[PROPERTY_VALUE_MAX] = {0};
+  unsigned long num = 0;
+  int len;
+  char valueStr[PROPERTY_VALUE_MAX] = {0};
 
-  // if (GetNxpNumValue(NAME_NXPLOG_HAL_LOGLEVEL, &num, sizeof(num))) {
-  //   gLog_level.hal_log_level =
-  //       (level > (unsigned char)num) ? level : (unsigned char)num;
-  //   ;
-  // }
+  if (GetNxpConfigNumValue(NAME_NXPLOG_HAL_LOGLEVEL, &num, sizeof(num))) {
+    gLog_level.hal_log_level =
+        (level > (unsigned char)num) ? level : (unsigned char)num;
+    ;
+  }
 
-  // len = property_get(PROP_NAME_NXPLOG_HAL_LOGLEVEL, valueStr, "");
-  // if (len > 0) {
-  //   /* let Android property override .conf variable */
-  //   sscanf(valueStr, "%lu", &num);
-  //   gLog_level.hal_log_level = (unsigned char)num;
-  // }
-  // TODO: if neeeded to control via config file then enable above code
-  gLog_level.hal_log_level = level;
+  len = property_get(PROP_NAME_NXPLOG_HAL_LOGLEVEL, valueStr, "");
+  if (len > 0) {
+    /* let Android property override .conf variable */
+    sscanf(valueStr, "%lu", &num);
+
+    gLog_level.hal_log_level = (unsigned char)num;
+  }
 }
 
 /*******************************************************************************
@@ -106,23 +105,21 @@ static void phNxpLog_SetHALLogLevel(uint8_t level) {
  *
  ******************************************************************************/
 static void phNxpLog_SetExtnsLogLevel(uint8_t level) {
-  // unsigned long num = 0;
-  // int len;
-  // char valueStr[PROPERTY_VALUE_MAX] = {0};
-  // if (GetNxpNumValue(NAME_NXPLOG_EXTNS_LOGLEVEL, &num, sizeof(num))) {
-  //   gLog_level.extns_log_level =
-  //       (level > (unsigned char)num) ? level : (unsigned char)num;
-  //   ;
-  // }
+  unsigned long num = 0;
+  int len;
+  char valueStr[PROPERTY_VALUE_MAX] = {0};
+  if (GetNxpConfigNumValue(NAME_NXPLOG_EXTNS_LOGLEVEL, &num, sizeof(num))) {
+    gLog_level.extns_log_level =
+        (level > (unsigned char)num) ? level : (unsigned char)num;
+    ;
+  }
 
-  // len = property_get(PROP_NAME_NXPLOG_EXTNS_LOGLEVEL, valueStr, "");
-  // if (len > 0) {
-  //   /* let Android property override .conf variable */
-  //   sscanf(valueStr, "%lu", &num);
-  //   gLog_level.extns_log_level = (unsigned char)num;
-  // }
-  // TODO: if neeeded to control via config file then enable above code
-  gLog_level.extns_log_level = level;
+  len = property_get(PROP_NAME_NXPLOG_EXTNS_LOGLEVEL, valueStr, "");
+  if (len > 0) {
+    /* let Android property override .conf variable */
+    sscanf(valueStr, "%lu", &num);
+    gLog_level.extns_log_level = (unsigned char)num;
+  }
 }
 
 /*******************************************************************************
@@ -135,23 +132,21 @@ static void phNxpLog_SetExtnsLogLevel(uint8_t level) {
  *
  ******************************************************************************/
 static void phNxpLog_SetTmlLogLevel(uint8_t level) {
-  // unsigned long num = 0;
-  // int len;
-  // char valueStr[PROPERTY_VALUE_MAX] = {0};
-  // if (GetNxpNumValue(NAME_NXPLOG_TML_LOGLEVEL, &num, sizeof(num))) {
-  //   gLog_level.tml_log_level =
-  //       (level > (unsigned char)num) ? level : (unsigned char)num;
-  //   ;
-  // }
+  unsigned long num = 0;
+  int len;
+  char valueStr[PROPERTY_VALUE_MAX] = {0};
+  if (GetNxpConfigNumValue(NAME_NXPLOG_TML_LOGLEVEL, &num, sizeof(num))) {
+    gLog_level.tml_log_level =
+        (level > (unsigned char)num) ? level : (unsigned char)num;
+    ;
+  }
 
-  // len = property_get(PROP_NAME_NXPLOG_TML_LOGLEVEL, valueStr, "");
-  // if (len > 0) {
-  //   /* let Android property override .conf variable */
-  //   sscanf(valueStr, "%lu", &num);
-  //   gLog_level.tml_log_level = (unsigned char)num;
-  // }
-  // TODO: if neeeded to control via config file then enable above code
-  gLog_level.tml_log_level = level;
+  len = property_get(PROP_NAME_NXPLOG_TML_LOGLEVEL, valueStr, "");
+  if (len > 0) {
+    /* let Android property override .conf variable */
+    sscanf(valueStr, "%lu", &num);
+    gLog_level.tml_log_level = (unsigned char)num;
+  }
 }
 
 /*******************************************************************************
@@ -164,23 +159,21 @@ static void phNxpLog_SetTmlLogLevel(uint8_t level) {
  *
  ******************************************************************************/
 static void phNxpLog_SetDnldLogLevel(uint8_t level) {
-  // unsigned long num = 0;
-  // int len;
-  // char valueStr[PROPERTY_VALUE_MAX] = {0};
-  // if (GetNxpNumValue(NAME_NXPLOG_FWDNLD_LOGLEVEL, &num, sizeof(num))) {
-  //   gLog_level.dnld_log_level =
-  //       (level > (unsigned char)num) ? level : (unsigned char)num;
-  //   ;
-  // }
+  unsigned long num = 0;
+  int len;
+  char valueStr[PROPERTY_VALUE_MAX] = {0};
+  if (GetNxpConfigNumValue(NAME_NXPLOG_FWDNLD_LOGLEVEL, &num, sizeof(num))) {
+    gLog_level.dnld_log_level =
+        (level > (unsigned char)num) ? level : (unsigned char)num;
+    ;
+  }
 
-  // len = property_get(PROP_NAME_NXPLOG_FWDNLD_LOGLEVEL, valueStr, "");
-  // if (len > 0) {
-  //   /* let Android property override .conf variable */
-  //   sscanf(valueStr, "%lu", &num);
-  //   gLog_level.dnld_log_level = (unsigned char)num;
-  // }
-  // TODO: if neeeded to control via config file then enable above code
-  gLog_level.dnld_log_level = level;
+  len = property_get(PROP_NAME_NXPLOG_FWDNLD_LOGLEVEL, valueStr, "");
+  if (len > 0) {
+    /* let Android property override .conf variable */
+    sscanf(valueStr, "%lu", &num);
+    gLog_level.dnld_log_level = (unsigned char)num;
+  }
 }
 
 /*******************************************************************************
@@ -193,29 +186,26 @@ static void phNxpLog_SetDnldLogLevel(uint8_t level) {
  *
  ******************************************************************************/
 static void phNxpLog_SetUciTxLogLevel(uint8_t level) {
-  // unsigned long num = 0;
-  // int len;
-  // char valueStr[PROPERTY_VALUE_MAX] = {0};
-  // if (GetNxpNumValue(NAME_NXPLOG_UCIX_LOGLEVEL, &num, sizeof(num))) {
-  //   gLog_level.ucix_log_level =
-  //       (level > (unsigned char)num) ? level : (unsigned char)num;
-  // }
-  // if (GetNxpNumValue(NAME_NXPLOG_UCIR_LOGLEVEL, &num, sizeof(num))) {
-  //   gLog_level.ucir_log_level =
-  //       (level > (unsigned char)num) ? level : (unsigned char)num;
-  //   ;
-  // }
+  unsigned long num = 0;
+  int len;
+  char valueStr[PROPERTY_VALUE_MAX] = {0};
+  if (GetNxpConfigNumValue(NAME_NXPLOG_UCIX_LOGLEVEL, &num, sizeof(num))) {
+    gLog_level.ucix_log_level =
+        (level > (unsigned char)num) ? level : (unsigned char)num;
+  }
+  if (GetNxpConfigNumValue(NAME_NXPLOG_UCIR_LOGLEVEL, &num, sizeof(num))) {
+    gLog_level.ucir_log_level =
+        (level > (unsigned char)num) ? level : (unsigned char)num;
+    ;
+  }
 
-  // len = property_get(PROP_NAME_NXPLOG_UCI_LOGLEVEL, valueStr, "");
-  // if (len > 0) {
-  //   /* let Android property override .conf variable */
-  //   sscanf(valueStr, "%lu", &num);
-  //   gLog_level.ucix_log_level = (unsigned char)num;
-  //   gLog_level.ucir_log_level = (unsigned char)num;
-  // }
-  // TODO: if neeeded to control via config file then enable above code
-  gLog_level.ucix_log_level = level;
-  gLog_level.ucir_log_level = level;
+  len = property_get(PROP_NAME_NXPLOG_UCI_LOGLEVEL, valueStr, "");
+  if (len > 0) {
+    /* let Android property override .conf variable */
+    sscanf(valueStr, "%lu", &num);
+    gLog_level.ucix_log_level = (unsigned char)num;
+    gLog_level.ucir_log_level = (unsigned char)num;
+  }
 }
 
 /******************************************************************************

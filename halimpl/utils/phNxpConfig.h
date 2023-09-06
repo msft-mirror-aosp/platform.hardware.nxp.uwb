@@ -1,7 +1,7 @@
 /******************************************************************************
  *
  *  Copyright (C) 2011-2012 Broadcom Corporation
- *  Copyright 2018-2019 NXP.
+ *  Copyright 2018-2019, 2023 NXP
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -29,6 +29,13 @@ int GetNxpConfigNumValue(const char* name, void* p_value, unsigned long len);
 int GetNxpConfigByteArrayValue(const char* name, char* pValue,long bufflen, long *len);
 int GetNxpConfigUciByteArrayValue(const char* name, char* pValue,long bufflen, long *len);
 int GetNxpConfigCountryCodeByteArrayValue(const char* name,const char* fName, char* pValue,long bufflen, long *len);
+int GetNxpConfigCountryCodeVersion(const char *name, const char *path,
+                                   char *pValue, long bufflen);
+int GetNxpConfigCountryCodeCapsByteArrayValue(const char *name,
+                                              const char *cc_path,
+                                              const char *country_code,
+                                              char *pValue, long bufflen,
+                                              long *len);
 
 #ifdef __cplusplus
 };
@@ -50,20 +57,23 @@ int GetNxpConfigCountryCodeByteArrayValue(const char* name,const char* fName, ch
 #define NAME_NXP_UWB_EXTENDED_NTF_CONFIG "NXP_UWB_EXTENDED_NTF_CONFIG"
 #define NAME_UWB_CORE_EXT_DEVICE_SR1XX_T_CONFIG "UWB_CORE_EXT_DEVICE_SR1XX_T_CONFIG"
 #define NAME_UWB_CORE_EXT_DEVICE_SR1XX_S_CONFIG "UWB_CORE_EXT_DEVICE_SR1XX_S_CONFIG"
+#define NAME_COUNTRY_CODE_CAP_FILE_LOCATION "COUNTRY_CODE_CAP_FILE_LOCATION"
+#define NAME_UWB_VENDOR_CAPABILITY "UWB_VENDOR_CAPABILITY"
 
-#define NAME_NXP_UWB_DEVICE_NODE      "NXP_UWB_DEVICE_NODE"
 #define NAME_NXP_UWB_PROD_FW_FILENAME "NXP_UWB_PROD_FW_FILENAME"
 #define NAME_NXP_UWB_DEV_FW_FILENAME "NXP_UWB_DEV_FW_FILENAME"
 #define NAME_NXP_UWB_FW_FILENAME "NXP_UWB_FW_FILENAME"
 #define NAME_NXP_UWB_EXT_APP_DEFAULT_CONFIG "NXP_UWB_EXT_APP_DEFAULT_CONFIG"
 #define NAME_NXP_UWB_EXT_APP_SR1XX_T_CONFIG "NXP_UWB_EXT_APP_SR1XX_T_CONFIG"
 #define NAME_NXP_UWB_EXT_APP_SR1XX_S_CONFIG "NXP_UWB_EXT_APP_SR1XX_S_CONFIG"
-#define NAME_NXP_UWB_EXT_APP_DEFAULT_CONFIG "NXP_UWB_EXT_APP_DEFAULT_CONFIG"
 #define NAME_UWB_USER_FW_BOOT_MODE_CONFIG "UWB_USER_FW_BOOT_MODE_CONFIG"
 #define NAME_NXP_COUNTRY_CODE_CONFIG "NXP_COUNTRY_CODE_CONFIG"
+#define NAME_NXP_UWB_COUNTRY_CODE_CAPS "UWB_COUNTRY_CODE_CAPS"
 
 #define NAME_NXP_SECURE_CONFIG_BLK "NXP_SECURE_CONFIG_BLK_"
 #define NAME_PLATFORM_ID "PLATFORM_ID"
+
+#define NAME_NXP_COUNTRY_CODE_VERSION "VERSION"
 
 /* default configuration */
 #define default_storage_location "/data/vendor/uwb"
