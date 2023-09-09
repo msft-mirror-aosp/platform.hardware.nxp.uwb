@@ -20,7 +20,9 @@
 
 #include "phNxpConfig.h"
 #include <stdio.h>
+#include <iomanip>
 #include <string>
+#include <sstream>
 #include <vector>
 #include <list>
 #include <sys/stat.h>
@@ -39,8 +41,6 @@ const char alternative_config_path[] = "/vendor/etc/";
 #define extra_config_base "libuwb-"
 #define extra_config_ext ".conf"
 
-#define     IsStringValue       0x80000000
-
 const char nxp_uci_config_path[] = "/vendor/etc/libuwb-uci.conf";
 const char default_nxp_config_path[] = "/vendor/etc/";
 
@@ -49,16 +49,26 @@ using namespace::std;
 class uwbParam : public string
 {
 public:
+    enum class type { STRING, NUMBER, BYTEARRAY };
     uwbParam();
-    uwbParam(const char* name, const string& value);
-    uwbParam(const char* name, unsigned long value);
+    uwbParam(const string& name, const string& value);
+    uwbParam(const string& name, vector<uint8_t>&& value);
+    uwbParam(const string& name, unsigned long value);
     virtual ~uwbParam();
+
+    type getType() const { return m_type; }
     unsigned long numValue() const {return m_numValue;}
     const char*   str_value() const {return m_str_value.c_str();}
     size_t        str_len() const   {return m_str_value.length();}
+    const uint8_t* arr_value() const { return m_arrValue.data(); }
+    size_t arr_len() const { return m_arrValue.size(); }
+
+    void dump() const;
 private:
     string          m_str_value;
     unsigned long   m_numValue;
+    vector<uint8_t>  m_arrValue;
+    type m_type;
 };
 
 class CUwbNxpConfig : public vector<const uwbParam*>
@@ -68,10 +78,11 @@ public:
     static CUwbNxpConfig& GetInstance();
     friend void readOptionalConfig(const char* optional);
     friend void readCountryCodeConfig(const char *path);
+
     bool    getValue(const char* name, char* pValue, size_t len) const;
     bool    getValue(const char* name, unsigned long& rValue) const;
-    bool    getValue(const char* name, unsigned short & rValue) const;
-    bool    getValue(const char* name, char* pValue, long len,long* readlen) const;
+    bool    getValue(const char* name, uint8_t* pValue, long len, long* readlen) const;
+
     const uwbParam*    find(const char* p_name) const;
     void    readNxpConfig(const char* fileName) const;
     void    clean();
@@ -82,16 +93,9 @@ private:
     void    moveToList();
     void    add(const uwbParam* pParam);
     void    dump();
-    bool    isAllowed(const char* name);
     list<const uwbParam*> m_list;
     bool    mValidFile;
     string  mCurrentFile;
-
-    unsigned long   state;
-
-    inline bool Is(unsigned long f) {return (state & f) == f;}
-    inline void Set(unsigned long f) {state |= f;}
-    inline void Reset(unsigned long f) {state &= ~f;}
 };
 
 /*******************************************************************************
@@ -103,12 +107,12 @@ private:
 ** Returns:     1, if printable, otherwise 0
 **
 *******************************************************************************/
-inline bool isPrintable(char c)
+static inline bool isPrintable(char c)
 {
     return  (c >= 'A' && c <= 'Z') ||
             (c >= 'a' && c <= 'z') ||
             (c >= '0' && c <= '9') ||
-            c == '/' || c == '_' || c == '-' || c == '.';
+            c == '/' || c == '_' || c == '-' || c == '.' || c == ',';
 }
 
 /*******************************************************************************
@@ -120,17 +124,20 @@ inline bool isPrintable(char c)
 ** Returns:     true, if numerical digit
 **
 *******************************************************************************/
-inline bool isDigit(char c, int base)
+static inline bool isDigit(char c, int base)
 {
-    if ('0' <= c && c <= '9')
-        return true;
-    if (base == 16)
-    {
-        if (('A' <= c && c <= 'F') ||
-            ('a' <= c && c <= 'f') )
-            return true;
+    if (base == 10) {
+        return isdigit(c);
+    } else if (base == 16) {
+        return isxdigit(c);
+    } else {
+        return false;
     }
-    return false;
+}
+
+static inline bool isArrayDelimeter(char c)
+{
+    return (isspace(c) || c== ',' || c == ':' || c == '-' || c == '}');
 }
 
 /*******************************************************************************
@@ -173,6 +180,8 @@ bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
         TOKEN,
         STR_VALUE,
         NUM_VALUE,
+        ARR_SPACE,
+        ARR_NUM,
         BEGIN_HEX,
         BEGIN_QUOTE,
         END_LINE
@@ -183,14 +192,13 @@ bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
     string  token;
     string  strValue;
     unsigned long    numValue = 0;
+    vector<uint8_t> arrValue;
     uwbParam* pParam = NULL;
-    int     i = 0;
     int     base = 0;
-    char    c;
-    int     bflag = 0;
+    int     c;
     mCurrentFile = name;
 
-    state = BEGIN_LINE;
+    unsigned long state = BEGIN_LINE;
     /* open config file, read it into a buffer */
     if ((fd = fopen(name, "rb")) == NULL)
     {
@@ -214,250 +222,131 @@ bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
     if (size() > 0)
     {
         if (bResetContent)
-        clean();
+            clean();
         else
             moveToList();
     }
 
-    for (;;)
-    {
-        if (feof(fd) || fread(&c, 1, 1, fd) != 1)
-        {
-            if (state == BEGIN_LINE)
-                break;
+    for (;;) {
+        c = fgetc(fd);
 
-            // got to the EOF but not in BEGIN_LINE state so the file
-            // probably does not end with a newline, so the parser has
-            // not processed current line, simulate a newline in the file
-            c = '\n';
-        }
-
-        switch (state & 0xff)
-        {
+        switch (state) {
         case BEGIN_LINE:
-            if (c == '#')
-                state = END_LINE;
-            else if (isPrintable(c))
-            {
-                i = 0;
-                token.erase();
-                strValue.erase();
+            if (isPrintable(c)) {
+                token.clear();
+                numValue = 0;
+                strValue.clear();
+                arrValue.clear();
                 state = TOKEN;
                 token.push_back(c);
+            } else {
+                state = END_LINE;
             }
             break;
         case TOKEN:
-            if (c == '=')
-            {
-                token.push_back('\0');
+            if (c == '=') {
                 state = BEGIN_QUOTE;
-            }
-            else if (isPrintable(c))
+            } else if (isPrintable(c)) {
                 token.push_back(c);
-            else
+            } else {
                 state = END_LINE;
+            }
             break;
         case BEGIN_QUOTE:
-            if (c == '"')
-            {
+            if (c == '"') {
                 state = STR_VALUE;
                 base = 0;
-            }
-            else if (c == '0')
+            } else if (c == '0') {
                 state = BEGIN_HEX;
-            else if (isDigit(c, 10))
-            {
+            } else if (isDigit(c, 10)) {
                 state = NUM_VALUE;
                 base = 10;
                 numValue = getDigitValue(c, base);
-                i = 0;
-            }
-            else if (c == '{')
-            {
-                state = NUM_VALUE;
-                bflag = 1;
+            } else if (c == '{') {
+                state = ARR_SPACE;
                 base = 16;
-                i = 0;
-                Set(IsStringValue);
-            }
-            else
+            } else {
                 state = END_LINE;
+            }
             break;
         case BEGIN_HEX:
-            if (c == 'x' || c == 'X')
-            {
+            if (c == 'x' || c == 'X') {
                 state = NUM_VALUE;
                 base = 16;
                 numValue = 0;
-                i = 0;
-                break;
-            }
-            else if (isDigit(c, 10))
-            {
+            } else if (isDigit(c, 10)) {
                 state = NUM_VALUE;
                 base = 10;
                 numValue = getDigitValue(c, base);
-                break;
-            }
-            else if (c != '\n' && c != '\r')
-            {
-                state = END_LINE;
-                break;
-            }
-            // fall through to numValue to handle numValue
-            if (isDigit(c, base))
-            {
-                numValue *= base;
-                numValue += getDigitValue(c, base);
-                ++i;
-            }
-            //else if(bflag == 1 && (c == ' ' || c == '\r' || c=='\n' || c=='\t'))
-            //{
-            //    break;
-            //}
-            //else if (base == 16 && (c== ','|| c == ':' || c == '-' || c == ' ' || c == '}'))
-            //{
-
-            //    if( c=='}' )
-            //    {
-            //        bflag = 0;
-            //    }
-            //    if (i > 0)
-            //    {
-            //        int n = (i+1) / 2;
-            //        while (n-- > 0)
-            //        {
-            //            numValue = numValue >> (n * 8);
-            //            unsigned char c = (numValue)  & 0xFF;
-            //            strValue.push_back(c);
-            //        }
-            //    }
-
-            //    Set(IsStringValue);
-            //    numValue = 0;
-            //    i = 0;
-            //}
-            else
-            {
-                if (c == '\n' || c == '\r')
-                {
-                    if(bflag == 0 )
-                    {
-                        state = BEGIN_LINE;
-                    }
-                }
-            //    else
-            //    {
-            //        if( bflag == 0)
-            //        {
-            //            state = END_LINE;
-            //        }
-            //    }
-                if (Is(IsStringValue) && base == 16 && i > 0)
-                {
-                    int n = (i+1) / 2;
-                    while (n-- > 0)
-                        strValue.push_back(((numValue >> (n * 8))  & 0xFF));
-                }
-                if (strValue.length() > 0)
-                    pParam = new uwbParam(token.c_str(), strValue);
-                else
-                    pParam = new uwbParam(token.c_str(), numValue);
+            } else {
+                pParam = new uwbParam(token, numValue);
                 add(pParam);
-                strValue.erase();
-                numValue = 0;
+                state = END_LINE;
             }
             break;
-
         case NUM_VALUE:
-            if (isDigit(c, base))
-            {
+            if (isDigit(c, base)) {
                 numValue *= base;
                 numValue += getDigitValue(c, base);
-                ++i;
-            }
-            else if(bflag == 1 && (c == ' ' || c == '\r' || c=='\n' || c=='\t'))
-            {
-                break;
-            }
-            else if (base == 16 && (c== ','|| c == ':' || c == '-' || c == ' ' || c == '}'))
-            {
-
-                if( c=='}' )
-                {
-                    bflag = 0;
-                }
-                if (i > 0)
-                {
-                    int n = (i+1) / 2;
-                    while (n-- > 0)
-                    {
-                        numValue = numValue >> (n * 8);
-                        unsigned char c = (numValue)  & 0xFF;
-                        strValue.push_back(c);
-                    }
-                }
-
-                Set(IsStringValue);
-                numValue = 0;
-                i = 0;
-            } else if (c == '"') {
-                state = STR_VALUE;
-                base = 0;
             } else {
-                if (c == '\n' || c == '\r')
-                {
-                    if(bflag == 0 )
-                    {
-                        state = BEGIN_LINE;
-                    }
-                }
-                else
-                {
-                    if( bflag == 0)
-                    {
-                        state = END_LINE;
-                    }
-                }
-                if (Is(IsStringValue) && base == 16 && i > 0)
-                {
-                    int n = (i+1) / 2;
-                    while (n-- > 0)
-                        strValue.push_back(((numValue >> (n * 8))  & 0xFF));
-                }
-                if (strValue.length() > 0)
-                    pParam = new uwbParam(token.c_str(), strValue);
-                else
-                    pParam = new uwbParam(token.c_str(), numValue);
+                pParam = new uwbParam(token, numValue);
                 add(pParam);
-                strValue.erase();
-                numValue = 0;
+                state = END_LINE;
+            }
+            break;
+        case ARR_SPACE:
+            if (isDigit(c, 16)) {
+                numValue = getDigitValue(c, base);
+                state = ARR_NUM;
+            } else if (c == '}') {
+                pParam = new uwbParam(token, move(arrValue));
+                add(pParam);
+                state = END_LINE;
+            } else if (c == EOF) {
+                state = END_LINE;
+            }
+            break;
+        case ARR_NUM:
+            if (isDigit(c, 16)) {
+                numValue *= 16;
+                numValue += getDigitValue(c, base);
+            } else if (isArrayDelimeter(c)) {
+                arrValue.push_back(numValue & 0xff);
+                state = ARR_SPACE;
+            } else {
+                state = END_LINE;
+            }
+            if (c == '}') {
+                pParam = new uwbParam(token, move(arrValue));
+                add(pParam);
+                state = END_LINE;
             }
             break;
         case STR_VALUE:
-            if (c == '"')
-            {
-                strValue.push_back('\0');
+            if (c == '"') {
                 state = END_LINE;
-                pParam = new uwbParam(token.c_str(), strValue);
+                pParam = new uwbParam(token, strValue);
                 add(pParam);
-            }
-            else if (isPrintable(c))
+            } else {
                 strValue.push_back(c);
+            }
             break;
         case END_LINE:
-            if (c == '\n' || c == '\r')
-                state = BEGIN_LINE;
-            else if (c == ',')
-                state = BEGIN_QUOTE;
-            break;
+            // do nothing
         default:
             break;
         }
+        if (c == EOF)
+            break;
+        else if (state == END_LINE && (c == '\n' || c == '\r'))
+            state = BEGIN_LINE;
+        else if (c == '#')
+            state = END_LINE;
     }
 
     fclose(fd);
 
+    dump();
     moveFromList();
     return size() > 0;
 }
@@ -472,8 +361,7 @@ bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
 **
 *******************************************************************************/
 CUwbNxpConfig::CUwbNxpConfig() :
-    mValidFile(true),
-    state(0)
+    mValidFile(true)
 {
 }
 
@@ -528,41 +416,41 @@ CUwbNxpConfig& CUwbNxpConfig::GetInstance()
 *******************************************************************************/
 bool CUwbNxpConfig::getValue(const char* name, char* pValue, size_t len) const
 {
-    const uwbParam* pParam = find(name);
-    if (pParam == NULL)
+    const uwbParam *param = find(name);
+    if (!param)
+        return false;
+    if (param->getType() != uwbParam::type::STRING)
+        return false;
+    if (len < (param->str_len() + 1))
         return false;
 
-    if (pParam->str_len() > 0)
-    {
-        memset(pValue, 0, len);
-        memcpy(pValue, pParam->str_value(), pParam->str_len());
-        return true;
-    }
-    return false;
+    strncpy(pValue, param->str_value(), len);
+    return true;
 }
 
-bool CUwbNxpConfig::getValue(const char* name, char* pValue, long len,long* readlen) const
+/*******************************************************************************
+**
+** Function:    CUwbNxpConfig::getValue()
+**
+** Description: get a byte array value of a setting
+**
+** Returns:     true if setting exists
+**              false if setting does not exist
+**
+*******************************************************************************/
+bool CUwbNxpConfig::getValue(const char* name, uint8_t* pValue, long len, long* readlen) const
 {
-    const uwbParam* pParam = find(name);
-    if (pParam == NULL)
+    const uwbParam *param = find(name);
+    if (!param)
         return false;
-
-    if (pParam->str_len() > 0)
-    {
-        if(pParam->str_len() <= (unsigned long)len)
-        {
-            memset(pValue, 0, len);
-            memcpy(pValue, pParam->str_value(), pParam->str_len());
-            *readlen = pParam->str_len();
-        }
-        else
-        {
-            *readlen = -1;
-        }
-
-        return true;
-    }
-    return false;
+    if (param->getType() != uwbParam::type::BYTEARRAY)
+        return false;
+    if (len < param->arr_len())
+        return false;
+    memcpy(pValue, param->arr_value(), param->arr_len());
+    if (readlen)
+        *readlen = param->arr_len();
+    return true;
 }
 
 /*******************************************************************************
@@ -577,40 +465,14 @@ bool CUwbNxpConfig::getValue(const char* name, char* pValue, long len,long* read
 *******************************************************************************/
 bool CUwbNxpConfig::getValue(const char* name, unsigned long& rValue) const
 {
-    const uwbParam* pParam = find(name);
-    if (pParam == NULL)
+    const uwbParam *param = find(name);
+    if (!param)
+        return false;
+    if (param->getType() != uwbParam::type::NUMBER)
         return false;
 
-    if (pParam->str_len() == 0)
-    {
-        rValue = static_cast<unsigned long>(pParam->numValue());
-        return true;
-    }
-    return false;
-}
-
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::getValue()
-**
-** Description: get a short numerical value of a setting
-**
-** Returns:     true if setting exists
-**              false if setting does not exist
-**
-*******************************************************************************/
-bool CUwbNxpConfig::getValue(const char* name, unsigned short& rValue) const
-{
-    const uwbParam* pParam = find(name);
-    if (pParam == NULL)
-        return false;
-
-    if (pParam->str_len() == 0)
-    {
-        rValue = static_cast<unsigned short>(pParam->numValue());
-        return true;
-    }
-    return false;
+    rValue = param->numValue();
+    return true;
 }
 
 /*******************************************************************************
@@ -635,14 +497,6 @@ const uwbParam* CUwbNxpConfig::find(const char* p_name) const
         }
         else if (**it == p_name)
         {
-            if((*it)->str_len() > 0)
-            {
-                ALOGD_IF(uwb_debug_enabled, "%s found %s=%s\n", __func__, p_name, (*it)->str_value());
-            }
-            else
-            {
-                ALOGD_IF(uwb_debug_enabled, "%s found %s=(0x%lx)\n", __func__, p_name, (*it)->numValue());
-            }
             return *it;
         }
         else
@@ -699,7 +553,7 @@ void CUwbNxpConfig::add(const uwbParam* pParam)
         m_list.push_back(pParam);
         return;
     }
-    if((mCurrentFile.find("nxpPhy") != std::string::npos) && !isAllowed(pParam->c_str()))
+    if((mCurrentFile.find("nxpPhy") != std::string::npos))
     {
         ALOGD_IF(uwb_debug_enabled, "%s Token restricted. Returning", __func__);
         return;
@@ -732,26 +586,9 @@ void CUwbNxpConfig::dump()
 
     for (list<const uwbParam*>::iterator it = m_list.begin(), itEnd = m_list.end(); it != itEnd; ++it)
     {
-        if((*it)->str_len()>0)
-            ALOGD_IF(uwb_debug_enabled, "%s %s \t= %s", __func__, (*it)->c_str(),(*it)->str_value());
-        else
-            ALOGD_IF(uwb_debug_enabled, "%s %s \t= (0x%0lX)\n", __func__,(*it)->c_str(),(*it)->numValue());
+        const uwbParam *pParam = *it;
+        pParam->dump();
     }
-}
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::isAllowed()
-**
-** Description: checks if token update is allowed
-**
-** Returns:     true if allowed else false
-**
-*******************************************************************************/
-bool CUwbNxpConfig::isAllowed(const char* name)
-{
-    string token(name);
-    bool stat = false;
-    return stat;
 }
 /*******************************************************************************
 **
@@ -791,62 +628,53 @@ void CUwbNxpConfig::moveToList()
     clear();
 }
 
-/*******************************************************************************
-**
-** Function:    uwbParam::uwbParam()
-**
-** Description: class constructor
-**
-** Returns:     none
-**
-*******************************************************************************/
+/*******************************************************************************/
 uwbParam::uwbParam() :
-    m_numValue(0)
+    m_numValue(0),
+    m_type(type::NUMBER)
 {
 }
 
-/*******************************************************************************
-**
-** Function:    uwbParam::~uwbParam()
-**
-** Description: class destructor
-**
-** Returns:     none
-**
-*******************************************************************************/
 uwbParam::~uwbParam()
 {
 }
 
-/*******************************************************************************
-**
-** Function:    uwbParam::uwbParam()
-**
-** Description: class copy constructor
-**
-** Returns:     none
-**
-*******************************************************************************/
-uwbParam::uwbParam(const char* name,  const string& value) :
+uwbParam::uwbParam(const string& name, const string& value) :
     string(name),
     m_str_value(value),
-    m_numValue(0)
+    m_numValue(0),
+    m_type(type::STRING)
 {
 }
 
-/*******************************************************************************
-**
-** Function:    uwbParam::uwbParam()
-**
-** Description: class copy constructor
-**
-** Returns:     none
-**
-*******************************************************************************/
-uwbParam::uwbParam(const char* name,  unsigned long value) :
+uwbParam::uwbParam(const string& name, unsigned long value) :
     string(name),
-    m_numValue(value)
+    m_numValue(value),
+    m_type(type::NUMBER)
 {
+}
+
+uwbParam::uwbParam(const string& name, vector<uint8_t> &&value) :
+    string(name),
+    m_arrValue(move(value)),
+    m_type(type::BYTEARRAY)
+{
+}
+
+void uwbParam::dump() const
+{
+    if (m_type == type::NUMBER) {
+        ALOGD_IF(uwb_debug_enabled, " - %s = 0x%lx", c_str(), m_numValue);
+    } else if (m_type == type::STRING) {
+        ALOGD_IF(uwb_debug_enabled, " - %s = %s", c_str(), m_str_value.c_str());
+    } else if (m_type == type::BYTEARRAY) {
+        stringstream ss_hex;
+        ss_hex.fill('0');
+        for (auto b : m_arrValue) {
+            ss_hex << setw(2) << hex << (int)b << " ";
+        }
+        ALOGD_IF(uwb_debug_enabled, " - %s = { %s}", c_str(), ss_hex.str().c_str());
+    }
 }
 
 /*******************************************************************************
@@ -922,7 +750,7 @@ extern "C" int GetNxpConfigStrValue(const char* name, char* pValue, unsigned lon
 ** Returns:     TRUE[1] if config param name is found in the config file, else FALSE[0]
 **
 *******************************************************************************/
-extern "C" int GetNxpConfigCountryCodeByteArrayValue(const char* name,const char* fName, char* pValue,long bufflen, long *len)
+extern "C" int GetNxpConfigCountryCodeByteArrayValue(const char* name,const char* fName, uint8_t* pValue,long bufflen, long *len)
 {
     ALOGD_IF(uwb_debug_enabled, "GetNxpConfigCountryCodeByteArrayValue enter....");
     CUwbNxpConfig& rConfig = CUwbNxpConfig::GetInstance();
@@ -940,7 +768,7 @@ extern "C" int GetNxpConfigCountryCodeVersion(const char *name,
 
 extern "C" int GetNxpConfigCountryCodeCapsByteArrayValue(
     const char *name, const char *cc_path, const char *country_code,
-    char *pValue, long bufflen, long *len) {
+    uint8_t *pValue, long bufflen, long *len) {
     CUwbNxpConfig &rConfig = CUwbNxpConfig::GetInstance();
     readCountryCodeConfig(cc_path);
     return rConfig.getValue(name, pValue, bufflen, len);
@@ -961,7 +789,7 @@ extern "C" int GetNxpConfigCountryCodeCapsByteArrayValue(
 ** Returns:     TRUE[1] if config param name is found in the config file, else FALSE[0]
 **
 *******************************************************************************/
-extern "C" int GetNxpConfigUciByteArrayValue(const char* name, char* pValue,long bufflen, long *len)
+extern "C" int GetNxpConfigUciByteArrayValue(const char* name, uint8_t* pValue,long bufflen, long *len)
 {
     ALOGD_IF(uwb_debug_enabled, "GetNxpConfigUciByteArrayValue enter....");
     CUwbNxpConfig& rConfig = CUwbNxpConfig::GetInstance();
@@ -986,7 +814,7 @@ extern "C" int GetNxpConfigUciByteArrayValue(const char* name, char* pValue,long
 ** Returns:     TRUE[1] if config param name is found in the config file, else FALSE[0]
 **
 *******************************************************************************/
-extern "C" int GetNxpConfigByteArrayValue(const char* name, char* pValue,long bufflen, long *len)
+extern "C" int GetNxpConfigByteArrayValue(const char* name, uint8_t* pValue,long bufflen, long *len)
 {
     ALOGD_IF(uwb_debug_enabled, "GetNxpConfigByteArrayValue enter....");
     CUwbNxpConfig& rConfig = CUwbNxpConfig::GetInstance();
@@ -1015,18 +843,10 @@ extern "C" int GetNxpConfigNumValue(const char* name, void* pValue, unsigned lon
 
     if (pParam == NULL)
         return false;
-    unsigned long v = pParam->numValue();
-    unsigned int strLen = (unsigned int)pParam->str_len();
-    if (v == 0 && strLen > 0 && strLen < 4)
-    {
-        const unsigned char* p = (const unsigned char*)pParam->str_value();
-        for (unsigned int i = 0 ; i < strLen; ++i)
-        {
-            v *= 256;
-            v += *p++;
-        }
-    }
+    if (pParam->getType() != uwbParam::type::NUMBER)
+        return false;
 
+    unsigned long v = pParam->numValue();
     switch (len)
     {
     case sizeof(unsigned long):
@@ -1039,7 +859,7 @@ extern "C" int GetNxpConfigNumValue(const char* name, void* pValue, unsigned lon
         *(static_cast<unsigned char*> (pValue)) = (unsigned char)v;
         break;
     default:
-    ALOGD_IF(uwb_debug_enabled, "GetNxpConfigNumValue default");
+        ALOGD_IF(uwb_debug_enabled, "GetNxpConfigNumValue default");
         return false;
     }
     return true;

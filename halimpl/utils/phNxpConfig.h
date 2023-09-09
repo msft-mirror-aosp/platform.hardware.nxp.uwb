@@ -19,6 +19,9 @@
 
 #ifndef __CONFIG_H
 #define __CONFIG_H
+
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C"
 {
@@ -26,15 +29,15 @@ extern "C"
 
 int GetNxpConfigStrValue(const char* name, char* p_value, unsigned long len);
 int GetNxpConfigNumValue(const char* name, void* p_value, unsigned long len);
-int GetNxpConfigByteArrayValue(const char* name, char* pValue,long bufflen, long *len);
-int GetNxpConfigUciByteArrayValue(const char* name, char* pValue,long bufflen, long *len);
-int GetNxpConfigCountryCodeByteArrayValue(const char* name,const char* fName, char* pValue,long bufflen, long *len);
+int GetNxpConfigByteArrayValue(const char* name, uint8_t* pValue, long bufflen, long *len);
+int GetNxpConfigUciByteArrayValue(const char* name, uint8_t* pValue,long bufflen, long *len);
+int GetNxpConfigCountryCodeByteArrayValue(const char* name,const char* fName, uint8_t* pValue, long bufflen, long *len);
 int GetNxpConfigCountryCodeVersion(const char *name, const char *path,
                                    char *pValue, long bufflen);
 int GetNxpConfigCountryCodeCapsByteArrayValue(const char *name,
                                               const char *cc_path,
                                               const char *country_code,
-                                              char *pValue, long bufflen,
+                                              uint8_t *pValue, long bufflen,
                                               long *len);
 
 #ifdef __cplusplus
