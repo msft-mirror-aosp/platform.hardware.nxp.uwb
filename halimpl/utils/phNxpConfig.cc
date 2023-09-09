@@ -16,6 +16,7 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+#define LOG_TAG "NxpUwbConf"
 
 #include "phNxpConfig.h"
 #include <stdio.h>
@@ -23,12 +24,10 @@
 #include <vector>
 #include <list>
 #include <sys/stat.h>
-#include <android-base/stringprintf.h>
-#include <base/logging.h>
+#include <android-base/logging.h>
 #include <cutils/properties.h>
+#include <log/log.h>
 #include  "phNxpLog.h"
-
-using android::base::StringPrintf;
 
 extern bool uwb_debug_enabled;
 
@@ -195,18 +194,18 @@ bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
     /* open config file, read it into a buffer */
     if ((fd = fopen(name, "rb")) == NULL)
     {
-        DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("%s Cannot open config file %s\n", __func__, name);
+        ALOGD_IF(uwb_debug_enabled, "%s Cannot open config file %s\n", __func__, name);
         if (bResetContent)
         {
-            DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("%s Using default value for all settings\n", __func__);
+            ALOGD_IF(uwb_debug_enabled, "%s Using default value for all settings\n", __func__);
             mValidFile = false;
         }
         return false;
     }
-    DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("%s Opened %s config %s\n", __func__, (bResetContent ? "base" : "optional"), name);
+    ALOGD_IF(uwb_debug_enabled, "%s Opened %s config %s\n", __func__, (bResetContent ? "base" : "optional"), name);
     if(stat(name, &buf) < 0)
     {
-        DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("Get File Information failed");
+        ALOGD_IF(uwb_debug_enabled, "Get File Information failed");
         fclose(fd);
         return false;
     }
@@ -638,11 +637,11 @@ const uwbParam* CUwbNxpConfig::find(const char* p_name) const
         {
             if((*it)->str_len() > 0)
             {
-                DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("%s found %s=%s\n", __func__, p_name, (*it)->str_value());
+                ALOGD_IF(uwb_debug_enabled, "%s found %s=%s\n", __func__, p_name, (*it)->str_value());
             }
             else
             {
-                DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("%s found %s=(0x%lx)\n", __func__, p_name, (*it)->numValue());
+                ALOGD_IF(uwb_debug_enabled, "%s found %s=(0x%lx)\n", __func__, p_name, (*it)->numValue());
             }
             return *it;
         }
@@ -662,7 +661,7 @@ const uwbParam* CUwbNxpConfig::find(const char* p_name) const
 *******************************************************************************/
 void CUwbNxpConfig::readNxpConfig(const char* fileName) const
 {
-    DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("readNxpConfig-Enter..Reading");
+    ALOGD_IF(uwb_debug_enabled, "readNxpConfig-Enter..Reading");
     CUwbNxpConfig::GetInstance().readConfig(fileName, false);
 }
 /*******************************************************************************
@@ -702,7 +701,7 @@ void CUwbNxpConfig::add(const uwbParam* pParam)
     }
     if((mCurrentFile.find("nxpPhy") != std::string::npos) && !isAllowed(pParam->c_str()))
     {
-        DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("%s Token restricted. Returning", __func__);
+        ALOGD_IF(uwb_debug_enabled, "%s Token restricted. Returning", __func__);
         return;
     }
     for (list<const uwbParam*>::iterator it = m_list.begin(), itEnd = m_list.end(); it != itEnd; ++it)
@@ -729,14 +728,14 @@ void CUwbNxpConfig::add(const uwbParam* pParam)
 *******************************************************************************/
 void CUwbNxpConfig::dump()
 {
-    DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("%s Enter", __func__);
+    ALOGD_IF(uwb_debug_enabled, "%s Enter", __func__);
 
     for (list<const uwbParam*>::iterator it = m_list.begin(), itEnd = m_list.end(); it != itEnd; ++it)
     {
         if((*it)->str_len()>0)
-            DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("%s %s \t= %s", __func__, (*it)->c_str(),(*it)->str_value());
+            ALOGD_IF(uwb_debug_enabled, "%s %s \t= %s", __func__, (*it)->c_str(),(*it)->str_value());
         else
-            DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("%s %s \t= (0x%0lX)\n", __func__,(*it)->c_str(),(*it)->numValue());
+            ALOGD_IF(uwb_debug_enabled, "%s %s \t= (0x%0lX)\n", __func__,(*it)->c_str(),(*it)->numValue());
     }
 }
 /*******************************************************************************
@@ -925,11 +924,11 @@ extern "C" int GetNxpConfigStrValue(const char* name, char* pValue, unsigned lon
 *******************************************************************************/
 extern "C" int GetNxpConfigCountryCodeByteArrayValue(const char* name,const char* fName, char* pValue,long bufflen, long *len)
 {
-    DLOG_IF(INFO, true) << StringPrintf("GetNxpConfigCountryCodeByteArrayValue enter....");
+    ALOGD_IF(uwb_debug_enabled, "GetNxpConfigCountryCodeByteArrayValue enter....");
     CUwbNxpConfig& rConfig = CUwbNxpConfig::GetInstance();
     readOptionalConfig(fName);
-    DLOG_IF(INFO, true) << StringPrintf("GetNxpConfigCountryCodeByteArrayValue exit....");
-    return rConfig.getValue(name, pValue, bufflen,len);
+    ALOGD_IF(uwb_debug_enabled, "GetNxpConfigCountryCodeByteArrayValue exit....");
+    return rConfig.getValue(name, pValue, bufflen, len);
 }
 extern "C" int GetNxpConfigCountryCodeVersion(const char *name,
                                               const char *path, char *pValue,
@@ -964,10 +963,10 @@ extern "C" int GetNxpConfigCountryCodeCapsByteArrayValue(
 *******************************************************************************/
 extern "C" int GetNxpConfigUciByteArrayValue(const char* name, char* pValue,long bufflen, long *len)
 {
-    DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("GetNxpConfigUciByteArrayValue enter....");
+    ALOGD_IF(uwb_debug_enabled, "GetNxpConfigUciByteArrayValue enter....");
     CUwbNxpConfig& rConfig = CUwbNxpConfig::GetInstance();
     rConfig.readNxpConfig(nxp_uci_config_path);
-    DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("GetNxpConfigUciByteArrayValue exit....");
+    ALOGD_IF(uwb_debug_enabled, "GetNxpConfigUciByteArrayValue exit....");
     return rConfig.getValue(name, pValue, bufflen,len);
 }
 
@@ -989,10 +988,10 @@ extern "C" int GetNxpConfigUciByteArrayValue(const char* name, char* pValue,long
 *******************************************************************************/
 extern "C" int GetNxpConfigByteArrayValue(const char* name, char* pValue,long bufflen, long *len)
 {
-    DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("GetNxpConfigByteArrayValue enter....");
+    ALOGD_IF(uwb_debug_enabled, "GetNxpConfigByteArrayValue enter....");
     CUwbNxpConfig& rConfig = CUwbNxpConfig::GetInstance();
     rConfig.readNxpConfig(default_nxp_config_path);
-    DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("GetNxpConfigByteArrayValue1 enter....");
+    ALOGD_IF(uwb_debug_enabled, "GetNxpConfigByteArrayValue1 enter....");
     return rConfig.getValue(name, pValue, bufflen,len);
 }
 
@@ -1007,7 +1006,7 @@ extern "C" int GetNxpConfigByteArrayValue(const char* name, char* pValue,long bu
 *******************************************************************************/
 extern "C" int GetNxpConfigNumValue(const char* name, void* pValue, unsigned long len)
 {
-    DLOG_IF(INFO, true) << StringPrintf("GetNxpConfigNumValue... enter....");
+    ALOGD_IF(uwb_debug_enabled, "GetNxpConfigNumValue... enter....");
     if (pValue == NULL){
         return false;
     }
@@ -1040,7 +1039,7 @@ extern "C" int GetNxpConfigNumValue(const char* name, void* pValue, unsigned lon
         *(static_cast<unsigned char*> (pValue)) = (unsigned char)v;
         break;
     default:
-    DLOG_IF(INFO, true) << StringPrintf("GetNxpConfigNumValue default");
+    ALOGD_IF(uwb_debug_enabled, "GetNxpConfigNumValue default");
         return false;
     }
     return true;
