@@ -18,18 +18,21 @@
  ******************************************************************************/
 #define LOG_TAG "NxpUwbConf"
 
-#include "phNxpConfig.h"
-#include <stdio.h>
-#include <iomanip>
-#include <string>
-#include <sstream>
-#include <vector>
-#include <list>
 #include <sys/stat.h>
+
+#include <iomanip>
+#include <list>
+#include <sstream>
+#include <stdio.h>
+#include <string>
+#include <vector>
+
 #include <android-base/logging.h>
 #include <cutils/properties.h>
 #include <log/log.h>
-#include  "phNxpLog.h"
+
+#include "phNxpConfig.h"
+#include "phNxpLog.h"
 
 extern bool uwb_debug_enabled;
 
