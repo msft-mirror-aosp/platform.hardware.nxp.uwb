@@ -21,10 +21,10 @@
 #include <sys/stat.h>
 
 #include <iomanip>
-#include <list>
 #include <sstream>
 #include <stdio.h>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <android-base/logging.h>
@@ -49,14 +49,16 @@ const char default_nxp_config_path[] = "/vendor/etc/";
 
 using namespace::std;
 
-class uwbParam : public string
+class uwbParam
 {
 public:
     enum class type { STRING, NUMBER, BYTEARRAY };
     uwbParam();
-    uwbParam(const string& name, const string& value);
-    uwbParam(const string& name, vector<uint8_t>&& value);
-    uwbParam(const string& name, unsigned long value);
+    uwbParam(const uwbParam& param);
+    uwbParam(uwbParam&& param);
+    uwbParam(const string& value);
+    uwbParam(vector<uint8_t>&& value);
+    uwbParam(unsigned long value);
     virtual ~uwbParam();
 
     type getType() const { return m_type; }
@@ -66,15 +68,15 @@ public:
     const uint8_t* arr_value() const { return m_arrValue.data(); }
     size_t arr_len() const { return m_arrValue.size(); }
 
-    void dump() const;
+    void dump(const string &tag) const;
 private:
-    string          m_str_value;
     unsigned long   m_numValue;
+    string          m_str_value;
     vector<uint8_t>  m_arrValue;
     type m_type;
 };
 
-class CUwbNxpConfig : public vector<const uwbParam*>
+class CUwbNxpConfig
 {
 public:
     virtual ~CUwbNxpConfig();
@@ -88,15 +90,12 @@ public:
 
     const uwbParam*    find(const char* p_name) const;
     void    readNxpConfig(const char* fileName) const;
-    void    clean();
 private:
     CUwbNxpConfig();
     bool    readConfig(const char* name, bool bResetContent);
-    void    moveFromList();
-    void    moveToList();
-    void    add(const uwbParam* pParam);
-    void    dump();
-    list<const uwbParam*> m_list;
+    void    dump() const;
+
+    unordered_map<string, uwbParam> m_map;
     bool    mValidFile;
     string  mCurrentFile;
 };
@@ -196,10 +195,8 @@ bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
     string  strValue;
     unsigned long    numValue = 0;
     vector<uint8_t> arrValue;
-    uwbParam* pParam = NULL;
     int     base = 0;
     int     c;
-    mCurrentFile = name;
 
     unsigned long state = BEGIN_LINE;
     /* open config file, read it into a buffer */
@@ -222,12 +219,10 @@ bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
     }
 
     mValidFile = true;
-    if (size() > 0)
-    {
-        if (bResetContent)
-            clean();
-        else
-            moveToList();
+
+    if (bResetContent) {
+        m_map.clear();
+        mCurrentFile = name;
     }
 
     for (;;) {
@@ -282,8 +277,7 @@ bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
                 base = 10;
                 numValue = getDigitValue(c, base);
             } else {
-                pParam = new uwbParam(token, numValue);
-                add(pParam);
+                m_map.try_emplace(token, move(uwbParam(numValue)));
                 state = END_LINE;
             }
             break;
@@ -291,9 +285,7 @@ bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
             if (isDigit(c, base)) {
                 numValue *= base;
                 numValue += getDigitValue(c, base);
-            } else {
-                pParam = new uwbParam(token, numValue);
-                add(pParam);
+            } else {m_map.try_emplace(token, move(uwbParam(numValue)));
                 state = END_LINE;
             }
             break;
@@ -302,8 +294,7 @@ bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
                 numValue = getDigitValue(c, base);
                 state = ARR_NUM;
             } else if (c == '}') {
-                pParam = new uwbParam(token, move(arrValue));
-                add(pParam);
+                m_map.try_emplace(token, move(uwbParam(move(arrValue))));
                 state = END_LINE;
             } else if (c == EOF) {
                 state = END_LINE;
@@ -320,16 +311,14 @@ bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
                 state = END_LINE;
             }
             if (c == '}') {
-                pParam = new uwbParam(token, move(arrValue));
-                add(pParam);
+                m_map.try_emplace(token, move(uwbParam(move(arrValue))));
                 state = END_LINE;
             }
             break;
         case STR_VALUE:
             if (c == '"') {
                 state = END_LINE;
-                pParam = new uwbParam(token, strValue);
-                add(pParam);
+                m_map.try_emplace(token, move(uwbParam(strValue)));
             } else {
                 strValue.push_back(c);
             }
@@ -348,10 +337,8 @@ bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
     }
 
     fclose(fd);
-
     dump();
-    moveFromList();
-    return size() > 0;
+    return true;
 }
 
 /*******************************************************************************
@@ -364,7 +351,7 @@ bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
 **
 *******************************************************************************/
 CUwbNxpConfig::CUwbNxpConfig() :
-    mValidFile(true)
+    mValidFile(false)
 {
 }
 
@@ -393,15 +380,12 @@ CUwbNxpConfig::~CUwbNxpConfig()
 CUwbNxpConfig& CUwbNxpConfig::GetInstance()
 {
   static CUwbNxpConfig theInstance;
-  if (theInstance.size() == 0 && theInstance.mValidFile) {
+  if (!theInstance.mValidFile) {
     string strPath;
     if (default_nxp_config_path[0] != '\0') {
       strPath.assign(default_nxp_config_path);
       strPath += nxp_config_name;
       theInstance.readConfig(strPath.c_str(), true);
-      if (!theInstance.empty()) {
-        return theInstance;
-      }
     }
   }
   return theInstance;
@@ -489,23 +473,11 @@ bool CUwbNxpConfig::getValue(const char* name, unsigned long& rValue) const
 *******************************************************************************/
 const uwbParam* CUwbNxpConfig::find(const char* p_name) const
 {
-    if (size() == 0)
+    const auto it = m_map.find(p_name);
+    if (it == m_map.cend()) {
         return NULL;
-
-    for (const_iterator it = begin(), itEnd = end(); it != itEnd; ++it)
-    {
-        if (**it < p_name)
-        {
-            continue;
-        }
-        else if (**it == p_name)
-        {
-            return *it;
-        }
-        else
-            break;
     }
-    return NULL;
+    return &it->second;
 }
 /*******************************************************************************
 **
@@ -521,59 +493,7 @@ void CUwbNxpConfig::readNxpConfig(const char* fileName) const
     ALOGD_IF(uwb_debug_enabled, "readNxpConfig-Enter..Reading");
     CUwbNxpConfig::GetInstance().readConfig(fileName, false);
 }
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::clean()
-**
-** Description: reset the setting array
-**
-** Returns:     none
-**
-*******************************************************************************/
-void CUwbNxpConfig::clean()
-{
-    if (size() == 0)
-        return;
 
-    for (iterator it = begin(), itEnd = end(); it != itEnd; ++it)
-        delete *it;
-    clear();
-}
-
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::Add()
-**
-** Description: add a setting object to the list
-**
-** Returns:     none
-**
-*******************************************************************************/
-void CUwbNxpConfig::add(const uwbParam* pParam)
-{
-    if (m_list.size() == 0)
-    {
-        m_list.push_back(pParam);
-        return;
-    }
-    if((mCurrentFile.find("nxpPhy") != std::string::npos))
-    {
-        ALOGD_IF(uwb_debug_enabled, "%s Token restricted. Returning", __func__);
-        return;
-    }
-    for (list<const uwbParam*>::iterator it = m_list.begin(), itEnd = m_list.end(); it != itEnd; ++it)
-    {
-        if (**it < pParam->c_str())
-            continue;
-        if (**it == pParam->c_str())
-            m_list.insert(m_list.erase(it), pParam);
-        else
-            m_list.insert(it, pParam);
-
-        return;
-    }
-    m_list.push_back(pParam);
-}
 /*******************************************************************************
 **
 ** Function:    CUwbNxpConfig::dump()
@@ -583,52 +503,15 @@ void CUwbNxpConfig::add(const uwbParam* pParam)
 ** Returns:     none
 **
 *******************************************************************************/
-void CUwbNxpConfig::dump()
+void CUwbNxpConfig::dump() const
 {
-    ALOGD_IF(uwb_debug_enabled, "%s Enter", __func__);
-
-    for (list<const uwbParam*>::iterator it = m_list.begin(), itEnd = m_list.end(); it != itEnd; ++it)
-    {
-        const uwbParam *pParam = *it;
-        pParam->dump();
+    ALOGD_IF(uwb_debug_enabled, "Dump configuration file %s, %zu entries",
+        mCurrentFile.c_str(), m_map.size());
+    for (auto &it : m_map) {
+        auto &key = it.first;
+        auto &param = it.second;
+        param.dump(key);
     }
-}
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::moveFromList()
-**
-** Description: move the setting object from list to array
-**
-** Returns:     none
-**
-*******************************************************************************/
-void CUwbNxpConfig::moveFromList()
-{
-    if (m_list.size() == 0)
-        return;
-
-    for (list<const uwbParam*>::iterator it = m_list.begin(), itEnd = m_list.end(); it != itEnd; ++it)
-        push_back(*it);
-    m_list.clear();
-}
-
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::moveToList()
-**
-** Description: move the setting object from array to list
-**
-** Returns:     none
-**
-*******************************************************************************/
-void CUwbNxpConfig::moveToList()
-{
-    if (m_list.size() != 0)
-        m_list.clear();
-
-    for (iterator it = begin(), itEnd = end(); it != itEnd; ++it)
-        m_list.push_back(*it);
-    clear();
 }
 
 /*******************************************************************************/
@@ -642,41 +525,54 @@ uwbParam::~uwbParam()
 {
 }
 
-uwbParam::uwbParam(const string& name, const string& value) :
-    string(name),
-    m_str_value(value),
+uwbParam::uwbParam(const uwbParam &param) :
+    m_numValue(param.m_numValue),
+    m_str_value(param.m_str_value),
+    m_arrValue(param.m_arrValue),
+    m_type(param.m_type)
+{
+}
+
+uwbParam::uwbParam(uwbParam &&param) :
+    m_numValue(param.m_numValue),
+    m_str_value(move(param.m_str_value)),
+    m_arrValue(move(param.m_arrValue)),
+    m_type(param.m_type)
+{
+}
+
+uwbParam::uwbParam(const string& value) :
     m_numValue(0),
+    m_str_value(value),
     m_type(type::STRING)
 {
 }
 
-uwbParam::uwbParam(const string& name, unsigned long value) :
-    string(name),
+uwbParam::uwbParam(unsigned long value) :
     m_numValue(value),
     m_type(type::NUMBER)
 {
 }
 
-uwbParam::uwbParam(const string& name, vector<uint8_t> &&value) :
-    string(name),
+uwbParam::uwbParam(vector<uint8_t> &&value) :
     m_arrValue(move(value)),
     m_type(type::BYTEARRAY)
 {
 }
 
-void uwbParam::dump() const
+void uwbParam::dump(const string &tag) const
 {
     if (m_type == type::NUMBER) {
-        ALOGD_IF(uwb_debug_enabled, " - %s = 0x%lx", c_str(), m_numValue);
+        ALOGD_IF(uwb_debug_enabled, " - %s = 0x%lx", tag.c_str(), m_numValue);
     } else if (m_type == type::STRING) {
-        ALOGD_IF(uwb_debug_enabled, " - %s = %s", c_str(), m_str_value.c_str());
+        ALOGD_IF(uwb_debug_enabled, " - %s = %s", tag.c_str(), m_str_value.c_str());
     } else if (m_type == type::BYTEARRAY) {
         stringstream ss_hex;
         ss_hex.fill('0');
         for (auto b : m_arrValue) {
             ss_hex << setw(2) << hex << (int)b << " ";
         }
-        ALOGD_IF(uwb_debug_enabled, " - %s = { %s}", c_str(), ss_hex.str().c_str());
+        ALOGD_IF(uwb_debug_enabled, " - %s = { %s}", tag.c_str(), ss_hex.str().c_str());
     }
 }
 
