@@ -30,8 +30,6 @@ extern "C"
 int GetNxpConfigStrValue(const char* name, char* p_value, unsigned long len);
 int GetNxpConfigNumValue(const char* name, void* p_value, unsigned long len);
 int GetNxpConfigByteArrayValue(const char* name, uint8_t* pValue, long bufflen, long *len);
-int GetNxpConfigUciByteArrayValue(const char* name, uint8_t* pValue,long bufflen, long *len);
-int GetNxpConfigCountryCodeByteArrayValue(const char* name,const char* fName, uint8_t* pValue, long bufflen, long *len);
 int GetNxpConfigCountryCodeVersion(const char *name, const char *path,
                                    char *pValue, long bufflen);
 int GetNxpConfigCountryCodeCapsByteArrayValue(const char *name,

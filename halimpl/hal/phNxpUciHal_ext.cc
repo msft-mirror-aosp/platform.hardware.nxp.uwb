@@ -164,25 +164,6 @@ clean_and_return:
 }
 
 /******************************************************************************
- * Function         phNxpUciHal_write_ext
- *
- * Description      This function inform the status of phNxpUciHal_open
- *                  function to libuwb-uci.
- *
- * Returns          It return UWBSTATUS_SUCCESS then continue with send else
- *                  sends UWBSTATUS_FAILED direct response is prepared and
- *                  do not send anything to UWBC.
- *
- ******************************************************************************/
-
-tHAL_UWB_STATUS phNxpUciHal_write_ext(uint16_t* cmd_len, uint8_t* p_cmd_data,
-                                uint16_t* rsp_len, uint8_t* p_rsp_data) {
-  tHAL_UWB_STATUS status = UWBSTATUS_SUCCESS;
-
-  return status;
-}
-
-/******************************************************************************
  * Function         phNxpUciHal_send_ext_cmd
  *
  * Description      This function send the extension command to UWBC. No

@@ -39,12 +39,9 @@ extern bool uwb_debug_enabled;
 #define nxp_config_name             "libuwb-nxp.conf"
 #define country_code_config_name "libuwb-countrycode.conf"
 
-const char alternative_config_path[] = "/vendor/etc/";
-
 #define extra_config_base "libuwb-"
 #define extra_config_ext ".conf"
 
-const char nxp_uci_config_path[] = "/vendor/etc/libuwb-uci.conf";
 const char default_nxp_config_path[] = "/vendor/etc/";
 
 using namespace::std;
@@ -81,7 +78,6 @@ class CUwbNxpConfig
 public:
     virtual ~CUwbNxpConfig();
     static CUwbNxpConfig& GetInstance();
-    friend void readOptionalConfig(const char* optional);
     friend void readCountryCodeConfig(const char *path);
 
     bool    getValue(const char* name, char* pValue, size_t len) const;
@@ -578,27 +574,6 @@ void uwbParam::dump(const string &tag) const
 
 /*******************************************************************************
 **
-** Function:    readOptionalConfig()
-**
-** Description: read Config settings from an optional conf file
-**
-** Returns:     none
-**
-*******************************************************************************/
-void readOptionalConfig(const char* extra)
-{
-    string strPath;
-    if (alternative_config_path[0] != '\0')
-        strPath.assign(alternative_config_path);
-
-    strPath += extra_config_base;
-    strPath += extra;
-    strPath += extra_config_ext;
-    CUwbNxpConfig::GetInstance().readConfig(strPath.c_str(), false);
-}
-
-/*******************************************************************************
-**
 ** Function:    readCountryCodeConfig()
 **
 ** Description: read Config settings from a country code conf file
@@ -632,31 +607,6 @@ extern "C" int GetNxpConfigStrValue(const char* name, char* pValue, unsigned lon
     return rConfig.getValue(name, pValue, len);
 }
 
-/*******************************************************************************
-**
-** Function:    GetNxpConfigCountryCodeByteArrayValue()
-**
-** Description: Read byte array value from the config file.
-**
-** Parameters:
-**              name    - name of the config param to read.
-**              fName   - name of the Country code.
-**              pValue  - pointer to input buffer.
-**              bufflen - input buffer length.
-**              len     - out parameter to return the number of bytes read from config file,
-**                        return -1 in case bufflen is not enough.
-**
-** Returns:     TRUE[1] if config param name is found in the config file, else FALSE[0]
-**
-*******************************************************************************/
-extern "C" int GetNxpConfigCountryCodeByteArrayValue(const char* name,const char* fName, uint8_t* pValue,long bufflen, long *len)
-{
-    ALOGD_IF(uwb_debug_enabled, "GetNxpConfigCountryCodeByteArrayValue enter....");
-    CUwbNxpConfig& rConfig = CUwbNxpConfig::GetInstance();
-    readOptionalConfig(fName);
-    ALOGD_IF(uwb_debug_enabled, "GetNxpConfigCountryCodeByteArrayValue exit....");
-    return rConfig.getValue(name, pValue, bufflen, len);
-}
 extern "C" int GetNxpConfigCountryCodeVersion(const char *name,
                                               const char *path, char *pValue,
                                               long bufflen) {
@@ -671,30 +621,6 @@ extern "C" int GetNxpConfigCountryCodeCapsByteArrayValue(
     CUwbNxpConfig &rConfig = CUwbNxpConfig::GetInstance();
     readCountryCodeConfig(cc_path);
     return rConfig.getValue(name, pValue, bufflen, len);
-}
-/*******************************************************************************
-**
-** Function:    GetNxpConfigUciByteArrayValue()
-**
-** Description: Read byte array value from the config file.
-**
-** Parameters:
-**              name    - name of the config param to read.
-**              pValue  - pointer to input buffer.
-**              bufflen - input buffer length.
-**              len     - out parameter to return the number of bytes read from config file,
-**                        return -1 in case bufflen is not enough.
-**
-** Returns:     TRUE[1] if config param name is found in the config file, else FALSE[0]
-**
-*******************************************************************************/
-extern "C" int GetNxpConfigUciByteArrayValue(const char* name, uint8_t* pValue,long bufflen, long *len)
-{
-    ALOGD_IF(uwb_debug_enabled, "GetNxpConfigUciByteArrayValue enter....");
-    CUwbNxpConfig& rConfig = CUwbNxpConfig::GetInstance();
-    rConfig.readNxpConfig(nxp_uci_config_path);
-    ALOGD_IF(uwb_debug_enabled, "GetNxpConfigUciByteArrayValue exit....");
-    return rConfig.getValue(name, pValue, bufflen,len);
 }
 
 /*******************************************************************************
