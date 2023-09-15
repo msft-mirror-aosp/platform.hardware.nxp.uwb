@@ -51,10 +51,10 @@ typedef void (*pphOsalUwb_DeferFuncPointer_t)(void*);
 /*
  * Deferred message specific info declaration.
  */
-typedef struct phOsalUwb_DeferedCallInfo {
-  pphOsalUwb_DeferFuncPointer_t pDeferedCall; /* pointer to Deferred callback */
+typedef struct phOsalUwb_DeferredCallInfo {
+  pphOsalUwb_DeferFuncPointer_t pDeferredCall; /* pointer to Deferred callback */
   void* pParam; /* contains timer message specific details*/
-} phOsalUwb_DeferedCallInfo_t;
+} phOsalUwb_DeferredCallInfo_t;
 
 /*
  * States in which a OSAL timer exist.
@@ -78,7 +78,7 @@ typedef struct phOsalUwb_TimerHandle {
   /* Osal Timer message posted on User Thread */
   phLibUwb_Message_t tOsalMessage;
   /* Deferred Call structure to Invoke Callback function */
-  phOsalUwb_DeferedCallInfo_t tDeferedCallInfo;
+  phOsalUwb_DeferredCallInfo_t tDeferredCallInfo;
   /* Variables for Structure Instance and Structure Ptr */
 } phOsalUwb_TimerHandle_t, *pphOsalUwb_TimerHandle_t;
 
