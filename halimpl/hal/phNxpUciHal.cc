@@ -1628,6 +1628,8 @@ fwd_retry:
             NXPLOG_UCIHAL_E("%s: Apply vendor Config Failed", __func__);
             goto failure;
           }
+          phNxpUciHal_extcal_handle_coreinit();
+
           uwb_device_initialized = true;
           phNxpUciHal_getVersionInfo();
           phNxpUciHal_init_complete(UWBSTATUS_SUCCESS);

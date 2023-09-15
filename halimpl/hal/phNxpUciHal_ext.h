@@ -71,6 +71,7 @@ void phNxpUciHal_getCountryCaps(const uint8_t *cc_resp, const char country_code[
 void phNxpUciHal_processCalibParamTxPowerPerAntenna(const short conf_tx_power,
                                                     const uint8_t *p_data,
                                                     uint16_t data_len);
+void phNxpUciHal_extcal_handle_coreinit(void);
 bool phNxpUciHal_updateTxPower(short conf_tx_power);
 bool phNxpUciHal_setCalibParamTxPower(short conf_tx_power);
 void phNxpUciHal_process_response();

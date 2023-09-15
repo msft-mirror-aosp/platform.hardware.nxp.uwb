@@ -135,6 +135,12 @@
 #define UWB_ESE_BINDING_CHECK_NTF 0x32
 
 /**********************************************
+ * UWB Prop Group Opcode-F Opcodes
+ **********************************************/
+#define UCI_MSG_SET_DEVICE_CALIBRATION    0x21
+#define UCI_MSG_GET_DEVICE_CALIBRATION    0x22
+
+/**********************************************
  * UCI Parameter IDs : Device Configurations
  **********************************************/
 #define UCI_PARAM_ID_LOW_POWER_MODE 0x01
@@ -146,6 +152,11 @@
 #define UCI_PARAM_ID_AOA_AZIMUTH_MEASUREMENTS 0xE3
 #define UCI_PARAM_ID_AOA_ELEVATION_MEASUREMENTS 0xE4
 #define UCI_PARAM_ID_RANGE_MEASUREMENTS 0xE5
+
+/**********************************************
+ * UCI Parameter IDs : Calibration Parameters
+ **********************************************/
+#define UCI_PARAM_ID_RX_ANT_DELAY_CALIB   0x02
 
 /*************************************************
  * Status codes

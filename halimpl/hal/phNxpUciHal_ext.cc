@@ -13,16 +13,19 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <log/log.h>
-#include <phNxpUciHal_ext.h>
-#include <phNxpUciHal.h>
-#include <phTmlUwb.h>
-#include <phDal4Uwb_messageQueueLib.h>
-#include <phNxpLog.h>
-#include <phUwbCommon.h>
 #include <sys/stat.h>
+
+#include <bitset>
+
 #include <cutils/properties.h>
+
+#include "phDal4Uwb_messageQueueLib.h"
 #include "phNxpConfig.h"
+#include "phNxpLog.h"
+#include "phNxpUciHal_ext.h"
+#include "phNxpUciHal.h"
+#include "phTmlUwb.h"
+#include "phUwbCommon.h"
 
 /* Timeout value to wait for response from SR1xx */
 #define HAL_EXTNS_WRITE_RSP_TIMEOUT (100)
@@ -682,4 +685,78 @@ void phNxpUciHal_process_response() {
       UCI_STATUS_HW_RESET)) {
       phNxpUciHal_clear_thermal_runaway_status();
  }
+}
+
+/******************************************************************************
+ * Function         phNxpUciHal_extcal_handle_coreinit
+ *
+ * Description      Apply additional core device settings
+ *
+ * Returns          void.
+ *
+ ******************************************************************************/
+void phNxpUciHal_extcal_handle_coreinit(void)
+{
+  // Channels
+  const uint8_t cal_channels[] = {5, 6, 8, 9};
+
+  // Antenna Definitions: rx_antenna_mask(1), tx_antenna_mask(1)
+  uint8_t rx_antenna_mask_n = 0xff;
+  NxpConfig_GetNum("cal.rx_antenna_mask", &rx_antenna_mask_n, 1);
+  std::bitset<8> rx_antenna_mask(rx_antenna_mask_n);
+  const uint8_t n_rx_antennas = rx_antenna_mask.size();
+
+  // SET_CALIBRATION_CMD header: GID=0xF OID=0x21
+  const std::vector<uint8_t> packet_header({ (0x20 | UCI_GID_PROPRIETARY_0X0F), UCI_MSG_SET_DEVICE_CALIBRATION, 0x00, 0x00});
+
+  // RX_ANT_DELAY_CALIB(0x02)
+  // Read configuration file ant1.ch5.ant_delay
+  // N(1) + N * {AntennaID(1), Rxdelay(Q14.2)}
+  if (n_rx_antennas) {
+    for (auto ch : cal_channels) {
+      std::vector<uint8_t> entries;
+      uint8_t n_entries = 0;
+
+      for (auto i = 0; i < n_rx_antennas; i++) {
+        if (!rx_antenna_mask[i])
+          continue;
+
+        const uint8_t ant_id = i + 1;
+        uint16_t delay_value;
+        char key[32];
+        std::snprintf(key, sizeof(key), "cal.ant%u.ch%u.ant_delay", ant_id, ch);
+
+        if (!NxpConfig_GetNum(key, &delay_value, 2))
+          continue;
+
+        NXPLOG_UCIHAL_D("RX_ANT_DELAY_CALIB: found %s = %u", key, delay_value);
+        entries.push_back(ant_id);
+        entries.push_back(delay_value >> 8);
+        entries.push_back(delay_value & 0xff);
+        n_entries++;
+      }
+
+      if (!n_entries)
+        continue;
+
+      entries.insert(entries.begin(), n_entries);
+
+      std::vector<uint8_t> payload;
+      payload.push_back(ch);
+      payload.push_back(UCI_PARAM_ID_RX_ANT_DELAY_CALIB);
+      payload.push_back(entries.size());
+      payload.insert(payload.end(), entries.begin(), entries.end());
+
+      std::vector<uint8_t> packet(packet_header);
+      packet[3] = payload.size();
+      packet.insert(packet.end(), payload.begin(), payload.end());
+
+      tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
+      if (status != UWBSTATUS_SUCCESS) {
+        NXPLOG_UCIHAL_E("Failed to apply RX_ANT_DELAY_CALIB for channel %u", ch);
+      } else {
+        NXPLOG_UCIHAL_E("RX_ANT_DELAY_CALIB: applied for channel %u", ch);
+      }
+    }
+  }
 }
