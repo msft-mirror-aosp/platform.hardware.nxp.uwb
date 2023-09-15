@@ -55,6 +55,7 @@
 #define UCI_GID_CORE 0x00             /* 0000b UCI Core group */
 #define UCI_GID_SESSION_MANAGE 0x01   /* 0001b Session Config commands */
 #define UCI_GID_ANDROID 0x0C          /* 1100b Android vendor group */
+#define UCI_GID_PROPRIETARY_0X0A 0x0A /* 1010b Proprietary Group */
 #define UCI_GID_PROPRIETARY 0x0E      /* 1110b Proprietary Group */
 #define UCI_GID_PROPRIETARY_0X0F 0x0F /* 1111b Proprietary Group */
 #define UCI_GID_INTERNAL 0x0B         /* 1011b Internal Group */
@@ -134,6 +135,14 @@
 #define UCI_MSG_BINDING_STATUS_NTF 0x06
 #define UWB_ESE_BINDING_CHECK_NTF 0x32
 
+/**********************************************************
+ * OTP Calibration
+ **********************************************************/
+#define UCI_MSG_WRITE_CALIB_DATA  0x00
+#define UCI_MSG_READ_CALIB_DATA   0x01
+
+#define OTP_ID_XTAL_CAP_GM_CTRL   0x02
+
 /**********************************************
  * UWB Prop Group Opcode-F Opcodes
  **********************************************/
@@ -156,6 +165,7 @@
 /**********************************************
  * UCI Parameter IDs : Calibration Parameters
  **********************************************/
+#define UCI_PARAM_ID_RF_CLK_ACCURACY_CALIB    0x01
 #define UCI_PARAM_ID_RX_ANT_DELAY_CALIB   0x02
 
 /*************************************************

@@ -15,6 +15,7 @@
  */
 #include <sys/stat.h>
 
+#include <atomic>
 #include <bitset>
 
 #include <cutils/properties.h>
@@ -653,6 +654,58 @@ static void phNxpUciHal_clear_thermal_runaway_status() {
  }
 }
 
+struct ReadOtpCookie {
+  ReadOtpCookie(uint8_t param_id, uint8_t *buffer, size_t len) :
+    m_valid(false), m_id(param_id), m_buffer(buffer), m_len(len) {
+  }
+  std::atomic_bool  m_valid;
+  uint8_t m_id;
+  uint8_t *m_buffer;
+  size_t  m_len;
+};
+
+/******************************************************************************
+ * Function         otp_read_data
+ *
+ * Description      Read OTP calibration data
+ *
+ * Returns          true on success
+ *
+ ******************************************************************************/
+static bool otp_read_data(const uint8_t channel, const uint8_t param_id, uint8_t *buffer, size_t len)
+{
+  ReadOtpCookie cookie(param_id, buffer, len);
+
+  if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.calib_data_ntf_wait, &cookie) != UWBSTATUS_SUCCESS) {
+    NXPLOG_UCIHAL_E("Failed to create call back data for reading otp");
+    return false;
+  }
+
+  // READ_CALIB_DATA_CMD
+  std::vector<uint8_t> packet{(UCI_MT_CMD << UCI_MT_SHIFT) | UCI_GID_PROPRIETARY_0X0A, UCI_MSG_READ_CALIB_DATA, 0x00, 0x03};
+  packet.push_back(channel);
+  packet.push_back(0x01);      // OTP read option
+  packet.push_back(param_id);
+
+  tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
+  if (status != UWBSTATUS_SUCCESS) {
+    goto fail_otp_read_data;
+  }
+
+  phNxpUciHal_sem_timed_wait_sec(&nxpucihal_ctrl.calib_data_ntf_wait, 3);
+  if (!cookie.m_valid) {
+    goto fail_otp_read_data;
+  }
+
+  phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.calib_data_ntf_wait);
+  return true;
+
+fail_otp_read_data:
+  phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.calib_data_ntf_wait);
+  NXPLOG_UCIHAL_E("Failed to read OTP data id=%u", param_id);
+  return false;
+}
+
 /******************************************************************************
  * Function         phNxpUciHal_process_response
  *
@@ -665,7 +718,9 @@ static void phNxpUciHal_clear_thermal_runaway_status() {
 void phNxpUciHal_process_response() {
  tHAL_UWB_STATUS status;
 
- uint8_t gid = 0, oid = 0, pbf = 0;
+ uint8_t mt, gid, oid, pbf;
+
+ mt = (nxpucihal_ctrl.p_rx_data[0]  & UCI_MT_MASK) >> UCI_MT_SHIFT;
  gid = nxpucihal_ctrl.p_rx_data[0] & UCI_GID_MASK;
  oid = nxpucihal_ctrl.p_rx_data[1] & UCI_OID_MASK;
  pbf = (nxpucihal_ctrl.p_rx_data[0] & UCI_PBF_MASK) >> UCI_PBF_SHIFT;
@@ -685,6 +740,32 @@ void phNxpUciHal_process_response() {
       UCI_STATUS_HW_RESET)) {
       phNxpUciHal_clear_thermal_runaway_status();
  }
+
+  //
+  // Handle NXP_READ_CALIB_DATA_NTF
+  //
+  if ((mt == UCI_MT_NTF) && (gid == UCI_GID_PROPRIETARY_0X0A) && (oid == UCI_MSG_READ_CALIB_DATA)) {
+    // READ_CALIB_DATA_NTF: status(1), length-of-payload(1), payload(N)
+    const uint8_t plen = nxpucihal_ctrl.p_rx_data[3]; // payload-length
+    const uint8_t *p = &nxpucihal_ctrl.p_rx_data[4];  // payload
+    ReadOtpCookie *cookie = (ReadOtpCookie*)nxpucihal_ctrl.calib_data_ntf_wait.pContext;
+
+    if (!cookie || cookie->m_valid) {
+      // cookie is already valid
+      NXPLOG_UCIHAL_E("Otp read: unexpected read param-id=0x%x", cookie->m_id);
+    } else if (plen < 2) {
+      NXPLOG_UCIHAL_E("Otp read: bad payload length %u", plen);
+    } else if (p[0] != UCI_STATUS_OK) {
+      NXPLOG_UCIHAL_E("Otp read: bad status=0x%x", nxpucihal_ctrl.p_rx_data[4]);
+    } else if (p[1] != cookie->m_len) {
+      NXPLOG_UCIHAL_E("Otp read: size mismatch %u (expected %zu for param 0x%x)",
+        p[1], cookie->m_len, cookie->m_id);
+    } else {
+      memcpy(cookie->m_buffer, &p[2], cookie->m_len);
+      cookie->m_valid = true;
+      SEM_POST(&nxpucihal_ctrl.calib_data_ntf_wait);
+    }
+  }
 }
 
 /******************************************************************************
@@ -697,6 +778,8 @@ void phNxpUciHal_process_response() {
  ******************************************************************************/
 void phNxpUciHal_extcal_handle_coreinit(void)
 {
+  long retlen = 0;
+
   // Channels
   const uint8_t cal_channels[] = {5, 6, 8, 9};
 
@@ -709,7 +792,66 @@ void phNxpUciHal_extcal_handle_coreinit(void)
   // SET_CALIBRATION_CMD header: GID=0xF OID=0x21
   const std::vector<uint8_t> packet_header({ (0x20 | UCI_GID_PROPRIETARY_0X0F), UCI_MSG_SET_DEVICE_CALIBRATION, 0x00, 0x00});
 
-  // RX_ANT_DELAY_CALIB(0x02)
+  // Supported calibrations,
+  //  current HAL impl only supports "xtal" read from otp
+  //  others should be existed in .conf files
+  //
+  // | name          |otp-id|cal-id| size |per-   |per-   | otp |
+  // |               |      |      |      |channel|antenna|     |
+  // |---------------|------|------|------|-------|-------|-----|
+  // | xtal          | 0x02 | 0x02 | 3    | n     | n     | y   |
+  // | tx_power      | 0x04 | 0x17 | 2    | y     | y     |     |
+  // | ant_delay     | 0x0b | 0x02 | 2    | y     | y     |     |
+
+  // XTAL_CAP_GM_CTRL
+  // Check otp.xtal
+  uint8_t otp_xtal_flag = 0;
+  uint8_t otp_xtal_data[3];
+  uint8_t xtal_data[6];
+  bool need_xtal_calibration = false;
+
+  if (NxpConfig_GetNum("cal.otp.xtal", &otp_xtal_flag, 1) && otp_xtal_flag) {
+    if (otp_read_data(0x09, OTP_ID_XTAL_CAP_GM_CTRL, otp_xtal_data, sizeof(otp_xtal_data))) {
+      // convert OTP_ID_XTAL_CAP_GM_CTRL to RF_CLK_ACCURACY_CALIB
+      memset(xtal_data, 0, sizeof(xtal_data));
+      xtal_data[0] = otp_xtal_data[0];
+      xtal_data[2] = otp_xtal_data[1];
+      xtal_data[4] = otp_xtal_data[2];
+      need_xtal_calibration = true;
+    } else {
+      NXPLOG_UCIHAL_E("Failed to read OTP XTAL_CAP_GM_CTRL");
+    }
+  } else if (NxpConfig_GetByteArray("cal.xtal", otp_xtal_data, sizeof(otp_xtal_data), &retlen) &&
+             retlen == sizeof(otp_xtal_data)) {
+    need_xtal_calibration = true;
+  }
+
+  if (need_xtal_calibration) {
+    std::vector<uint8_t> payload;
+
+    // Channel, 9, don't care for RF_CLK_ACCURACY_CALIB
+    payload.push_back(9);
+    // Tag
+    payload.push_back(UCI_PARAM_ID_RF_CLK_ACCURACY_CALIB);
+    // Length = 7
+    payload.push_back(1 + sizeof(xtal_data));
+    // octet[0] = 3
+    payload.push_back(3);
+    // octet[6:1] = cap1(2), cap2(2), gm_current_control(2)
+    payload.insert(payload.end(), &xtal_data[0], &xtal_data[6]);
+
+    std::vector<uint8_t> packet(packet_header);
+    packet[3] = payload.size();
+    packet.insert(packet.end(), payload.begin(), payload.end());
+
+    tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
+    if (status != UWBSTATUS_SUCCESS) {
+      NXPLOG_UCIHAL_E("Failed to apply XTAL_CAP_GM_CTRL={%02x,%02x,%02x,%02x,%02x,%02x}",
+      xtal_data[0], xtal_data[1], xtal_data[2], xtal_data[3], xtal_data[4], xtal_data[5]);
+    }
+  }
+
+  // RX_ANT_DELAY_CALIB(0x0F)
   // Read configuration file ant1.ch5.ant_delay
   // N(1) + N * {AntennaID(1), Rxdelay(Q14.2)}
   if (n_rx_antennas) {

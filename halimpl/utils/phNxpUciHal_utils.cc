@@ -393,7 +393,7 @@ void phNxpUciHal_cleanup_cb_data(phNxpUciHal_Sem_t* pCallbackData) {
   return;
 }
 
-void phNxpUciHal_sem_timed_wait(phNxpUciHal_Sem_t* pCallbackData) {
+void phNxpUciHal_sem_timed_wait_sec(phNxpUciHal_Sem_t* pCallbackData, time_t sec) {
   int ret;
   struct timespec absTimeout;
   if (clock_gettime(CLOCK_MONOTONIC, &absTimeout) == -1) {
@@ -401,7 +401,7 @@ void phNxpUciHal_sem_timed_wait(phNxpUciHal_Sem_t* pCallbackData) {
     pCallbackData->status = UWBSTATUS_FAILED;
     return;
   }
-  absTimeout.tv_sec += 1; /*1 second timeout*/
+  absTimeout.tv_sec += sec;
   while ((ret = sem_timedwait_monotonic_np(&pCallbackData->sem, &absTimeout)) == -1 && errno == EINTR) {
     continue;
   }
@@ -414,6 +414,11 @@ void phNxpUciHal_sem_timed_wait(phNxpUciHal_Sem_t* pCallbackData) {
   return;
 }
 
+void phNxpUciHal_sem_timed_wait(phNxpUciHal_Sem_t* pCallbackData)
+{
+  /* default 1 second timeout*/
+  phNxpUciHal_sem_timed_wait_sec(pCallbackData, 1);
+}
 
 /*******************************************************************************
 **
