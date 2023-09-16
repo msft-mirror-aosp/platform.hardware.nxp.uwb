@@ -282,12 +282,12 @@ bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data) {
         cc_resp = (uint8_t *)malloc(UCI_MAX_DATA_LEN * sizeof(char));
 
         // Read country code conf file location
-        if (GetNxpConfigByteArrayValue(NAME_COUNTRY_CODE_CAP_FILE_LOCATION,
+        if (NxpConfig_GetByteArray(NAME_COUNTRY_CODE_CAP_FILE_LOCATION,
                                        configured_country_code_location,
                                        loc_max_len, &retlen)) {
           uint32_t loc_len = 0;
           while (loc_len < retlen) {
-            if (GetNxpConfigCountryCodeVersion(
+            if (NxpConfig_GetCountryCodeVersion(
                     NAME_NXP_COUNTRY_CODE_VERSION,
                     (char*)&configured_country_code_location[loc_len], version, 8)) {
               cc_version_map[atoi(version)] =
@@ -308,7 +308,7 @@ bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data) {
           NXPLOG_UCIHAL_D("Country code %c%c is Invalid!", country_code[0],
                           country_code[1]);
         } else {
-          if (GetNxpConfigCountryCodeCapsByteArrayValue(
+          if (NxpConfig_GetCountryByteArray(
                   NAME_NXP_UWB_COUNTRY_CODE_CAPS, cc_path, country_code,
                   cc_resp, UCI_MAX_DATA_LEN, &retlen)) {
             NXPLOG_UCIHAL_D("Country code conf loaded , Country %c%c",
@@ -845,7 +845,7 @@ void phNxpUciHal_parse_get_capsInfo(uint16_t data_len, uint8_t *p_data) {
           long retlen = 0;
           int numberOfParams = 0;
 
-          if (GetNxpConfigByteArrayValue(NAME_UWB_VENDOR_CAPABILITY,
+          if (NxpConfig_GetByteArray(NAME_UWB_VENDOR_CAPABILITY,
                                          buffer.data(), buffer.size(),
                                          &retlen)) {
             if (retlen > 0) {
@@ -1269,9 +1269,9 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
   buffer.fill(0);
   long retlen = 0;
   if (nxpucihal_ctrl.fw_boot_mode == USER_FW_BOOT_MODE) {
-    if (GetNxpConfigByteArrayValue(NAME_UWB_USER_FW_BOOT_MODE_CONFIG,
-                                   buffer.data(), buffer.size(),
-                                   &retlen)) {
+    if (NxpConfig_GetByteArray(NAME_UWB_USER_FW_BOOT_MODE_CONFIG,
+                               buffer.data(), buffer.size(),
+                               &retlen)) {
       if ((retlen > 0) && (retlen <= UCI_MAX_DATA_LEN)) {
         vendorConfig = buffer.data();
         status = phNxpUciHal_send_ext_cmd(retlen, vendorConfig);
@@ -1284,7 +1284,7 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
       }
     }
   }
-  if (GetNxpConfigByteArrayValue(NAME_NXP_UWB_EXTENDED_NTF_CONFIG,
+  if (NxpConfig_GetByteArray(NAME_NXP_UWB_EXTENDED_NTF_CONFIG,
                                  buffer.data(), buffer.size(),
                                  &retlen)) {
     if (retlen > 0) {
@@ -1298,9 +1298,9 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
     }
   }
   if (deviceType == SR1xxT) {
-    if (GetNxpConfigByteArrayValue(NAME_UWB_CORE_EXT_DEVICE_SR1XX_T_CONFIG,
-                                   buffer.data(), buffer.size(),
-                                   &retlen)) {
+    if (NxpConfig_GetByteArray(NAME_UWB_CORE_EXT_DEVICE_SR1XX_T_CONFIG,
+                               buffer.data(), buffer.size(),
+                               &retlen)) {
       if (retlen > 0) {
         vendorConfig = buffer.data();
         status = phNxpUciHal_send_ext_cmd(retlen, vendorConfig);
@@ -1317,9 +1317,9 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
       }
     }
   } else if (deviceType == SR1xxS) {
-    if (GetNxpConfigByteArrayValue(NAME_UWB_CORE_EXT_DEVICE_SR1XX_S_CONFIG,
-                                   buffer.data(), buffer.size(),
-                                   &retlen)) {
+    if (NxpConfig_GetByteArray(NAME_UWB_CORE_EXT_DEVICE_SR1XX_S_CONFIG,
+                            buffer.data(), buffer.size(),
+                            &retlen)) {
       if (retlen > 0) {
         vendorConfig = buffer.data();
         status = phNxpUciHal_send_ext_cmd(retlen, vendorConfig);
@@ -1337,7 +1337,7 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
     }
   } else {
     NXPLOG_UCIHAL_D("phNxpUciHal_sendGetCoreDeviceInfo deviceType default");
-    if (GetNxpConfigByteArrayValue(NAME_UWB_CORE_EXT_DEVICE_DEFAULT_CONFIG,
+    if (NxpConfig_GetByteArray(NAME_UWB_CORE_EXT_DEVICE_DEFAULT_CONFIG,
                                    buffer.data(), buffer.size(),
                                    &retlen)) {
       if (retlen > 0) {
@@ -1356,7 +1356,7 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
       }
     }
   }
-  if (GetNxpConfigByteArrayValue(NAME_NXP_UWB_XTAL_38MHZ_CONFIG,
+  if (NxpConfig_GetByteArray(NAME_NXP_UWB_XTAL_38MHZ_CONFIG,
                                  buffer.data(), buffer.size(),
                                  &retlen)) {
     if (retlen > 0) {
@@ -1374,7 +1374,7 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
     std::string value = std::to_string(i);
     std::string name = str + value;
     NXPLOG_UCIHAL_D(" phNxpUciHal_applyVendorConfig :: Name of the config block is %s", name.c_str());
-    if (GetNxpConfigByteArrayValue(name.c_str(), buffer.data(), buffer.size(), &retlen)) {
+    if (NxpConfig_GetByteArray(name.c_str(), buffer.data(), buffer.size(), &retlen)) {
       if ((retlen > 0) && (retlen <= UCI_MAX_DATA_LEN)) {
         vendorConfig = buffer.data();
         status = phNxpUciHal_send_ext_cmd(retlen,vendorConfig);
@@ -1734,15 +1734,15 @@ tHAL_UWB_STATUS phNxpUciHal_sessionInitialization(uint32_t sessionId) {
     return UWBSTATUS_FAILED;
   }
   if(deviceType == SR1xxT) {
-    appConfigStatus = GetNxpConfigByteArrayValue(NAME_NXP_UWB_EXT_APP_SR1XX_T_CONFIG,
+    appConfigStatus = NxpConfig_GetByteArray(NAME_NXP_UWB_EXT_APP_SR1XX_T_CONFIG,
                                    buffer.data(), buffer.size(),
                                    &retlen);
   } else if (deviceType == SR1xxS) {
-    appConfigStatus = GetNxpConfigByteArrayValue(NAME_NXP_UWB_EXT_APP_SR1XX_S_CONFIG,
+    appConfigStatus = NxpConfig_GetByteArray(NAME_NXP_UWB_EXT_APP_SR1XX_S_CONFIG,
                                    buffer.data(), buffer.size(),
                                    &retlen);
   } else {
-    appConfigStatus = GetNxpConfigByteArrayValue(NAME_NXP_UWB_EXT_APP_DEFAULT_CONFIG,
+    appConfigStatus = NxpConfig_GetByteArray(NAME_NXP_UWB_EXT_APP_DEFAULT_CONFIG,
                                    buffer.data(), buffer.size(),
                                    &retlen);
   }

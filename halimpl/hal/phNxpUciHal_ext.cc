@@ -227,13 +227,13 @@ tHAL_UWB_STATUS phNxpUciHal_set_board_config(){
   NXPLOG_UCIHAL_D("%s: enter; ", __func__);
   uint8_t boardConfig = 0, boardVersion = 0;
 
-  if(GetNxpConfigNumValue(NAME_UWB_BOARD_VARIANT_CONFIG, &num, sizeof(num))){
+  if(NxpConfig_GetNum(NAME_UWB_BOARD_VARIANT_CONFIG, &num, sizeof(num))){
     boardConfig = (uint8_t)num;
     NXPLOG_UCIHAL_D("%s: NAME_UWB_BOARD_VARIANT_CONFIG: %x", __func__,boardConfig);
   } else {
     NXPLOG_UCIHAL_D("%s: NAME_UWB_BOARD_VARIANT_CONFIG: failed %x", __func__,boardConfig);
   }
-  if(GetNxpConfigNumValue(NAME_UWB_BOARD_VARIANT_VERSION, &num, sizeof(num))){
+  if(NxpConfig_GetNum(NAME_UWB_BOARD_VARIANT_VERSION, &num, sizeof(num))){
     boardVersion = (uint8_t)num;
     NXPLOG_UCIHAL_D("%s: NAME_UWB_BOARD_VARIANT_VERSION: %x", __func__,boardVersion);
   } else{

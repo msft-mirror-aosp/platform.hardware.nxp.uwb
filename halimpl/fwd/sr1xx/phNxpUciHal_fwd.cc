@@ -78,7 +78,7 @@ static int init(void) {
   }
   if((deviceLcInfo == PHHBCI_HELIOS_PROD_KEY_1) || (deviceLcInfo == PHHBCI_HELIOS_PROD_KEY_2)) {
     pDefaultFwFileName = default_prod_fw;
-    if (!GetNxpConfigStrValue(NAME_NXP_UWB_PROD_FW_FILENAME, configured_fw_name, fw_max_len)) {
+    if (!NxpConfig_GetStr(NAME_NXP_UWB_PROD_FW_FILENAME, configured_fw_name, fw_max_len)) {
       ALOGD("Invalid Prod Fw  name keeping the default name: %s", pDefaultFwFileName);
       strncat(default_fw_path, pDefaultFwFileName, maxSrcLen);
     } else{
@@ -87,7 +87,7 @@ static int init(void) {
     }
   } else if (deviceLcInfo == PHHBCI_HELIOS_DEV_KEY) {
     pDefaultFwFileName = default_dev_fw;
-    if (!GetNxpConfigStrValue(NAME_NXP_UWB_DEV_FW_FILENAME, configured_fw_name, fw_max_len)) {
+    if (!NxpConfig_GetStr(NAME_NXP_UWB_DEV_FW_FILENAME, configured_fw_name, fw_max_len)) {
       ALOGD("Invalid Dev Fw  name keeping the default name: %s", pDefaultFwFileName);
       strncat(default_fw_path, pDefaultFwFileName, maxSrcLen);
     } else{
@@ -964,7 +964,7 @@ int phNxpUciHal_fw_download() {
     }
     is_fw_download_log_enabled = false;
 
-    if(GetNxpConfigNumValue(NAME_UWB_FW_DOWNLOAD_LOG, &num, sizeof(num))){
+    if(NxpConfig_GetNum(NAME_UWB_FW_DOWNLOAD_LOG, &num, sizeof(num))){
         is_fw_download_log_enabled = (uint8_t)num;
         ALOGD("NAME_UWB_FW_DOWNLOAD_LOG: 0x%02x\n",is_fw_download_log_enabled);
     } else {

@@ -574,58 +574,23 @@ void uwbParam::dump(const string &tag) const
 
 /*******************************************************************************
 **
-** Function:    readCountryCodeConfig()
-**
-** Description: read Config settings from a country code conf file
-**
-** Returns:     none
-**
-*******************************************************************************/
-void readCountryCodeConfig(const char *path) {
-
-    string strPath;
-    if (path[0] != '\0')
-        strPath.assign(path);
-
-    strPath += country_code_config_name;
-
-    CUwbNxpConfig::GetInstance().readConfig(strPath.c_str(), false);
-}
-/*******************************************************************************
-**
-** Function:    GetStrValue
+** Function:    NxpConfig_GetStr
 **
 ** Description: API function for getting a string value of a setting
 **
 ** Returns:     True if found, otherwise False.
 **
 *******************************************************************************/
-extern "C" int GetNxpConfigStrValue(const char* name, char* pValue, unsigned long len)
+extern "C" int NxpConfig_GetStr(const char* name, char* pValue, unsigned long len)
 {
     CUwbNxpConfig& rConfig = CUwbNxpConfig::GetInstance();
 
     return rConfig.getValue(name, pValue, len);
 }
 
-extern "C" int GetNxpConfigCountryCodeVersion(const char *name,
-                                              const char *path, char *pValue,
-                                              long bufflen) {
-    CUwbNxpConfig &rConfig = CUwbNxpConfig::GetInstance();
-    readCountryCodeConfig(path);
-    return rConfig.getValue(name, pValue, bufflen);
-}
-
-extern "C" int GetNxpConfigCountryCodeCapsByteArrayValue(
-    const char *name, const char *cc_path, const char *country_code,
-    uint8_t *pValue, long bufflen, long *len) {
-    CUwbNxpConfig &rConfig = CUwbNxpConfig::GetInstance();
-    readCountryCodeConfig(cc_path);
-    return rConfig.getValue(name, pValue, bufflen, len);
-}
-
 /*******************************************************************************
 **
-** Function:    GetNxpByteArrayValue()
+** Function:    NxpConfig_GetByteArray()
 **
 ** Description: Read byte array value from the config file.
 **
@@ -639,27 +604,24 @@ extern "C" int GetNxpConfigCountryCodeCapsByteArrayValue(
 ** Returns:     TRUE[1] if config param name is found in the config file, else FALSE[0]
 **
 *******************************************************************************/
-extern "C" int GetNxpConfigByteArrayValue(const char* name, uint8_t* pValue,long bufflen, long *len)
+extern "C" int NxpConfig_GetByteArray(const char* name, uint8_t* pValue,long bufflen, long *len)
 {
-    ALOGD_IF(uwb_debug_enabled, "GetNxpConfigByteArrayValue enter....");
     CUwbNxpConfig& rConfig = CUwbNxpConfig::GetInstance();
     rConfig.readNxpConfig(default_nxp_config_path);
-    ALOGD_IF(uwb_debug_enabled, "GetNxpConfigByteArrayValue1 enter....");
     return rConfig.getValue(name, pValue, bufflen,len);
 }
 
 /*******************************************************************************
 **
-** Function:    GetNumValue
+** Function:    NxpConfig_GetNum
 **
 ** Description: API function for getting a numerical value of a setting
 **
 ** Returns:     true, if successful
 **
 *******************************************************************************/
-extern "C" int GetNxpConfigNumValue(const char* name, void* pValue, unsigned long len)
+extern "C" int NxpConfig_GetNum(const char* name, void* pValue, unsigned long len)
 {
-    ALOGD_IF(uwb_debug_enabled, "GetNxpConfigNumValue... enter....");
     if (pValue == NULL){
         return false;
     }
@@ -684,8 +646,43 @@ extern "C" int GetNxpConfigNumValue(const char* name, void* pValue, unsigned lon
         *(static_cast<unsigned char*> (pValue)) = (unsigned char)v;
         break;
     default:
-        ALOGD_IF(uwb_debug_enabled, "GetNxpConfigNumValue default");
         return false;
     }
     return true;
+}
+
+/*******************************************************************************
+**
+** Function:    readCountryCodeConfig()
+**
+** Description: read Config settings from a country code conf file
+**
+** Returns:     none
+**
+*******************************************************************************/
+void readCountryCodeConfig(const char *path) {
+
+    string strPath;
+    if (path[0] != '\0')
+        strPath.assign(path);
+
+    strPath += country_code_config_name;
+
+    CUwbNxpConfig::GetInstance().readConfig(strPath.c_str(), false);
+}
+
+extern "C" int NxpConfig_GetCountryCodeVersion(const char *name,
+                                              const char *path, char *pValue,
+                                              long bufflen) {
+    CUwbNxpConfig &rConfig = CUwbNxpConfig::GetInstance();
+    readCountryCodeConfig(path);
+    return rConfig.getValue(name, pValue, bufflen);
+}
+
+extern "C" int NxpConfig_GetCountryByteArray(
+    const char *name, const char *cc_path, const char *country_code,
+    uint8_t *pValue, long bufflen, long *len) {
+    CUwbNxpConfig &rConfig = CUwbNxpConfig::GetInstance();
+    readCountryCodeConfig(cc_path);
+    return rConfig.getValue(name, pValue, bufflen, len);
 }
