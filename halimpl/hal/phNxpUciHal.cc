@@ -324,6 +324,9 @@ bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data) {
             NXPLOG_UCIHAL_D("Country code conf is empty!");
           }
         }
+
+        NxpConfig_SetCountryCode(country_code);
+
         // send country code response to upper layer
         nxpucihal_ctrl.rx_data_len = 5;
         static uint8_t rsp_data[5];
@@ -515,6 +518,8 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback,
     NXPLOG_UCIHAL_E("phNxpUciHal_open already open");
     return UWBSTATUS_SUCCESS;
   }
+
+  NxpConfig_Init();
 
   /* initialize trace level */
   phNxpLog_InitializeLogLevel();

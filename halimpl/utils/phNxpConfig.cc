@@ -36,13 +36,9 @@
 
 extern bool uwb_debug_enabled;
 
-#define nxp_config_name             "libuwb-nxp.conf"
-#define country_code_config_name "libuwb-countrycode.conf"
-
-#define extra_config_base "libuwb-"
-#define extra_config_ext ".conf"
-
-const char default_nxp_config_path[] = "/vendor/etc/";
+const char default_nxp_config_path[] = "/vendor/etc/libuwb-nxp.conf";
+const char country_code_config_name[] = "libuwb-countrycode.conf";
+const char country_code_specifier[] = "<country>";
 
 using namespace::std;
 
@@ -76,24 +72,30 @@ private:
 class CUwbNxpConfig
 {
 public:
+    CUwbNxpConfig();
+    CUwbNxpConfig(CUwbNxpConfig&& config);
+    CUwbNxpConfig(const char *filepath);
     virtual ~CUwbNxpConfig();
-    static CUwbNxpConfig& GetInstance();
-    friend void readCountryCodeConfig(const char *path);
+    CUwbNxpConfig& operator=(CUwbNxpConfig&& config);
 
-    bool    getValue(const char* name, char* pValue, size_t len) const;
-    bool    getValue(const char* name, unsigned long& rValue) const;
-    bool    getValue(const char* name, uint8_t* pValue, long len, long* readlen) const;
+    bool isValid() const { return mValidFile; }
+    bool isCountrySpecific() const { return mCountrySpecific; }
+    void reset() {
+        m_map.clear();
+        mValidFile = false;
+    }
 
     const uwbParam*    find(const char* p_name) const;
-    void    readNxpConfig(const char* fileName) const;
+    void    setCountry(const string& strCountry);
 private:
-    CUwbNxpConfig();
-    bool    readConfig(const char* name, bool bResetContent);
+    bool    readConfig();
     void    dump() const;
 
     unordered_map<string, uwbParam> m_map;
     bool    mValidFile;
+    string  mFilePath;
     string  mCurrentFile;
+    bool    mCountrySpecific;
 };
 
 /*******************************************************************************
@@ -171,7 +173,7 @@ inline int getDigitValue(char c, int base)
 ** Returns:     1, if there are any config data, 0 otherwise
 **
 *******************************************************************************/
-bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
+bool CUwbNxpConfig::readConfig()
 {
     enum {
         BEGIN_LINE = 1,
@@ -193,32 +195,24 @@ bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
     vector<uint8_t> arrValue;
     int     base = 0;
     int     c;
-
+    const char *name = mCurrentFile.c_str();
     unsigned long state = BEGIN_LINE;
+
+    mValidFile = false;
+    m_map.clear();
+
     /* open config file, read it into a buffer */
     if ((fd = fopen(name, "rb")) == NULL)
     {
         ALOGD_IF(uwb_debug_enabled, "%s Cannot open config file %s\n", __func__, name);
-        if (bResetContent)
-        {
-            ALOGD_IF(uwb_debug_enabled, "%s Using default value for all settings\n", __func__);
-            mValidFile = false;
-        }
         return false;
     }
-    ALOGD_IF(uwb_debug_enabled, "%s Opened %s config %s\n", __func__, (bResetContent ? "base" : "optional"), name);
+    ALOGD_IF(uwb_debug_enabled, "%s Opened config %s\n", __func__, name);
     if(stat(name, &buf) < 0)
     {
         ALOGD_IF(uwb_debug_enabled, "Get File Information failed");
         fclose(fd);
         return false;
-    }
-
-    mValidFile = true;
-
-    if (bResetContent) {
-        m_map.clear();
-        mCurrentFile = name;
     }
 
     for (;;) {
@@ -334,7 +328,12 @@ bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
 
     fclose(fd);
     dump();
-    return true;
+
+    if (m_map.size() > 0) {
+        mValidFile = true;
+    }
+
+    return mValidFile;
 }
 
 /*******************************************************************************
@@ -347,7 +346,8 @@ bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
 **
 *******************************************************************************/
 CUwbNxpConfig::CUwbNxpConfig() :
-    mValidFile(false)
+    mValidFile(false),
+    mCountrySpecific(false)
 {
 }
 
@@ -364,98 +364,56 @@ CUwbNxpConfig::~CUwbNxpConfig()
 {
 }
 
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::GetInstance()
-**
-** Description: get class singleton object
-**
-** Returns:     none
-**
-*******************************************************************************/
-CUwbNxpConfig& CUwbNxpConfig::GetInstance()
+CUwbNxpConfig::CUwbNxpConfig(const char *filepath) :
+    mValidFile(false),
+    mFilePath(filepath),
+    mCountrySpecific(false)
 {
-  static CUwbNxpConfig theInstance;
-  if (!theInstance.mValidFile) {
-    string strPath;
-    if (default_nxp_config_path[0] != '\0') {
-      strPath.assign(default_nxp_config_path);
-      strPath += nxp_config_name;
-      theInstance.readConfig(strPath.c_str(), true);
+    auto pos = mFilePath.find(country_code_specifier);
+    if (pos == string::npos) {
+        mCurrentFile = mFilePath;
+        readConfig();
+    } else {
+        mCountrySpecific = true;
     }
-  }
-  return theInstance;
 }
 
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::getValue()
-**
-** Description: get a string value of a setting
-**
-** Returns:     true if setting exists
-**              false if setting does not exist
-**
-*******************************************************************************/
-bool CUwbNxpConfig::getValue(const char* name, char* pValue, size_t len) const
+CUwbNxpConfig::CUwbNxpConfig(CUwbNxpConfig&& config)
 {
-    const uwbParam *param = find(name);
-    if (!param)
-        return false;
-    if (param->getType() != uwbParam::type::STRING)
-        return false;
-    if (len < (param->str_len() + 1))
-        return false;
+    m_map = move(config.m_map);
+    mValidFile = config.mValidFile;
+    mFilePath = move(config.mFilePath);
+    mCurrentFile = move(config.mCurrentFile);
+    mCountrySpecific = config.mCountrySpecific;
 
-    strncpy(pValue, param->str_value(), len);
-    return true;
+    config.mValidFile = false;
 }
 
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::getValue()
-**
-** Description: get a byte array value of a setting
-**
-** Returns:     true if setting exists
-**              false if setting does not exist
-**
-*******************************************************************************/
-bool CUwbNxpConfig::getValue(const char* name, uint8_t* pValue, long len, long* readlen) const
+CUwbNxpConfig& CUwbNxpConfig::operator=(CUwbNxpConfig&& config)
 {
-    const uwbParam *param = find(name);
-    if (!param)
-        return false;
-    if (param->getType() != uwbParam::type::BYTEARRAY)
-        return false;
-    if (len < param->arr_len())
-        return false;
-    memcpy(pValue, param->arr_value(), param->arr_len());
-    if (readlen)
-        *readlen = param->arr_len();
-    return true;
+    m_map = move(config.m_map);
+    mValidFile = config.mValidFile;
+    mFilePath = move(config.mFilePath);
+    mCurrentFile = move(config.mCurrentFile);
+    mCountrySpecific = config.mCountrySpecific;
+
+    config.mValidFile = false;
+    return *this;
 }
 
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::getValue()
-**
-** Description: get a long numerical value of a setting
-**
-** Returns:     true if setting exists
-**              false if setting does not exist
-**
-*******************************************************************************/
-bool CUwbNxpConfig::getValue(const char* name, unsigned long& rValue) const
+void CUwbNxpConfig::setCountry(const string& strCountry)
 {
-    const uwbParam *param = find(name);
-    if (!param)
-        return false;
-    if (param->getType() != uwbParam::type::NUMBER)
-        return false;
+    if (!isCountrySpecific())
+        return;
 
-    rValue = param->numValue();
-    return true;
+    mCurrentFile = mFilePath;
+    auto pos = mCurrentFile.find(country_code_specifier);
+    if (pos == string::npos) {
+        return;
+    }
+
+    mCurrentFile.replace(pos, strlen(country_code_specifier), strCountry);
+    readConfig();
 }
 
 /*******************************************************************************
@@ -470,24 +428,11 @@ bool CUwbNxpConfig::getValue(const char* name, unsigned long& rValue) const
 const uwbParam* CUwbNxpConfig::find(const char* p_name) const
 {
     const auto it = m_map.find(p_name);
+
     if (it == m_map.cend()) {
         return NULL;
     }
     return &it->second;
-}
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::readNxpPHYConfig()
-**
-** Description: read Config settings from RF conf file
-**
-** Returns:     none
-**
-*******************************************************************************/
-void CUwbNxpConfig::readNxpConfig(const char* fileName) const
-{
-    ALOGD_IF(uwb_debug_enabled, "readNxpConfig-Enter..Reading");
-    CUwbNxpConfig::GetInstance().readConfig(fileName, false);
 }
 
 /*******************************************************************************
@@ -572,6 +517,137 @@ void uwbParam::dump(const string &tag) const
     }
 }
 
+/*******************************************************************************/
+class CascadeConfig {
+public:
+    CascadeConfig();
+
+    void init(const char *main_config);
+    void setCountryCode(const char country_code[2]);
+
+    const uwbParam* find(const char *name)  const;
+    bool    getValue(const char* name, char* pValue, size_t len) const;
+    bool    getValue(const char* name, unsigned long& rValue) const;
+    bool    getValue(const char* name, uint8_t* pValue, long len, long* readlen) const;
+private:
+    // default_nxp_config_path
+    CUwbNxpConfig mMainConfig;
+
+    // EXTRA_CONF_PATH[N]
+    vector<CUwbNxpConfig> mExtraConfig;
+
+    // [COUNTRY_CODE_CAP_FILE_LOCATION]/country_code_config_name
+    CUwbNxpConfig mCapsConfig;
+};
+
+CascadeConfig::CascadeConfig()
+{
+}
+
+void CascadeConfig::init(const char *main_config)
+{
+    // Main config file
+    CUwbNxpConfig config(main_config);
+    if (!config.isValid()) {
+        ALOGW_IF(uwb_debug_enabled, "Failed to load main config file");
+        return;
+    }
+    mMainConfig = move(config);
+
+    // Read EXTRA_CONF_PATH[N]
+    for (int i = 1; i <= 10; i++) {
+        char key[32];
+        snprintf(key, sizeof(key), "EXTRA_CONF_PATH_%d", i);
+        const uwbParam *param = mMainConfig.find(key);
+        if (!param)
+            continue;
+        CUwbNxpConfig config(param->str_value());
+        mExtraConfig.emplace_back(move(config));
+    }
+
+    // TODO: load one config files from COUNTRY_CODE_CAP_FILE_LOCATION
+}
+
+void CascadeConfig::setCountryCode(const char country_code[2])
+{
+    string strCountry{country_code[0], country_code[1], '\0'};
+
+    ALOGD_IF(uwb_debug_enabled, "Apply country code %c%c\n",
+        country_code[0], country_code[1]);
+    for (auto &x : mExtraConfig) {
+        x.setCountry(strCountry);
+    }
+}
+
+const uwbParam* CascadeConfig::find(const char *name) const
+{
+    const uwbParam* param = NULL;
+    for (auto it = mExtraConfig.rbegin(); it != mExtraConfig.rend(); it++) {
+        param = it->find(name);
+        if (param)
+            break;
+    }
+    if (!param) {
+        param = mMainConfig.find(name);
+    }
+    return param;
+}
+
+bool CascadeConfig::getValue(const char* name, char* pValue, size_t len) const
+{
+    const uwbParam *param = find(name);
+    if (!param)
+        return false;
+    if (param->getType() != uwbParam::type::STRING)
+        return false;
+    if (len < (param->str_len() + 1))
+        return false;
+
+    strncpy(pValue, param->str_value(), len);
+    return true;
+}
+
+bool CascadeConfig::getValue(const char* name, uint8_t* pValue, long len, long* readlen) const
+{
+    const uwbParam *param = find(name);
+    if (!param)
+        return false;
+    if (param->getType() != uwbParam::type::BYTEARRAY)
+        return false;
+    if (len < param->arr_len())
+        return false;
+    memcpy(pValue, param->arr_value(), param->arr_len());
+    if (readlen)
+        *readlen = param->arr_len();
+    return true;
+}
+
+bool CascadeConfig::getValue(const char* name, unsigned long& rValue) const
+{
+    const uwbParam *param = find(name);
+    if (!param)
+        return false;
+    if (param->getType() != uwbParam::type::NUMBER)
+        return false;
+
+    rValue = param->numValue();
+    return true;
+}
+
+/*******************************************************************************/
+
+static CascadeConfig gConfig;
+
+extern "C" void NxpConfig_Init(void)
+{
+    gConfig.init(default_nxp_config_path);
+}
+
+extern "C" void NxpConfig_SetCountryCode(const char country_code[2])
+{
+    gConfig.setCountryCode(country_code);
+}
+
 /*******************************************************************************
 **
 ** Function:    NxpConfig_GetStr
@@ -583,9 +659,7 @@ void uwbParam::dump(const string &tag) const
 *******************************************************************************/
 extern "C" int NxpConfig_GetStr(const char* name, char* pValue, unsigned long len)
 {
-    CUwbNxpConfig& rConfig = CUwbNxpConfig::GetInstance();
-
-    return rConfig.getValue(name, pValue, len);
+    return gConfig.getValue(name, pValue, len);
 }
 
 /*******************************************************************************
@@ -606,9 +680,7 @@ extern "C" int NxpConfig_GetStr(const char* name, char* pValue, unsigned long le
 *******************************************************************************/
 extern "C" int NxpConfig_GetByteArray(const char* name, uint8_t* pValue,long bufflen, long *len)
 {
-    CUwbNxpConfig& rConfig = CUwbNxpConfig::GetInstance();
-    rConfig.readNxpConfig(default_nxp_config_path);
-    return rConfig.getValue(name, pValue, bufflen,len);
+    return gConfig.getValue(name, pValue, bufflen,len);
 }
 
 /*******************************************************************************
@@ -625,8 +697,7 @@ extern "C" int NxpConfig_GetNum(const char* name, void* pValue, unsigned long le
     if (pValue == NULL){
         return false;
     }
-    CUwbNxpConfig& rConfig = CUwbNxpConfig::GetInstance();
-    const uwbParam* pParam = rConfig.find(name);
+    const uwbParam* pParam = gConfig.find(name);
 
     if (pParam == NULL)
         return false;
@@ -655,34 +726,53 @@ extern "C" int NxpConfig_GetNum(const char* name, void* pValue, unsigned long le
 **
 ** Function:    readCountryCodeConfig()
 **
-** Description: read Config settings from a country code conf file
+** Description: return CountryCode Config file path
 **
 ** Returns:     none
 **
 *******************************************************************************/
-void readCountryCodeConfig(const char *path) {
+static string getCountryCodeConfigFilePath(const char *path) {
 
     string strPath;
     if (path[0] != '\0')
         strPath.assign(path);
 
     strPath += country_code_config_name;
-
-    CUwbNxpConfig::GetInstance().readConfig(strPath.c_str(), false);
+    return strPath;
 }
 
 extern "C" int NxpConfig_GetCountryCodeVersion(const char *name,
                                               const char *path, char *pValue,
-                                              long bufflen) {
-    CUwbNxpConfig &rConfig = CUwbNxpConfig::GetInstance();
-    readCountryCodeConfig(path);
-    return rConfig.getValue(name, pValue, bufflen);
+                                              long bufflen)
+{
+    string strPath = getCountryCodeConfigFilePath(path);
+    CUwbNxpConfig rConfig(strPath.c_str());
+    const uwbParam *param = rConfig.find(name);
+    if (!param)
+        return false;
+    if (param->getType() != uwbParam::type::STRING)
+        return false;
+    if (bufflen < (param->str_len() + 1))
+        return false;
+    strncpy(pValue, param->str_value(), bufflen);
+    return true;
 }
 
 extern "C" int NxpConfig_GetCountryByteArray(
     const char *name, const char *cc_path, const char *country_code,
-    uint8_t *pValue, long bufflen, long *len) {
-    CUwbNxpConfig &rConfig = CUwbNxpConfig::GetInstance();
-    readCountryCodeConfig(cc_path);
-    return rConfig.getValue(name, pValue, bufflen, len);
+    uint8_t *pValue, long bufflen, long *len)
+{
+    string strPath = getCountryCodeConfigFilePath(cc_path);
+    CUwbNxpConfig rConfig(strPath.c_str());
+    const uwbParam *param = rConfig.find(name);
+    if (!param)
+        return false;
+    if (param->getType() != uwbParam::type::BYTEARRAY)
+        return false;
+    if (bufflen < param->arr_len())
+        return false;
+    memcpy(pValue, param->arr_value(), param->arr_len());
+    if (len)
+        *len = param->arr_len();
+    return true;
 }
