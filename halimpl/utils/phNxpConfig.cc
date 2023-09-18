@@ -21,6 +21,7 @@
 #include <sys/stat.h>
 
 #include <iomanip>
+#include <memory>
 #include <sstream>
 #include <stdio.h>
 #include <string>
@@ -32,6 +33,9 @@
 #include <log/log.h>
 
 #include "phNxpConfig.h"
+#include "phNxpUciHal.h"
+#include "phNxpUciHal_ext.h"
+#include "phNxpUciHal_utils.h"
 #include "phNxpLog.h"
 
 extern bool uwb_debug_enabled;
@@ -565,17 +569,67 @@ void CascadeConfig::init(const char *main_config)
         mExtraConfig.emplace_back(move(config));
     }
 
-    // TODO: load one config files from COUNTRY_CODE_CAP_FILE_LOCATION
+    // Pick one libuwb-countrycode.conf with the highest VERSION number
+    // from multiple directories specified by COUNTRY_CODE_CAP_FILE_LOCATION
+    const long loc_max_len = 260;
+    auto configured_country_code_location = make_unique<uint8_t[]>(loc_max_len);
+    long retlen = 0;
+    if (NxpConfig_GetByteArray(NAME_COUNTRY_CODE_CAP_FILE_LOCATION,
+                configured_country_code_location.get(), loc_max_len, &retlen)) {
+        int version, max_version = -1;
+        bool foundCapFile = false;
+        CUwbNxpConfig pickedConfig;
+        string strPickedPath;
+
+        uint32_t loc_len = 0;
+        while (loc_len < retlen) {
+            string strPath = (char*)&configured_country_code_location[loc_len];
+            strPath += country_code_config_name;
+            CUwbNxpConfig config(strPath.c_str());
+
+            const uwbParam *param = config.find(NAME_NXP_COUNTRY_CODE_VERSION);
+            if (param) {
+                version = atoi(param->str_value());
+            } else {
+                version = 0;
+            }
+            if (version > max_version) {
+                foundCapFile = true;
+                pickedConfig = move(config);
+                strPickedPath = strPath;
+                max_version = version;
+            }
+            loc_len += strPath.size() + 1;
+        }
+        if (foundCapFile) {
+            mCapsConfig = move(pickedConfig);
+            ALOGD_IF(uwb_debug_enabled, "CountryCodeCaps file %s loaded with VERSION=%d", strPickedPath.c_str(), max_version);
+        } else {
+            ALOGD_IF(uwb_debug_enabled, "No CountryCodeCaps specified");
+        }
+    }
 }
 
+extern bool isCountryCodeMapCreated;
 void CascadeConfig::setCountryCode(const char country_code[2])
 {
     string strCountry{country_code[0], country_code[1], '\0'};
 
-    ALOGD_IF(uwb_debug_enabled, "Apply country code %c%c\n",
-        country_code[0], country_code[1]);
+    ALOGD_IF(uwb_debug_enabled, "Apply country code %c%c\n", country_code[0], country_code[1]);
     for (auto &x : mExtraConfig) {
         x.setCountry(strCountry);
+    }
+
+    // Load 'COUNTRY_CODE_CAPS' and apply it to 'conf_map'
+    auto cc_data = make_unique<uint8_t[]>(UCI_MAX_DATA_LEN);
+    uint32_t retlen = 0;
+    const uwbParam *param = mCapsConfig.find(NAME_NXP_UWB_COUNTRY_CODE_CAPS);
+    if (param) {
+        phNxpUciHal_getCountryCaps(param->arr_value(), country_code, cc_data.get(), &retlen);
+        if (get_conf_map(cc_data.get(), retlen)) {
+            isCountryCodeMapCreated = true;
+            NXPLOG_UCIHAL_D("Country code caps loaded");
+        }
     }
 }
 
@@ -678,7 +732,7 @@ extern "C" int NxpConfig_GetStr(const char* name, char* pValue, unsigned long le
 ** Returns:     TRUE[1] if config param name is found in the config file, else FALSE[0]
 **
 *******************************************************************************/
-extern "C" int NxpConfig_GetByteArray(const char* name, uint8_t* pValue,long bufflen, long *len)
+extern "C" int NxpConfig_GetByteArray(const char* name, uint8_t* pValue, long bufflen, long *len)
 {
     return gConfig.getValue(name, pValue, bufflen,len);
 }
@@ -719,60 +773,5 @@ extern "C" int NxpConfig_GetNum(const char* name, void* pValue, unsigned long le
     default:
         return false;
     }
-    return true;
-}
-
-/*******************************************************************************
-**
-** Function:    readCountryCodeConfig()
-**
-** Description: return CountryCode Config file path
-**
-** Returns:     none
-**
-*******************************************************************************/
-static string getCountryCodeConfigFilePath(const char *path) {
-
-    string strPath;
-    if (path[0] != '\0')
-        strPath.assign(path);
-
-    strPath += country_code_config_name;
-    return strPath;
-}
-
-extern "C" int NxpConfig_GetCountryCodeVersion(const char *name,
-                                              const char *path, char *pValue,
-                                              long bufflen)
-{
-    string strPath = getCountryCodeConfigFilePath(path);
-    CUwbNxpConfig rConfig(strPath.c_str());
-    const uwbParam *param = rConfig.find(name);
-    if (!param)
-        return false;
-    if (param->getType() != uwbParam::type::STRING)
-        return false;
-    if (bufflen < (param->str_len() + 1))
-        return false;
-    strncpy(pValue, param->str_value(), bufflen);
-    return true;
-}
-
-extern "C" int NxpConfig_GetCountryByteArray(
-    const char *name, const char *cc_path, const char *country_code,
-    uint8_t *pValue, long bufflen, long *len)
-{
-    string strPath = getCountryCodeConfigFilePath(cc_path);
-    CUwbNxpConfig rConfig(strPath.c_str());
-    const uwbParam *param = rConfig.find(name);
-    if (!param)
-        return false;
-    if (param->getType() != uwbParam::type::BYTEARRAY)
-        return false;
-    if (bufflen < param->arr_len())
-        return false;
-    memcpy(pValue, param->arr_value(), param->arr_len());
-    if (len)
-        *len = param->arr_len();
     return true;
 }

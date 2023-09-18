@@ -342,7 +342,7 @@ void phNxpUciHal_reset_country_code_config() {
  * Returns       void
  *
  *******************************************************************************/
-void phNxpUciHal_getCountryCaps(uint8_t *cc_resp, char *country_code,
+void phNxpUciHal_getCountryCaps(const uint8_t *cc_resp, const char country_code[2],
                                 uint8_t *cc_data, uint32_t *retlen) {
  uint16_t idx = 0;
  uint16_t index = 0;

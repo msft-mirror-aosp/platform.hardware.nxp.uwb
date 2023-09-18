@@ -242,6 +242,7 @@ void handlingVendorSpecificAppConfig(uint16_t *data_len, uint8_t *p_data) {
   }
 }
 
+bool isCountryCodeMapCreated = false;
 /******************************************************************************
  * Function         phNxpUciHal_parse
  *
@@ -253,16 +254,8 @@ void handlingVendorSpecificAppConfig(uint16_t *data_len, uint8_t *p_data) {
 bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data) {
   uint8_t mt = 0, gid = 0, oid = 0;
   uint16_t arrLen = 0, tag = 0, idx = 0;
-  char country_code[2];
-  long retlen = 0;
   bool ret = false;
-  uint8_t *configured_country_code_location = NULL;
-  char *version = NULL;
-  uint8_t *cc_resp = NULL;
-  const char *cc_path = "";
-  map<uint16_t, string> cc_version_map;
 
-  static bool isCountryCodeMapCreated = false;
   map<uint16_t, vector<uint16_t>>::iterator itr;
   vector<uint16_t>::iterator v_itr;
   mt = (*(p_data)&UCI_MT_MASK) >> UCI_MT_SHIFT;
@@ -274,58 +267,15 @@ bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data) {
         if (data_len < 6) {
           return true;
         }
+        char country_code[2];
         country_code[0] = (char)p_data[4];
         country_code[1] = (char)p_data[5];
-        const uint16_t loc_max_len = 260;
-        configured_country_code_location = (uint8_t*)malloc(loc_max_len * sizeof(char));
-        version = (char *)malloc(8 * sizeof(char));
-        cc_resp = (uint8_t *)malloc(UCI_MAX_DATA_LEN * sizeof(char));
-
-        // Read country code conf file location
-        if (NxpConfig_GetByteArray(NAME_COUNTRY_CODE_CAP_FILE_LOCATION,
-                                       configured_country_code_location,
-                                       loc_max_len, &retlen)) {
-          uint32_t loc_len = 0;
-          while (loc_len < retlen) {
-            if (NxpConfig_GetCountryCodeVersion(
-                    NAME_NXP_COUNTRY_CODE_VERSION,
-                    (char*)&configured_country_code_location[loc_len], version, 8)) {
-              cc_version_map[atoi(version)] =
-                  (char*)&configured_country_code_location[loc_len];
-            }
-            loc_len += strlen((char*)&configured_country_code_location[loc_len]) + 1;
-          }
-          if (!cc_version_map.empty()) {
-            map<uint16_t, string>::reverse_iterator it =
-                cc_version_map.rbegin();
-            cc_path = it->second.c_str();
-          }
-        }
-        uint8_t *cc_data =
-            (uint8_t *)malloc(UCI_MAX_DATA_LEN * sizeof(uint8_t));
 
         if ((country_code[0] == '0') && (country_code[1] == '0')) {
-          NXPLOG_UCIHAL_D("Country code %c%c is Invalid!", country_code[0],
-                          country_code[1]);
+          NXPLOG_UCIHAL_D("Country code %c%c is Invalid!", country_code[0], country_code[1]);
         } else {
-          if (NxpConfig_GetCountryByteArray(
-                  NAME_NXP_UWB_COUNTRY_CODE_CAPS, cc_path, country_code,
-                  cc_resp, UCI_MAX_DATA_LEN, &retlen)) {
-            NXPLOG_UCIHAL_D("Country code conf loaded , Country %c%c",
-                            country_code[0], country_code[1]);
-            phNxpUciHal_getCountryCaps(cc_resp, country_code, cc_data,
-                                       (uint32_t *)&retlen);
-            if (get_conf_map(cc_data, retlen)) {
-              isCountryCodeMapCreated = true;
-            } else {
-              NXPLOG_UCIHAL_D("Country code conf map creation failed");
-            }
-          } else {
-            NXPLOG_UCIHAL_D("Country code conf is empty!");
-          }
+          NxpConfig_SetCountryCode(country_code);
         }
-
-        NxpConfig_SetCountryCode(country_code);
 
         // send country code response to upper layer
         nxpucihal_ctrl.rx_data_len = 5;

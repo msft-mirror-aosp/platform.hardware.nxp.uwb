@@ -34,14 +34,6 @@ int NxpConfig_GetStr(const char* name, char* p_value, unsigned long len);
 int NxpConfig_GetNum(const char* name, void* p_value, unsigned long len);
 int NxpConfig_GetByteArray(const char* name, uint8_t* pValue, long bufflen, long *len);
 
-int NxpConfig_GetCountryCodeVersion(const char *name, const char *path,
-                                   char *pValue, long bufflen);
-int NxpConfig_GetCountryByteArray(const char *name,
-                                              const char *cc_path,
-                                              const char *country_code,
-                                              uint8_t *pValue, long bufflen,
-                                              long *len);
-
 #ifdef __cplusplus
 };
 #endif
