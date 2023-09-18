@@ -49,13 +49,16 @@ using namespace::std;
 class uwbParam
 {
 public:
-    enum class type { STRING, NUMBER, BYTEARRAY };
+    enum class type { STRING, NUMBER, BYTEARRAY, STRINGARRAY };
     uwbParam();
     uwbParam(const uwbParam& param);
     uwbParam(uwbParam&& param);
+
     uwbParam(const string& value);
     uwbParam(vector<uint8_t>&& value);
     uwbParam(unsigned long value);
+    uwbParam(vector<string>&& value);
+
     virtual ~uwbParam();
 
     type getType() const { return m_type; }
@@ -65,11 +68,16 @@ public:
     const uint8_t* arr_value() const { return m_arrValue.data(); }
     size_t arr_len() const { return m_arrValue.size(); }
 
+    size_t str_arr_len() const { return m_arrStrValue.size(); }
+    const char* str_arr_elem(const int index) const { return m_arrStrValue[index].c_str(); }
+    size_t str_arr_elem_len(const int index) const { return m_arrStrValue[index].length(); }
+
     void dump(const string &tag) const;
 private:
     unsigned long   m_numValue;
     string          m_str_value;
     vector<uint8_t>  m_arrValue;
+    vector<string>  m_arrStrValue;
     type m_type;
 };
 
@@ -185,6 +193,8 @@ bool CUwbNxpConfig::readConfig()
         STR_VALUE,
         NUM_VALUE,
         ARR_SPACE,
+        ARR_STR,
+        ARR_STR_SPACE,
         ARR_NUM,
         BEGIN_HEX,
         BEGIN_QUOTE,
@@ -197,6 +207,7 @@ bool CUwbNxpConfig::readConfig()
     string  strValue;
     unsigned long    numValue = 0;
     vector<uint8_t> arrValue;
+    vector<string> arrStr;
     int     base = 0;
     int     c;
     const char *name = mCurrentFile.c_str();
@@ -206,7 +217,7 @@ bool CUwbNxpConfig::readConfig()
     m_map.clear();
 
     /* open config file, read it into a buffer */
-    if ((fd = fopen(name, "rb")) == NULL)
+    if ((fd = fopen(name, "r")) == NULL)
     {
         ALOGD_IF(uwb_debug_enabled, "%s Cannot open config file %s\n", __func__, name);
         return false;
@@ -229,6 +240,7 @@ bool CUwbNxpConfig::readConfig()
                 numValue = 0;
                 strValue.clear();
                 arrValue.clear();
+                arrStr.clear();
                 state = TOKEN;
                 token.push_back(c);
             } else {
@@ -290,8 +302,27 @@ bool CUwbNxpConfig::readConfig()
             } else if (c == '}') {
                 m_map.try_emplace(token, move(uwbParam(move(arrValue))));
                 state = END_LINE;
+            } else if (c == '"') {
+                state = ARR_STR;
             } else if (c == EOF) {
                 state = END_LINE;
+            }
+            break;
+        case ARR_STR:
+            if (c == '"') {
+                arrStr.emplace_back(move(strValue));
+                strValue.clear();
+                state = ARR_STR_SPACE;
+            } else {
+                strValue.push_back(c);
+            }
+            break;
+        case ARR_STR_SPACE:
+            if (c == '}') {
+                m_map.try_emplace(token, move(uwbParam(move(arrStr))));
+                state = END_LINE;
+            } else if (c == '"') {
+                state = ARR_STR;
             }
             break;
         case ARR_NUM:
@@ -474,6 +505,7 @@ uwbParam::uwbParam(const uwbParam &param) :
     m_numValue(param.m_numValue),
     m_str_value(param.m_str_value),
     m_arrValue(param.m_arrValue),
+    m_arrStrValue(param.m_arrStrValue),
     m_type(param.m_type)
 {
 }
@@ -482,6 +514,7 @@ uwbParam::uwbParam(uwbParam &&param) :
     m_numValue(param.m_numValue),
     m_str_value(move(param.m_str_value)),
     m_arrValue(move(param.m_arrValue)),
+    m_arrStrValue(move(param.m_arrStrValue)),
     m_type(param.m_type)
 {
 }
@@ -505,6 +538,13 @@ uwbParam::uwbParam(vector<uint8_t> &&value) :
 {
 }
 
+uwbParam::uwbParam(vector<string> &&value) :
+    m_arrStrValue(move(value)),
+    m_type(type::STRINGARRAY)
+{
+}
+
+
 void uwbParam::dump(const string &tag) const
 {
     if (m_type == type::NUMBER) {
@@ -518,6 +558,12 @@ void uwbParam::dump(const string &tag) const
             ss_hex << setw(2) << hex << (int)b << " ";
         }
         ALOGD_IF(uwb_debug_enabled, " - %s = { %s}", tag.c_str(), ss_hex.str().c_str());
+    } else if (m_type == type::STRINGARRAY) {
+        stringstream ss;
+        for (auto s : m_arrStrValue) {
+            ss << "\"" << s << "\", ";
+        }
+        ALOGD_IF(uwb_debug_enabled, " - %s = { %s}", tag.c_str(), ss.str().c_str());
     }
 }
 
@@ -647,6 +693,7 @@ const uwbParam* CascadeConfig::find(const char *name) const
     return param;
 }
 
+// TODO: move these getValue() helpers out of the class
 bool CascadeConfig::getValue(const char* name, char* pValue, size_t len) const
 {
     const uwbParam *param = find(name);
@@ -773,5 +820,31 @@ extern "C" int NxpConfig_GetNum(const char* name, void* pValue, unsigned long le
     default:
         return false;
     }
+    return true;
+}
+
+// Get the length of a 'string-array' type parameter
+int NxpConfig_GetStrArrayLen(const char* name, unsigned long* pLen)
+{
+    const uwbParam* param = gConfig.find(name);
+    if (!param || param->getType() != uwbParam::type::STRINGARRAY)
+        return false;
+
+    *pLen = param->str_arr_len();
+    return true;
+}
+
+// Get a string value from 'string-array' type parameters, index zero-based
+int NxpConfig_GetStrArrayVal(const char* name, int index, char* pValue, unsigned long len)
+{
+    const uwbParam* param = gConfig.find(name);
+    if (!param || param->getType() != uwbParam::type::STRINGARRAY)
+        return false;
+    if (index < 0 || index >= param->str_arr_len())
+        return false;
+
+    if (len < param->str_arr_elem_len(index) + 1)
+        return false;
+    strncpy(pValue, param->str_arr_elem(index), len);
     return true;
 }

@@ -34,6 +34,9 @@ int NxpConfig_GetStr(const char* name, char* p_value, unsigned long len);
 int NxpConfig_GetNum(const char* name, void* p_value, unsigned long len);
 int NxpConfig_GetByteArray(const char* name, uint8_t* pValue, long bufflen, long *len);
 
+int NxpConfig_GetStrArrayLen(const char* name, unsigned long *pLen);
+int NxpConfig_GetStrArrayVal(const char* name, int index, char* pValue, unsigned long len);
+
 #ifdef __cplusplus
 };
 #endif
