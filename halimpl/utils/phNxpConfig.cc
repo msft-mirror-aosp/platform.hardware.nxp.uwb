@@ -23,6 +23,7 @@
 #include <iomanip>
 #include <memory>
 #include <sstream>
+#include <limits.h>
 #include <stdio.h>
 #include <string>
 #include <unordered_map>
@@ -617,35 +618,34 @@ void CascadeConfig::init(const char *main_config)
 
     // Pick one libuwb-countrycode.conf with the highest VERSION number
     // from multiple directories specified by COUNTRY_CODE_CAP_FILE_LOCATION
-    const long loc_max_len = 260;
-    auto configured_country_code_location = make_unique<uint8_t[]>(loc_max_len);
-    long retlen = 0;
-    if (NxpConfig_GetByteArray(NAME_COUNTRY_CODE_CAP_FILE_LOCATION,
-                configured_country_code_location.get(), loc_max_len, &retlen)) {
+    unsigned long arrLen = 0;
+    if (NxpConfig_GetStrArrayLen(NAME_COUNTRY_CODE_CAP_FILE_LOCATION, &arrLen) && arrLen > 0) {
+        const long loc_max_len = 260;
+        auto loc = make_unique<char[]>(loc_max_len);
         int version, max_version = -1;
+        string strPickedPath;
         bool foundCapFile = false;
         CUwbNxpConfig pickedConfig;
-        string strPickedPath;
 
-        uint32_t loc_len = 0;
-        while (loc_len < retlen) {
-            string strPath = (char*)&configured_country_code_location[loc_len];
+        for (int i = 0; i < arrLen; i++) {
+            if (!NxpConfig_GetStrArrayVal(NAME_COUNTRY_CODE_CAP_FILE_LOCATION, i, loc.get(), loc_max_len)) {
+                continue;
+            }
+            string strPath(loc.get());
             strPath += country_code_config_name;
+
+            ALOGD_IF(uwb_debug_enabled, "Try to load %s", strPath.c_str());
+
             CUwbNxpConfig config(strPath.c_str());
 
             const uwbParam *param = config.find(NAME_NXP_COUNTRY_CODE_VERSION);
-            if (param) {
-                version = atoi(param->str_value());
-            } else {
-                version = 0;
-            }
+	    version = param ? atoi(param->str_value()) : -2;
             if (version > max_version) {
                 foundCapFile = true;
                 pickedConfig = move(config);
                 strPickedPath = strPath;
                 max_version = version;
             }
-            loc_len += strPath.size() + 1;
         }
         if (foundCapFile) {
             mCapsConfig = move(pickedConfig);
@@ -653,6 +653,8 @@ void CascadeConfig::init(const char *main_config)
         } else {
             ALOGD_IF(uwb_debug_enabled, "No CountryCodeCaps specified");
         }
+    } else {
+        ALOGD_IF(uwb_debug_enabled, NAME_COUNTRY_CODE_CAP_FILE_LOCATION " was not specified, skip");
     }
 }
 
