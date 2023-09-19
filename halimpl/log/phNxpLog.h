@@ -53,12 +53,12 @@ extern bool uwb_debug_enabled;
 
 /* ####################### Set the log module name by Android property
  * ########################## */
-#define PROP_NAME_NXPLOG_GLOBAL_LOGLEVEL "uwb.nxp_log_level_global"
-#define PROP_NAME_NXPLOG_EXTNS_LOGLEVEL "uwb.nxp_log_level_extns"
-#define PROP_NAME_NXPLOG_HAL_LOGLEVEL "uwb.nxp_log_level_hal"
-#define PROP_NAME_NXPLOG_UCI_LOGLEVEL "uwb.nxp_log_level_uci"
-#define PROP_NAME_NXPLOG_FWDNLD_LOGLEVEL "uwb.nxp_log_level_dnld"
-#define PROP_NAME_NXPLOG_TML_LOGLEVEL "uwb.nxp_log_level_tml"
+#define PROP_NAME_NXPLOG_GLOBAL_LOGLEVEL  "persist.vendor.uwb.nxp_log_level_global"
+#define PROP_NAME_NXPLOG_EXTNS_LOGLEVEL   "persist.vendor.uwb.nxp_log_level_extns"
+#define PROP_NAME_NXPLOG_HAL_LOGLEVEL     "persist.vendor.uwb.nxp_log_level_hal"
+#define PROP_NAME_NXPLOG_UCI_LOGLEVEL     "persist.vendor.uwb.nxp_log_level_uci"
+#define PROP_NAME_NXPLOG_FWDNLD_LOGLEVEL  "persist.vendor.uwb.nxp_log_level_dnld"
+#define PROP_NAME_NXPLOG_TML_LOGLEVEL     "persist.vendor.uwb.nxp_log_level_tml"
 
 /* ####################### Set the logging level for EVERY COMPONENT here
  * ######################## :START: */
