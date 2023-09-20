@@ -25,8 +25,10 @@
 #include <sstream>
 #include <limits.h>
 #include <stdio.h>
+#include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <android-base/logging.h>
@@ -100,6 +102,10 @@ public:
 
     const uwbParam*    find(const char* p_name) const;
     void    setCountry(const string& strCountry);
+
+    const unordered_map<string, uwbParam>& get_data() const {
+        return m_map;
+    }
 private:
     bool    readConfig();
     void    dump() const;
@@ -509,6 +515,7 @@ uwbParam::uwbParam(const uwbParam &param) :
     m_arrStrValue(param.m_arrStrValue),
     m_type(param.m_type)
 {
+    ALOGD_IF(uwb_debug_enabled, "uwbParam copy-constructor");
 }
 
 uwbParam::uwbParam(uwbParam &&param) :
@@ -567,6 +574,69 @@ void uwbParam::dump(const string &tag) const
         ALOGD_IF(uwb_debug_enabled, " - %s = { %s}", tag.c_str(), ss.str().c_str());
     }
 }
+/*******************************************************************************/
+class RegionCodeMap {
+public:
+    void loadMapping(const char *filepath) {
+        CUwbNxpConfig config(filepath);
+        if (!config.isValid()) {
+            ALOGW_IF(uwb_debug_enabled, "Region mapping was not provided.");
+            return;
+        }
+
+        ALOGD_IF(uwb_debug_enabled, "Region mapping was provided by %s", filepath);
+        auto &all_params = config.get_data();
+        for (auto &it : all_params) {
+            const auto &region_str = it.first;
+            const uwbParam *param = &it.second;
+
+            // split space-separated strings into set
+            stringstream ss(param->str_value());
+            string cc;
+            unordered_set<string> cc_set;
+            while (ss >> cc) {
+              if (cc.length() == 2 && isupper(cc[0]) && isupper(cc[1])) {
+                cc_set.emplace(move(cc));
+              }
+            }
+            auto result = m_map.try_emplace(region_str, move(cc_set));
+            if (!result.second) {
+              // region conlifct : merge
+              result.first->second.merge(move(cc_set));
+            }
+        }
+        m_config = move(config);
+        if (uwb_debug_enabled) {
+            for (auto &entry : m_map) {
+            const auto &region_str = entry.first;
+            const auto &cc_set = entry.second;
+            stringstream ss;
+            for (const auto s : cc_set) {
+                ss << "\"" << s << "\", ";
+            }
+            ALOGD("- %s = { %s}", region_str.c_str(), ss.str().c_str());
+            }
+        }
+    }
+    string xlateCountryCode(const char country_code[2]) {
+        string code{country_code[0], country_code[1]};
+        if (m_config.isValid()) {
+            for (auto &it : m_map) {
+                const auto &region_str = it.first;
+                const auto &cc_set = it.second;
+                if (cc_set.find(code) != cc_set.end()) {
+                    ALOGD_IF(uwb_debug_enabled, "map country code %c%c --> %s",
+                            country_code[0], country_code[1], region_str.c_str());
+                    return region_str;
+                }
+            }
+        }
+        return code;
+    }
+private:
+    CUwbNxpConfig m_config;
+    unordered_map<string, unordered_set<string>> m_map;
+};
 
 /*******************************************************************************/
 class CascadeConfig {
@@ -589,6 +659,9 @@ private:
 
     // [COUNTRY_CODE_CAP_FILE_LOCATION]/country_code_config_name
     CUwbNxpConfig mCapsConfig;
+
+    // Region Code mapping
+    RegionCodeMap mRegionMap;
 };
 
 CascadeConfig::CascadeConfig()
@@ -639,7 +712,7 @@ void CascadeConfig::init(const char *main_config)
             CUwbNxpConfig config(strPath.c_str());
 
             const uwbParam *param = config.find(NAME_NXP_COUNTRY_CODE_VERSION);
-	    version = param ? atoi(param->str_value()) : -2;
+            version = param ? atoi(param->str_value()) : -2;
             if (version > max_version) {
                 foundCapFile = true;
                 pickedConfig = move(config);
@@ -656,12 +729,18 @@ void CascadeConfig::init(const char *main_config)
     } else {
         ALOGD_IF(uwb_debug_enabled, NAME_COUNTRY_CODE_CAP_FILE_LOCATION " was not specified, skip");
     }
+
+    // Load region mapping
+    const uwbParam *param = find(NAME_REGION_MAP_PATH);
+    if (param) {
+        mRegionMap.loadMapping(param->str_value());
+    }
 }
 
 extern bool isCountryCodeMapCreated;
 void CascadeConfig::setCountryCode(const char country_code[2])
 {
-    string strCountry{country_code[0], country_code[1], '\0'};
+    string strCountry = mRegionMap.xlateCountryCode(country_code);
 
     ALOGD_IF(uwb_debug_enabled, "Apply country code %c%c\n", country_code[0], country_code[1]);
     for (auto &x : mExtraConfig) {

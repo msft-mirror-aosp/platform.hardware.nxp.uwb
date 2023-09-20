@@ -75,6 +75,8 @@ int NxpConfig_GetStrArrayVal(const char* name, int index, char* pValue, unsigned
 
 #define NAME_NXP_COUNTRY_CODE_VERSION "VERSION"
 
+#define NAME_REGION_MAP_PATH "REGION_MAP_PATH"
+
 /* default configuration */
 #define default_storage_location "/data/vendor/uwb"
 
