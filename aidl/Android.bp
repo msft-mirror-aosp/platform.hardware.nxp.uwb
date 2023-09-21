@@ -52,6 +52,7 @@ cc_library_static {
     include_dirs: [
         "hardware/nxp/uwb/extns/inc",
         "hardware/nxp/uwb/halimpl/inc",
+        "hardware/nxp/uwb/halimpl/inc/common"
     ],
     cflags: [
         "-Wall",
