@@ -384,11 +384,11 @@ static void phOsalUwb_Timer_Expired(union sigval sv) {
   /* Timer is stopped when callback function is invoked */
   pTimerHandle->eState = eTimerStopped;
 
-  pTimerHandle->tDeferedCallInfo.pDeferedCall = &phOsalUwb_DeferredCall;
-  pTimerHandle->tDeferedCallInfo.pParam = (void*)((intptr_t)(sv.sival_int));
+  pTimerHandle->tDeferredCallInfo.pDeferredCall = &phOsalUwb_DeferredCall;
+  pTimerHandle->tDeferredCallInfo.pParam = (void*)((intptr_t)(sv.sival_int));
 
   pTimerHandle->tOsalMessage.eMsgType = PH_LIBUWB_DEFERREDCALL_MSG;
-  pTimerHandle->tOsalMessage.pMsgData = (void*)&pTimerHandle->tDeferedCallInfo;
+  pTimerHandle->tOsalMessage.pMsgData = (void*)&pTimerHandle->tDeferredCallInfo;
 
   /* Post a message on the queue to invoke the function */
   phOsalUwb_PostTimerMsg((phLibUwb_Message_t*)&pTimerHandle->tOsalMessage);

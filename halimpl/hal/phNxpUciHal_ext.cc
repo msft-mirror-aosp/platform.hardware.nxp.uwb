@@ -13,16 +13,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <log/log.h>
-#include <phNxpUciHal_ext.h>
-#include <phNxpUciHal.h>
-#include <phTmlUwb.h>
-#include <phDal4Uwb_messageQueueLib.h>
-#include <phNxpLog.h>
-#include <phUwbCommon.h>
 #include <sys/stat.h>
+
+#include <atomic>
+#include <bitset>
+
 #include <cutils/properties.h>
+
+#include "phDal4Uwb_messageQueueLib.h"
 #include "phNxpConfig.h"
+#include "phNxpLog.h"
+#include "phNxpUciHal_ext.h"
+#include "phNxpUciHal.h"
+#include "phTmlUwb.h"
+#include "phUwbCommon.h"
 
 /* Timeout value to wait for response from SR1xx */
 #define HAL_EXTNS_WRITE_RSP_TIMEOUT (100)
@@ -164,25 +168,6 @@ clean_and_return:
 }
 
 /******************************************************************************
- * Function         phNxpUciHal_write_ext
- *
- * Description      This function inform the status of phNxpUciHal_open
- *                  function to libuwb-uci.
- *
- * Returns          It return UWBSTATUS_SUCCESS then continue with send else
- *                  sends UWBSTATUS_FAILED direct response is prepared and
- *                  do not send anything to UWBC.
- *
- ******************************************************************************/
-
-tHAL_UWB_STATUS phNxpUciHal_write_ext(uint16_t* cmd_len, uint8_t* p_cmd_data,
-                                uint16_t* rsp_len, uint8_t* p_rsp_data) {
-  tHAL_UWB_STATUS status = UWBSTATUS_SUCCESS;
-
-  return status;
-}
-
-/******************************************************************************
  * Function         phNxpUciHal_send_ext_cmd
  *
  * Description      This function send the extension command to UWBC. No
@@ -246,13 +231,13 @@ tHAL_UWB_STATUS phNxpUciHal_set_board_config(){
   NXPLOG_UCIHAL_D("%s: enter; ", __func__);
   uint8_t boardConfig = 0, boardVersion = 0;
 
-  if(GetNxpConfigNumValue(NAME_UWB_BOARD_VARIANT_CONFIG, &num, sizeof(num))){
+  if(NxpConfig_GetNum(NAME_UWB_BOARD_VARIANT_CONFIG, &num, sizeof(num))){
     boardConfig = (uint8_t)num;
     NXPLOG_UCIHAL_D("%s: NAME_UWB_BOARD_VARIANT_CONFIG: %x", __func__,boardConfig);
   } else {
     NXPLOG_UCIHAL_D("%s: NAME_UWB_BOARD_VARIANT_CONFIG: failed %x", __func__,boardConfig);
   }
-  if(GetNxpConfigNumValue(NAME_UWB_BOARD_VARIANT_VERSION, &num, sizeof(num))){
+  if(NxpConfig_GetNum(NAME_UWB_BOARD_VARIANT_VERSION, &num, sizeof(num))){
     boardVersion = (uint8_t)num;
     NXPLOG_UCIHAL_D("%s: NAME_UWB_BOARD_VARIANT_VERSION: %x", __func__,boardVersion);
   } else{
@@ -361,7 +346,7 @@ void phNxpUciHal_reset_country_code_config() {
  * Returns       void
  *
  *******************************************************************************/
-void phNxpUciHal_getCountryCaps(uint8_t *cc_resp, char *country_code,
+void phNxpUciHal_getCountryCaps(const uint8_t *cc_resp, const char country_code[2],
                                 uint8_t *cc_data, uint32_t *retlen) {
  uint16_t idx = 0;
  uint16_t index = 0;
@@ -669,6 +654,58 @@ static void phNxpUciHal_clear_thermal_runaway_status() {
  }
 }
 
+struct ReadOtpCookie {
+  ReadOtpCookie(uint8_t param_id, uint8_t *buffer, size_t len) :
+    m_valid(false), m_id(param_id), m_buffer(buffer), m_len(len) {
+  }
+  std::atomic_bool  m_valid;
+  uint8_t m_id;
+  uint8_t *m_buffer;
+  size_t  m_len;
+};
+
+/******************************************************************************
+ * Function         otp_read_data
+ *
+ * Description      Read OTP calibration data
+ *
+ * Returns          true on success
+ *
+ ******************************************************************************/
+static bool otp_read_data(const uint8_t channel, const uint8_t param_id, uint8_t *buffer, size_t len)
+{
+  ReadOtpCookie cookie(param_id, buffer, len);
+
+  if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.calib_data_ntf_wait, &cookie) != UWBSTATUS_SUCCESS) {
+    NXPLOG_UCIHAL_E("Failed to create call back data for reading otp");
+    return false;
+  }
+
+  // READ_CALIB_DATA_CMD
+  std::vector<uint8_t> packet{(UCI_MT_CMD << UCI_MT_SHIFT) | UCI_GID_PROPRIETARY_0X0A, UCI_MSG_READ_CALIB_DATA, 0x00, 0x03};
+  packet.push_back(channel);
+  packet.push_back(0x01);      // OTP read option
+  packet.push_back(param_id);
+
+  tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
+  if (status != UWBSTATUS_SUCCESS) {
+    goto fail_otp_read_data;
+  }
+
+  phNxpUciHal_sem_timed_wait_sec(&nxpucihal_ctrl.calib_data_ntf_wait, 3);
+  if (!cookie.m_valid) {
+    goto fail_otp_read_data;
+  }
+
+  phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.calib_data_ntf_wait);
+  return true;
+
+fail_otp_read_data:
+  phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.calib_data_ntf_wait);
+  NXPLOG_UCIHAL_E("Failed to read OTP data id=%u", param_id);
+  return false;
+}
+
 /******************************************************************************
  * Function         phNxpUciHal_process_response
  *
@@ -681,7 +718,9 @@ static void phNxpUciHal_clear_thermal_runaway_status() {
 void phNxpUciHal_process_response() {
  tHAL_UWB_STATUS status;
 
- uint8_t gid = 0, oid = 0, pbf = 0;
+ uint8_t mt, gid, oid, pbf;
+
+ mt = (nxpucihal_ctrl.p_rx_data[0]  & UCI_MT_MASK) >> UCI_MT_SHIFT;
  gid = nxpucihal_ctrl.p_rx_data[0] & UCI_GID_MASK;
  oid = nxpucihal_ctrl.p_rx_data[1] & UCI_OID_MASK;
  pbf = (nxpucihal_ctrl.p_rx_data[0] & UCI_PBF_MASK) >> UCI_PBF_SHIFT;
@@ -701,4 +740,165 @@ void phNxpUciHal_process_response() {
       UCI_STATUS_HW_RESET)) {
       phNxpUciHal_clear_thermal_runaway_status();
  }
+
+  //
+  // Handle NXP_READ_CALIB_DATA_NTF
+  //
+  if ((mt == UCI_MT_NTF) && (gid == UCI_GID_PROPRIETARY_0X0A) && (oid == UCI_MSG_READ_CALIB_DATA)) {
+    // READ_CALIB_DATA_NTF: status(1), length-of-payload(1), payload(N)
+    const uint8_t plen = nxpucihal_ctrl.p_rx_data[3]; // payload-length
+    const uint8_t *p = &nxpucihal_ctrl.p_rx_data[4];  // payload
+    ReadOtpCookie *cookie = (ReadOtpCookie*)nxpucihal_ctrl.calib_data_ntf_wait.pContext;
+
+    if (!cookie || cookie->m_valid) {
+      // cookie is already valid
+      NXPLOG_UCIHAL_E("Otp read: unexpected read param-id=0x%x", cookie->m_id);
+    } else if (plen < 2) {
+      NXPLOG_UCIHAL_E("Otp read: bad payload length %u", plen);
+    } else if (p[0] != UCI_STATUS_OK) {
+      NXPLOG_UCIHAL_E("Otp read: bad status=0x%x", nxpucihal_ctrl.p_rx_data[4]);
+    } else if (p[1] != cookie->m_len) {
+      NXPLOG_UCIHAL_E("Otp read: size mismatch %u (expected %zu for param 0x%x)",
+        p[1], cookie->m_len, cookie->m_id);
+    } else {
+      memcpy(cookie->m_buffer, &p[2], cookie->m_len);
+      cookie->m_valid = true;
+      SEM_POST(&nxpucihal_ctrl.calib_data_ntf_wait);
+    }
+  }
+}
+
+/******************************************************************************
+ * Function         phNxpUciHal_extcal_handle_coreinit
+ *
+ * Description      Apply additional core device settings
+ *
+ * Returns          void.
+ *
+ ******************************************************************************/
+void phNxpUciHal_extcal_handle_coreinit(void)
+{
+  long retlen = 0;
+
+  // Channels
+  const uint8_t cal_channels[] = {5, 6, 8, 9};
+
+  // Antenna Definitions: rx_antenna_mask(1), tx_antenna_mask(1)
+  uint8_t rx_antenna_mask_n = 0xff;
+  NxpConfig_GetNum("cal.rx_antenna_mask", &rx_antenna_mask_n, 1);
+  std::bitset<8> rx_antenna_mask(rx_antenna_mask_n);
+  const uint8_t n_rx_antennas = rx_antenna_mask.size();
+
+  // SET_CALIBRATION_CMD header: GID=0xF OID=0x21
+  const std::vector<uint8_t> packet_header({ (0x20 | UCI_GID_PROPRIETARY_0X0F), UCI_MSG_SET_DEVICE_CALIBRATION, 0x00, 0x00});
+
+  // Supported calibrations,
+  //  current HAL impl only supports "xtal" read from otp
+  //  others should be existed in .conf files
+  //
+  // | name          |otp-id|cal-id| size |per-   |per-   | otp |
+  // |               |      |      |      |channel|antenna|     |
+  // |---------------|------|------|------|-------|-------|-----|
+  // | xtal          | 0x02 | 0x02 | 3    | n     | n     | y   |
+  // | tx_power      | 0x04 | 0x17 | 2    | y     | y     |     |
+  // | ant_delay     | 0x0b | 0x02 | 2    | y     | y     |     |
+
+  // XTAL_CAP_GM_CTRL
+  // Check otp.xtal
+  uint8_t otp_xtal_flag = 0;
+  uint8_t otp_xtal_data[3];
+  uint8_t xtal_data[6];
+  bool need_xtal_calibration = false;
+
+  if (NxpConfig_GetNum("cal.otp.xtal", &otp_xtal_flag, 1) && otp_xtal_flag) {
+    if (otp_read_data(0x09, OTP_ID_XTAL_CAP_GM_CTRL, otp_xtal_data, sizeof(otp_xtal_data))) {
+      // convert OTP_ID_XTAL_CAP_GM_CTRL to RF_CLK_ACCURACY_CALIB
+      memset(xtal_data, 0, sizeof(xtal_data));
+      xtal_data[0] = otp_xtal_data[0];
+      xtal_data[2] = otp_xtal_data[1];
+      xtal_data[4] = otp_xtal_data[2];
+      need_xtal_calibration = true;
+    } else {
+      NXPLOG_UCIHAL_E("Failed to read OTP XTAL_CAP_GM_CTRL");
+    }
+  } else if (NxpConfig_GetByteArray("cal.xtal", otp_xtal_data, sizeof(otp_xtal_data), &retlen) &&
+             retlen == sizeof(otp_xtal_data)) {
+    need_xtal_calibration = true;
+  }
+
+  if (need_xtal_calibration) {
+    std::vector<uint8_t> payload;
+
+    // Channel, 9, don't care for RF_CLK_ACCURACY_CALIB
+    payload.push_back(9);
+    // Tag
+    payload.push_back(UCI_PARAM_ID_RF_CLK_ACCURACY_CALIB);
+    // Length = 7
+    payload.push_back(1 + sizeof(xtal_data));
+    // octet[0] = 3
+    payload.push_back(3);
+    // octet[6:1] = cap1(2), cap2(2), gm_current_control(2)
+    payload.insert(payload.end(), &xtal_data[0], &xtal_data[6]);
+
+    std::vector<uint8_t> packet(packet_header);
+    packet[3] = payload.size();
+    packet.insert(packet.end(), payload.begin(), payload.end());
+
+    tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
+    if (status != UWBSTATUS_SUCCESS) {
+      NXPLOG_UCIHAL_E("Failed to apply XTAL_CAP_GM_CTRL={%02x,%02x,%02x,%02x,%02x,%02x}",
+      xtal_data[0], xtal_data[1], xtal_data[2], xtal_data[3], xtal_data[4], xtal_data[5]);
+    }
+  }
+
+  // RX_ANT_DELAY_CALIB(0x0F)
+  // Read configuration file ant1.ch5.ant_delay
+  // N(1) + N * {AntennaID(1), Rxdelay(Q14.2)}
+  if (n_rx_antennas) {
+    for (auto ch : cal_channels) {
+      std::vector<uint8_t> entries;
+      uint8_t n_entries = 0;
+
+      for (auto i = 0; i < n_rx_antennas; i++) {
+        if (!rx_antenna_mask[i])
+          continue;
+
+        const uint8_t ant_id = i + 1;
+        uint16_t delay_value;
+        char key[32];
+        std::snprintf(key, sizeof(key), "cal.ant%u.ch%u.ant_delay", ant_id, ch);
+
+        if (!NxpConfig_GetNum(key, &delay_value, 2))
+          continue;
+
+        NXPLOG_UCIHAL_D("RX_ANT_DELAY_CALIB: found %s = %u", key, delay_value);
+        entries.push_back(ant_id);
+        entries.push_back(delay_value >> 8);
+        entries.push_back(delay_value & 0xff);
+        n_entries++;
+      }
+
+      if (!n_entries)
+        continue;
+
+      entries.insert(entries.begin(), n_entries);
+
+      std::vector<uint8_t> payload;
+      payload.push_back(ch);
+      payload.push_back(UCI_PARAM_ID_RX_ANT_DELAY_CALIB);
+      payload.push_back(entries.size());
+      payload.insert(payload.end(), entries.begin(), entries.end());
+
+      std::vector<uint8_t> packet(packet_header);
+      packet[3] = payload.size();
+      packet.insert(packet.end(), payload.begin(), payload.end());
+
+      tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
+      if (status != UWBSTATUS_SUCCESS) {
+        NXPLOG_UCIHAL_E("Failed to apply RX_ANT_DELAY_CALIB for channel %u", ch);
+      } else {
+        NXPLOG_UCIHAL_E("RX_ANT_DELAY_CALIB: applied for channel %u", ch);
+      }
+    }
+  }
 }
