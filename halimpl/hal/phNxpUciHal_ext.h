@@ -64,15 +64,14 @@ typedef struct {
 } phNxpUciHalProp_Control_t;
 
 tHAL_UWB_STATUS phNxpUciHal_send_ext_cmd(uint16_t cmd_len, const uint8_t* p_cmd);
-tHAL_UWB_STATUS phNxpUciHal_write_ext(uint16_t* cmd_len, uint8_t* p_cmd_data,
-                                uint16_t* rsp_len, uint8_t* p_rsp_data);
 tHAL_UWB_STATUS phNxpUciHal_process_ext_rsp(uint16_t cmd_len, uint8_t* p_buff);
 tHAL_UWB_STATUS phNxpUciHal_set_board_config();
-void phNxpUciHal_getCountryCaps(uint8_t *cc_resp, char *country_code,
+void phNxpUciHal_getCountryCaps(const uint8_t *cc_resp, const char country_code[2],
                                 uint8_t *cc_data, uint32_t *retlen);
 void phNxpUciHal_processCalibParamTxPowerPerAntenna(const short conf_tx_power,
                                                     const uint8_t *p_data,
                                                     uint16_t data_len);
+void phNxpUciHal_extcal_handle_coreinit(void);
 bool phNxpUciHal_updateTxPower(short conf_tx_power);
 bool phNxpUciHal_setCalibParamTxPower(short conf_tx_power);
 void phNxpUciHal_process_response();
