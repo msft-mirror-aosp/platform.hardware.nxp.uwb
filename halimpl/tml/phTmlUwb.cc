@@ -117,7 +117,7 @@ tHAL_UWB_STATUS phTmlUwb_Init(pphTmlUwb_Config_t pConfig) {
         gpphTmlUwb_Context->tReadInfo.bThreadBusy = false;
         gpphTmlUwb_Context->tWriteInfo.bThreadBusy = false;
 
-        setDeviceHandle(gpphTmlUwb_Context->pDevHandle);  // To set device hanlde for FW download usecase
+        setDeviceHandle(gpphTmlUwb_Context->pDevHandle);  // To set device handle for FW download usecase
 
         if (0 != sem_init(&gpphTmlUwb_Context->rxSemaphore, 0, 0)) {
           wInitStatus = UWBSTATUS_FAILED;

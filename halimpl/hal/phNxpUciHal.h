@@ -161,6 +161,7 @@ typedef struct phNxpUciHal_Control {
   phNxpUciHal_Sem_t uwb_binding_status_ntf_wait;
   phNxpUciHal_Sem_t uwb_get_binding_status_ntf_wait;
   phNxpUciHal_Sem_t uwb_do_bind_ntf_wait;
+  phNxpUciHal_Sem_t calib_data_ntf_wait;
   uint16_t cmd_len;
   uint8_t p_cmd_data[UCI_MAX_DATA_LEN];
   uint16_t rsp_len;
