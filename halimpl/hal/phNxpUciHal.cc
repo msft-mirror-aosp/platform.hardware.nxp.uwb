@@ -242,6 +242,7 @@ void handlingVendorSpecificAppConfig(uint16_t *data_len, uint8_t *p_data) {
   }
 }
 
+bool isCountryCodeMapCreated = false;
 /******************************************************************************
  * Function         phNxpUciHal_parse
  *
@@ -253,16 +254,8 @@ void handlingVendorSpecificAppConfig(uint16_t *data_len, uint8_t *p_data) {
 bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data) {
   uint8_t mt = 0, gid = 0, oid = 0;
   uint16_t arrLen = 0, tag = 0, idx = 0;
-  char country_code[2];
-  long retlen = 0;
   bool ret = false;
-  char *configured_country_code_location = NULL;
-  char *version = NULL;
-  uint8_t *cc_resp = NULL;
-  const char *cc_path = "";
-  map<uint16_t, string> cc_version_map;
 
-  static bool isCountryCodeMapCreated = false;
   map<uint16_t, vector<uint16_t>>::iterator itr;
   vector<uint16_t>::iterator v_itr;
   mt = (*(p_data)&UCI_MT_MASK) >> UCI_MT_SHIFT;
@@ -274,57 +267,16 @@ bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data) {
         if (data_len < 6) {
           return true;
         }
+        char country_code[2];
         country_code[0] = (char)p_data[4];
         country_code[1] = (char)p_data[5];
-        const uint16_t loc_max_len = 260;
-        configured_country_code_location =
-            (char *)malloc(loc_max_len * sizeof(char));
-        version = (char *)malloc(8 * sizeof(char));
-        cc_resp = (uint8_t *)malloc(UCI_MAX_DATA_LEN * sizeof(char));
-
-        // Read country code conf file location
-        if (GetNxpConfigByteArrayValue(NAME_COUNTRY_CODE_CAP_FILE_LOCATION,
-                                       configured_country_code_location,
-                                       loc_max_len, &retlen)) {
-          uint32_t loc_len = 0;
-          while (loc_len < retlen) {
-            if (GetNxpConfigCountryCodeVersion(
-                    NAME_NXP_COUNTRY_CODE_VERSION,
-                    &configured_country_code_location[loc_len], version, 8)) {
-              cc_version_map[atoi(version)] =
-                  &configured_country_code_location[loc_len];
-            }
-            loc_len += strlen(&configured_country_code_location[loc_len]) + 1;
-          }
-          if (!cc_version_map.empty()) {
-            map<uint16_t, string>::reverse_iterator it =
-                cc_version_map.rbegin();
-            cc_path = it->second.c_str();
-          }
-        }
-        uint8_t *cc_data =
-            (uint8_t *)malloc(UCI_MAX_DATA_LEN * sizeof(uint8_t));
 
         if ((country_code[0] == '0') && (country_code[1] == '0')) {
-          NXPLOG_UCIHAL_D("Country code %c%c is Invalid!", country_code[0],
-                          country_code[1]);
+          NXPLOG_UCIHAL_D("Country code %c%c is Invalid!", country_code[0], country_code[1]);
         } else {
-          if (GetNxpConfigCountryCodeCapsByteArrayValue(
-                  NAME_NXP_UWB_COUNTRY_CODE_CAPS, cc_path, country_code,
-                  (char *)cc_resp, UCI_MAX_DATA_LEN, &retlen)) {
-            NXPLOG_UCIHAL_D("Country code conf loaded , Country %c%c",
-                            country_code[0], country_code[1]);
-            phNxpUciHal_getCountryCaps(cc_resp, country_code, cc_data,
-                                       (uint32_t *)&retlen);
-            if (get_conf_map(cc_data, retlen)) {
-              isCountryCodeMapCreated = true;
-            } else {
-              NXPLOG_UCIHAL_D("Country code conf map creation failed");
-            }
-          } else {
-            NXPLOG_UCIHAL_D("Country code conf is empty!");
-          }
+          NxpConfig_SetCountryCode(country_code);
         }
+
         // send country code response to upper layer
         nxpucihal_ctrl.rx_data_len = 5;
         static uint8_t rsp_data[5];
@@ -516,6 +468,8 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback,
     NXPLOG_UCIHAL_E("phNxpUciHal_open already open");
     return UWBSTATUS_SUCCESS;
   }
+
+  NxpConfig_Init();
 
   /* initialize trace level */
   phNxpLog_InitializeLogLevel();
@@ -846,8 +800,8 @@ void phNxpUciHal_parse_get_capsInfo(uint16_t data_len, uint8_t *p_data) {
           long retlen = 0;
           int numberOfParams = 0;
 
-          if (GetNxpConfigByteArrayValue(NAME_UWB_VENDOR_CAPABILITY,
-                                         (char *)buffer.data(), buffer.size(),
+          if (NxpConfig_GetByteArray(NAME_UWB_VENDOR_CAPABILITY,
+                                         buffer.data(), buffer.size(),
                                          &retlen)) {
             if (retlen > 0) {
               vendorConfig = buffer.data();
@@ -1270,9 +1224,9 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
   buffer.fill(0);
   long retlen = 0;
   if (nxpucihal_ctrl.fw_boot_mode == USER_FW_BOOT_MODE) {
-    if (GetNxpConfigByteArrayValue(NAME_UWB_USER_FW_BOOT_MODE_CONFIG,
-                                   (char *)buffer.data(), buffer.size(),
-                                   &retlen)) {
+    if (NxpConfig_GetByteArray(NAME_UWB_USER_FW_BOOT_MODE_CONFIG,
+                               buffer.data(), buffer.size(),
+                               &retlen)) {
       if ((retlen > 0) && (retlen <= UCI_MAX_DATA_LEN)) {
         vendorConfig = buffer.data();
         status = phNxpUciHal_send_ext_cmd(retlen, vendorConfig);
@@ -1285,8 +1239,8 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
       }
     }
   }
-  if (GetNxpConfigByteArrayValue(NAME_NXP_UWB_EXTENDED_NTF_CONFIG,
-                                 (char *)buffer.data(), buffer.size(),
+  if (NxpConfig_GetByteArray(NAME_NXP_UWB_EXTENDED_NTF_CONFIG,
+                                 buffer.data(), buffer.size(),
                                  &retlen)) {
     if (retlen > 0) {
       vendorConfig = buffer.data();
@@ -1299,9 +1253,9 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
     }
   }
   if (deviceType == SR1xxT) {
-    if (GetNxpConfigByteArrayValue(NAME_UWB_CORE_EXT_DEVICE_SR1XX_T_CONFIG,
-                                   (char *)buffer.data(), buffer.size(),
-                                   &retlen)) {
+    if (NxpConfig_GetByteArray(NAME_UWB_CORE_EXT_DEVICE_SR1XX_T_CONFIG,
+                               buffer.data(), buffer.size(),
+                               &retlen)) {
       if (retlen > 0) {
         vendorConfig = buffer.data();
         status = phNxpUciHal_send_ext_cmd(retlen, vendorConfig);
@@ -1318,9 +1272,9 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
       }
     }
   } else if (deviceType == SR1xxS) {
-    if (GetNxpConfigByteArrayValue(NAME_UWB_CORE_EXT_DEVICE_SR1XX_S_CONFIG,
-                                   (char *)buffer.data(), buffer.size(),
-                                   &retlen)) {
+    if (NxpConfig_GetByteArray(NAME_UWB_CORE_EXT_DEVICE_SR1XX_S_CONFIG,
+                            buffer.data(), buffer.size(),
+                            &retlen)) {
       if (retlen > 0) {
         vendorConfig = buffer.data();
         status = phNxpUciHal_send_ext_cmd(retlen, vendorConfig);
@@ -1338,8 +1292,8 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
     }
   } else {
     NXPLOG_UCIHAL_D("phNxpUciHal_sendGetCoreDeviceInfo deviceType default");
-    if (GetNxpConfigByteArrayValue(NAME_UWB_CORE_EXT_DEVICE_DEFAULT_CONFIG,
-                                   (char *)buffer.data(), buffer.size(),
+    if (NxpConfig_GetByteArray(NAME_UWB_CORE_EXT_DEVICE_DEFAULT_CONFIG,
+                                   buffer.data(), buffer.size(),
                                    &retlen)) {
       if (retlen > 0) {
         vendorConfig = buffer.data();
@@ -1357,8 +1311,8 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
       }
     }
   }
-  if (GetNxpConfigByteArrayValue(NAME_NXP_UWB_XTAL_38MHZ_CONFIG,
-                                 (char *)buffer.data(), buffer.size(),
+  if (NxpConfig_GetByteArray(NAME_NXP_UWB_XTAL_38MHZ_CONFIG,
+                                 buffer.data(), buffer.size(),
                                  &retlen)) {
     if (retlen > 0) {
       vendorConfig = buffer.data();
@@ -1375,7 +1329,7 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
     std::string value = std::to_string(i);
     std::string name = str + value;
     NXPLOG_UCIHAL_D(" phNxpUciHal_applyVendorConfig :: Name of the config block is %s", name.c_str());
-    if (GetNxpConfigByteArrayValue(name.c_str(), (char*)buffer.data(), buffer.size(), &retlen)) {
+    if (NxpConfig_GetByteArray(name.c_str(), buffer.data(), buffer.size(), &retlen)) {
       if ((retlen > 0) && (retlen <= UCI_MAX_DATA_LEN)) {
         vendorConfig = buffer.data();
         status = phNxpUciHal_send_ext_cmd(retlen,vendorConfig);
@@ -1674,6 +1628,8 @@ fwd_retry:
             NXPLOG_UCIHAL_E("%s: Apply vendor Config Failed", __func__);
             goto failure;
           }
+          phNxpUciHal_extcal_handle_coreinit();
+
           uwb_device_initialized = true;
           phNxpUciHal_getVersionInfo();
           phNxpUciHal_init_complete(UWBSTATUS_SUCCESS);
@@ -1735,16 +1691,16 @@ tHAL_UWB_STATUS phNxpUciHal_sessionInitialization(uint32_t sessionId) {
     return UWBSTATUS_FAILED;
   }
   if(deviceType == SR1xxT) {
-    appConfigStatus = GetNxpConfigByteArrayValue(NAME_NXP_UWB_EXT_APP_SR1XX_T_CONFIG,
-                                   (char *)buffer.data(), buffer.size(),
+    appConfigStatus = NxpConfig_GetByteArray(NAME_NXP_UWB_EXT_APP_SR1XX_T_CONFIG,
+                                   buffer.data(), buffer.size(),
                                    &retlen);
   } else if (deviceType == SR1xxS) {
-    appConfigStatus = GetNxpConfigByteArrayValue(NAME_NXP_UWB_EXT_APP_SR1XX_S_CONFIG,
-                                   (char *)buffer.data(), buffer.size(),
+    appConfigStatus = NxpConfig_GetByteArray(NAME_NXP_UWB_EXT_APP_SR1XX_S_CONFIG,
+                                   buffer.data(), buffer.size(),
                                    &retlen);
   } else {
-    appConfigStatus = GetNxpConfigByteArrayValue(NAME_NXP_UWB_EXT_APP_DEFAULT_CONFIG,
-                                   (char *)buffer.data(), buffer.size(),
+    appConfigStatus = NxpConfig_GetByteArray(NAME_NXP_UWB_EXT_APP_DEFAULT_CONFIG,
+                                   buffer.data(), buffer.size(),
                                    &retlen);
   }
 
