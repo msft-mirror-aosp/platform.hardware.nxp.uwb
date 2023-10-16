@@ -117,7 +117,7 @@ tHAL_UWB_STATUS phTmlUwb_Init(pphTmlUwb_Config_t pConfig) {
         gpphTmlUwb_Context->tReadInfo.bThreadBusy = false;
         gpphTmlUwb_Context->tWriteInfo.bThreadBusy = false;
 
-        setDeviceHandle(gpphTmlUwb_Context->pDevHandle);  // To set device hanlde for FW download usecase
+        setDeviceHandle(gpphTmlUwb_Context->pDevHandle);  // To set device handle for FW download usecase
 
         if (0 != sem_init(&gpphTmlUwb_Context->rxSemaphore, 0, 0)) {
           wInitStatus = UWBSTATUS_FAILED;
@@ -476,7 +476,7 @@ void phTmlUwb_eSE_Reset(void) {
   int status;
   if (NULL != gpphTmlUwb_Context->pDevHandle) {
     status = phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_EseReset, 0);
-    NXPLOG_TML_E("se reset status recieved %d",status);
+    NXPLOG_TML_E("se reset status received %d",status);
   }
 }
 /*******************************************************************************
@@ -939,6 +939,6 @@ void phTmlUwb_Spi_Reset(void) {
   usleep(5000);    //wait for helios bootROM mode
   gpphTmlUwb_Context->is_read_abort = false;
   pthread_mutex_unlock(&gpphTmlUwb_Context->read_abort_lock);
-  /*Abort the reader thread if client thread shall enable read again incase if valid packet received and notified to upper layer*/
+  /*Abort the reader thread if client thread shall enable read again in case if valid packet received and notified to upper layer*/
   phTmlUwb_ReadAbort();
 }

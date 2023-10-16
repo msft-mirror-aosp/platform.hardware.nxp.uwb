@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2018 NXP
+ * Copyright 2012-2018, 2023 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -44,21 +44,21 @@ extern bool uwb_debug_enabled;
 
 /* ####################### Set the log module name in .conf file
  * ########################## */
-#define NAME_NXPLOG_EXTNS_LOGLEVEL "NXPLOG_EXTNS_LOGLEVEL"
-#define NAME_NXPLOG_HAL_LOGLEVEL "NXPLOG_UCIHAL_LOGLEVEL"
-#define NAME_NXPLOG_UCIX_LOGLEVEL "NXPLOG_UCIX_LOGLEVEL"
-#define NAME_NXPLOG_UCIR_LOGLEVEL "NXPLOG_UCIR_LOGLEVEL"
-#define NAME_NXPLOG_FWDNLD_LOGLEVEL "NXPLOG_FWDNLD_LOGLEVEL"
-#define NAME_NXPLOG_TML_LOGLEVEL "NXPLOG_TML_LOGLEVEL"
+#define NAME_NXPLOG_EXTNS_LOGLEVEL "NXP_LOG_EXTNS_LOGLEVEL"
+#define NAME_NXPLOG_HAL_LOGLEVEL "NXP_LOG_UCIHAL_LOGLEVEL"
+#define NAME_NXPLOG_UCIX_LOGLEVEL "NXP_LOG_UCIX_LOGLEVEL"
+#define NAME_NXPLOG_UCIR_LOGLEVEL "NXP_LOG_UCIR_LOGLEVEL"
+#define NAME_NXPLOG_FWDNLD_LOGLEVEL "NXP_LOG_FWDNLD_LOGLEVEL"
+#define NAME_NXPLOG_TML_LOGLEVEL "NXP_LOG_TML_LOGLEVEL"
 
 /* ####################### Set the log module name by Android property
  * ########################## */
-#define PROP_NAME_NXPLOG_GLOBAL_LOGLEVEL "uwb.nxp_log_level_global"
-#define PROP_NAME_NXPLOG_EXTNS_LOGLEVEL "uwb.nxp_log_level_extns"
-#define PROP_NAME_NXPLOG_HAL_LOGLEVEL "uwb.nxp_log_level_hal"
-#define PROP_NAME_NXPLOG_UCI_LOGLEVEL "uwb.nxp_log_level_uci"
-#define PROP_NAME_NXPLOG_FWDNLD_LOGLEVEL "uwb.nxp_log_level_dnld"
-#define PROP_NAME_NXPLOG_TML_LOGLEVEL "uwb.nxp_log_level_tml"
+#define PROP_NAME_NXPLOG_GLOBAL_LOGLEVEL  "persist.vendor.uwb.nxp_log_level_global"
+#define PROP_NAME_NXPLOG_EXTNS_LOGLEVEL   "persist.vendor.uwb.nxp_log_level_extns"
+#define PROP_NAME_NXPLOG_HAL_LOGLEVEL     "persist.vendor.uwb.nxp_log_level_hal"
+#define PROP_NAME_NXPLOG_UCI_LOGLEVEL     "persist.vendor.uwb.nxp_log_level_uci"
+#define PROP_NAME_NXPLOG_FWDNLD_LOGLEVEL  "persist.vendor.uwb.nxp_log_level_dnld"
+#define PROP_NAME_NXPLOG_TML_LOGLEVEL     "persist.vendor.uwb.nxp_log_level_tml"
 
 /* ####################### Set the logging level for EVERY COMPONENT here
  * ######################## :START: */
@@ -70,7 +70,7 @@ extern bool uwb_debug_enabled;
  * here ########################## :END: */
 
 /* The Default log level for all the modules. */
-#define NXPLOG_DEFAULT_LOGLEVEL NXPLOG_LOG_DEBUG_LOGLEVEL
+#define NXPLOG_DEFAULT_LOGLEVEL NXPLOG_LOG_ERROR_LOGLEVEL
 
 /* ################################################################################################################
  */

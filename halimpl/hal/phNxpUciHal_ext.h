@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2020, 2022 NXP
+ * Copyright 2012-2020, 2022-2023 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,8 +34,20 @@
 #define UCI_EXT_PARAM_DDFS_TONE_CONFIG         0x27
 #define UCI_EXT_PARAM_TX_PULSE_SHAPE_CONFIG    0x28
 #define UCI_EXT_PARAM_CLK_CONFIG_CTRL          0x30
-
+#define UCI_EXT_PARAM_DBG_RFRAME_LOG_NTF 0x22
 #define UCI_PARAM_ID_LOW_POWER_MODE            0x01
+/* customer specific calib params */
+#define VENDOR_CALIB_PARAM_TX_POWER_PER_ANTENNA 0x04
+
+/* Proprietary GID */
+#define UCI_GID_PROPRIETARY_0x0F 0x0F
+
+/* Customer Specific  OID */
+#define SET_VENDOR_SET_CALIBRATION 0x21
+
+#define RMS_TX_POWER_SHIFT 8
+#define UCI_RMS_TX_POWER_INDEX 7
+#define UCI_RMS_TX_POWER_LEN 2
 
 /* Extended Uci status Reason code */
 #define UCI_EXT_STATUS_SE_RECOVERY_FAILURE  0x72
@@ -43,10 +55,25 @@
 #define UCI_EXT_STATUS_SE_APDU_CMD_FAIL     0x74
 #define UCI_EXT_STATUS_SE_AUTH_FAIL         0x75
 
+typedef struct {
+  pthread_attr_t attr_thread;
+  pthread_t hal_thread_handling; /* fw crash thread handle */
+  pthread_cond_t mCondVar;
+  pthread_mutex_t lock;
+  bool_t isThermalRecoveryOngoing;
+} phNxpUciHalProp_Control_t;
+
 tHAL_UWB_STATUS phNxpUciHal_send_ext_cmd(uint16_t cmd_len, const uint8_t* p_cmd);
-tHAL_UWB_STATUS phNxpUciHal_write_ext(uint16_t* cmd_len, uint8_t* p_cmd_data,
-                                uint16_t* rsp_len, uint8_t* p_rsp_data);
 tHAL_UWB_STATUS phNxpUciHal_process_ext_rsp(uint16_t cmd_len, uint8_t* p_buff);
 tHAL_UWB_STATUS phNxpUciHal_set_board_config();
+void phNxpUciHal_getCountryCaps(const uint8_t *cc_resp, const char country_code[2],
+                                uint8_t *cc_data, uint32_t *retlen);
+void phNxpUciHal_processCalibParamTxPowerPerAntenna(const short conf_tx_power,
+                                                    const uint8_t *p_data,
+                                                    uint16_t data_len);
+void phNxpUciHal_extcal_handle_coreinit(void);
+bool phNxpUciHal_updateTxPower(short conf_tx_power);
+bool phNxpUciHal_setCalibParamTxPower(short conf_tx_power);
+void phNxpUciHal_process_response();
 
 #endif /* _PHNXPNICHAL_EXT_H_ */

@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2020 NXP
+ * Copyright 2012-2020, 2023 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,10 @@
 #include <phNxpLog.h>
 #include <phNxpUciHal.h>
 #include <phNxpUciHal_utils.h>
+
+using namespace std;
+map<uint16_t, vector<uint16_t>> input_map;
+map<uint16_t, vector<uint16_t>> conf_map;
 
 /*********************** Link list functions **********************************/
 
@@ -317,10 +321,9 @@ void phNxpUciHal_cleanup_monitor(void) {
     pthread_mutex_destroy(&nxpucihal_monitor->reentrance_mutex);
     phNxpUciHal_releaseall_cb_data();
     listDestroy(&nxpucihal_monitor->sem_list);
+    free(nxpucihal_monitor);
+    nxpucihal_monitor = NULL;
   }
-
-  free(nxpucihal_monitor);
-  nxpucihal_monitor = NULL;
 
   return;
 }
@@ -390,7 +393,7 @@ void phNxpUciHal_cleanup_cb_data(phNxpUciHal_Sem_t* pCallbackData) {
   return;
 }
 
-void phNxpUciHal_sem_timed_wait(phNxpUciHal_Sem_t* pCallbackData) {
+void phNxpUciHal_sem_timed_wait_sec(phNxpUciHal_Sem_t* pCallbackData, time_t sec) {
   int ret;
   struct timespec absTimeout;
   if (clock_gettime(CLOCK_MONOTONIC, &absTimeout) == -1) {
@@ -398,7 +401,7 @@ void phNxpUciHal_sem_timed_wait(phNxpUciHal_Sem_t* pCallbackData) {
     pCallbackData->status = UWBSTATUS_FAILED;
     return;
   }
-  absTimeout.tv_sec += 1; /*1 second timeout*/
+  absTimeout.tv_sec += sec;
   while ((ret = sem_timedwait_monotonic_np(&pCallbackData->sem, &absTimeout)) == -1 && errno == EINTR) {
     continue;
   }
@@ -411,6 +414,11 @@ void phNxpUciHal_sem_timed_wait(phNxpUciHal_Sem_t* pCallbackData) {
   return;
 }
 
+void phNxpUciHal_sem_timed_wait(phNxpUciHal_Sem_t* pCallbackData)
+{
+  /* default 1 second timeout*/
+  phNxpUciHal_sem_timed_wait_sec(pCallbackData, 1);
+}
 
 /*******************************************************************************
 **
@@ -498,4 +506,106 @@ double phNxpUciHal_byteArrayToDouble(const uint8_t* p_data) {
   }
   memcpy(&d, &ptr_1, sizeof(d));
   return d;                                                       \
+}
+
+/*******************************************************************************
+ * Function      get_input_map
+ *
+ * Description   Creates a map from the USBS CAPS Response with key as Tag and
+ *               value as a vector containing Length and Values of the Tag.
+ *
+ * Returns       true if the map creation successful
+ *
+ *******************************************************************************/
+bool get_input_map(const uint8_t *i_data, uint16_t iData_len,
+                   uint8_t startIndex) {
+  vector<uint16_t> input_vec;
+  bool ret = true;
+  uint16_t i = startIndex, j = 0, tag = 0, len = 0;
+  if (i_data == NULL) {
+    NXPLOG_UCIHAL_D("input map creation failed, i_data is NULL");
+    return false;
+  }
+
+  while (i < iData_len) {
+    if (i + 1 >= iData_len) {
+      ret = false;
+      break;
+    }
+    tag = i_data[i++];
+    // Tag IDs from 0xE0 to 0xE2 are extended tag IDs with 2 bytes length.
+    if ((tag >= 0xE0) && (tag <= 0xE2)) {
+      if (i + 1 >= iData_len) {
+        ret = false;
+        break;
+      }
+      tag = (tag << 8) | i_data[i++];
+    }
+    if (i + 1 >= iData_len) {
+      ret = false;
+      break;
+    }
+    len = i_data[i++];
+    input_vec.insert(input_vec.begin(), len);
+    if (i + len > iData_len) {
+      ret = false;
+      break;
+    }
+    for (j = 1; j <= len; j++) {
+      input_vec.insert(input_vec.begin() + j, i_data[i++]);
+    }
+    input_map[tag] = input_vec;
+    input_vec.clear();
+  }
+  return ret;
+}
+
+/*******************************************************************************
+ * Function      get_conf_map
+ *
+ * Description   Creates a map from the Country code conf with key as Tag and
+ *               value as a vector containing Length and Values of the Tag.
+ *
+ * Returns       true if the map creation successful
+ *
+ *******************************************************************************/
+bool get_conf_map(uint8_t *c_data, uint16_t cData_len) {
+  vector<uint16_t> conf_vec;
+  bool ret = true;
+  uint16_t i = 0, j = 0, tag = 0, len = 0;
+  if (c_data == NULL) {
+    NXPLOG_UCIHAL_D("Country code conf map creation failed, c_data is NULL");
+    return false;
+  }
+  while (i < cData_len) {
+    if (i + 1 >= cData_len) {
+      ret = false;
+      break;
+    }
+    tag = c_data[i++];
+    // Tag IDs from 0xE0 to 0xE2 are extended tag IDs with 2 bytes length.
+    if ((tag >= 0xE0) && (tag <= 0xE2)) {
+      if (i + 1 >= cData_len) {
+        ret = false;
+        break;
+      }
+      tag = (tag << 8) | c_data[i++];
+    }
+    if (i + 1 >= cData_len) {
+      ret = false;
+      break;
+    }
+    len = c_data[i++];
+    conf_vec.insert(conf_vec.begin(), len);
+    if (i + len > cData_len) {
+      ret = false;
+      break;
+    }
+    for (j = 1; j <= len; j++) {
+      conf_vec.insert(conf_vec.begin() + j, c_data[i++]);
+    }
+    conf_map[tag] = conf_vec;
+    conf_vec.clear();
+  }
+  return ret;
 }

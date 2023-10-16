@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2020 NXP
+ * Copyright 2012-2020, 2023 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -18,9 +18,14 @@
 #define _PHNXPUCIHAL_UTILS_H_
 
 #include <assert.h>
-#include <phUwbStatus.h>
 #include <pthread.h>
 #include <semaphore.h>
+#include <time.h>
+
+#include <map>
+#include <vector>
+
+#include "phUwbStatus.h"
 
 /********************* Definitions and structures *****************************/
 
@@ -81,12 +86,17 @@ phNxpUciHal_Monitor_t* phNxpUciHal_get_monitor(void);
 tHAL_UWB_STATUS phNxpUciHal_init_cb_data(phNxpUciHal_Sem_t* pCallbackData,
                                    void* pContext);
 void phNxpUciHal_sem_timed_wait(phNxpUciHal_Sem_t* pCallbackData);
+void phNxpUciHal_sem_timed_wait_sec(phNxpUciHal_Sem_t* pCallbackData, time_t sec);
+
 void phNxpUciHal_cleanup_cb_data(phNxpUciHal_Sem_t* pCallbackData);
 void phNxpUciHal_releaseall_cb_data(void);
 void phNxpUciHal_print_packet(const char* pString, const uint8_t* p_data,
                               uint16_t len);
 void phNxpUciHal_emergency_recovery(void);
 double phNxpUciHal_byteArrayToDouble(const uint8_t* p_data);
+bool get_input_map(const uint8_t *i_data, uint16_t iData_len,
+                   uint8_t startIndex);
+bool get_conf_map(uint8_t *c_data, uint16_t cData_len);
 
 /* Lock unlock helper macros */
 /* Lock unlock helper macros */
