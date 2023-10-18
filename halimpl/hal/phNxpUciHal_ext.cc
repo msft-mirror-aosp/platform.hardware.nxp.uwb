@@ -750,9 +750,11 @@ void phNxpUciHal_process_response() {
     const uint8_t *p = &nxpucihal_ctrl.p_rx_data[4];  // payload
     ReadOtpCookie *cookie = (ReadOtpCookie*)nxpucihal_ctrl.calib_data_ntf_wait.pContext;
 
-    if (!cookie || cookie->m_valid) {
+    if (!cookie) {
+      NXPLOG_UCIHAL_E("Otp read: unexpected OTP read.");
+    } else if (cookie->m_valid) {
       // cookie is already valid
-      NXPLOG_UCIHAL_E("Otp read: unexpected read param-id=0x%x", cookie->m_id);
+      NXPLOG_UCIHAL_E("Otp read: unexpected OTP read, param-id=0x%x", cookie->m_id);
     } else if (plen < 2) {
       NXPLOG_UCIHAL_E("Otp read: bad payload length %u", plen);
     } else if (p[0] != UCI_STATUS_OK) {
