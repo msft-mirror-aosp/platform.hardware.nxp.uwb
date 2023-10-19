@@ -763,9 +763,9 @@ void CascadeConfig::setCountryCode(const char country_code[2])
 
     // Load 'COUNTRY_CODE_CAPS' and apply it to 'conf_map'
     auto cc_data = make_unique<uint8_t[]>(UCI_MAX_DATA_LEN);
-    uint32_t retlen = 0;
     const uwbParam *param = mCapsConfig.find(NAME_NXP_UWB_COUNTRY_CODE_CAPS);
     if (param) {
+        uint32_t retlen = param->arr_len();
         phNxpUciHal_getCountryCaps(param->arr_value(), country_code, cc_data.get(), &retlen);
         if (get_conf_map(cc_data.get(), retlen)) {
             isCountryCodeMapCreated = true;
