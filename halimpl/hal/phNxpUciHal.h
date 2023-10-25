@@ -155,6 +155,13 @@ typedef struct {
   uint8_t rc_version;     /* patch */
 } phNxpUciHal_FW_Version_t;
 
+typedef struct {
+  bool channel_5_support;
+  bool channel_9_support;
+  bool uwb_enable;
+  short tx_power_offset;    // From UWB_COUNTRY_CODE_CAPS
+} phNxpUciHal_Runtime_Settings_t;
+
 /* UCI Control structure */
 typedef struct phNxpUciHal_Control {
   phNxpUci_HalStatus halStatus; /* Indicate if hal is open or closed */
@@ -215,6 +222,9 @@ typedef struct phNxpUciHal_Control {
   uint8_t uwb_binding_count;
   uint8_t  uwbc_device_state;
   uint8_t dev_state_ntf_wait;
+
+  // Per-country settings
+  phNxpUciHal_Runtime_Settings_t rt_settings;
 
   // Extra calibration
   // Antenna Definitions for extra calibration, b0=Antenna1, b1=Antenna2, ...
