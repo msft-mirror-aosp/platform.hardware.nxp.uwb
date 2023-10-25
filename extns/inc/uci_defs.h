@@ -163,12 +163,6 @@
 #define UCI_PARAM_ID_AOA_ELEVATION_MEASUREMENTS 0xE4
 #define UCI_PARAM_ID_RANGE_MEASUREMENTS 0xE5
 
-/**********************************************
- * UCI Parameter IDs : Calibration Parameters
- **********************************************/
-#define UCI_PARAM_ID_RF_CLK_ACCURACY_CALIB    0x01
-#define UCI_PARAM_ID_RX_ANT_DELAY_CALIB   0x02
-
 /*************************************************
  * Status codes
  ************************************************/
