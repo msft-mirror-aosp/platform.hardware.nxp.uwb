@@ -1209,6 +1209,36 @@ void parseAntennaConfig(uint16_t dataLength, const uint8_t *data) {
 }
 
 /******************************************************************************
+ * Function         phNxpUciHal_configureLowPowerMode
+ *
+ * Description      This function applies low power mode value from config file
+ *
+ * Returns          success/Failure
+ *
+ ******************************************************************************/
+bool phNxpUciHal_configureLowPowerMode() {
+  uint8_t configValue;
+  unsigned long num = 1;
+  bool isSendSuccess = false;
+
+  if (NxpConfig_GetNum(NAME_NXP_UWB_LOW_POWER_MODE, &configValue, num)) {
+    // Core set config packet: GID=0x00 OID=0x04
+    const std::vector<uint8_t> packet(
+        {((UCI_MT_CMD << UCI_MT_SHIFT) | UCI_GID_CORE), UCI_MSG_CORE_SET_CONFIG,
+         0x00, 0x04, 0x01, LOW_POWER_MODE_TAG_ID, LOW_POWER_MODE_LENGTH,
+         configValue});
+
+    if (phNxpUciHal_send_ext_cmd(packet.size(), packet.data()) ==
+        UWBSTATUS_SUCCESS) {
+      isSendSuccess = true;
+    }
+  } else {
+    NXPLOG_UCIHAL_E("NAME_NXP_UWB_LOW_POWER_MODE config read failed");
+  }
+  return isSendSuccess;
+}
+
+/******************************************************************************
  * Function         phNxpUciHal_applyVendorConfig
  *
  * Description      This function applies the vendor config from config file
@@ -1344,6 +1374,13 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
           name.c_str());
     }
   }
+
+  // low power mode
+  if (!phNxpUciHal_configureLowPowerMode()) {
+    NXPLOG_UCIHAL_E("phNxpUciHal_send_ext_cmd for %s failed",
+                    NAME_NXP_UWB_LOW_POWER_MODE);
+  }
+
   return UWBSTATUS_SUCCESS;
 }
 
