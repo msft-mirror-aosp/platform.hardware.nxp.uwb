@@ -41,6 +41,7 @@ int NxpConfig_GetStrArrayVal(const char* name, int index, char* pValue, unsigned
 };
 #endif
 
+/* libuwb-nxp.conf parameters */
 #define NAME_UWB_BOARD_VARIANT_CONFIG "UWB_BOARD_VARIANT_CONFIG"
 #define NAME_UWB_BOARD_VARIANT_VERSION "UWB_BOARD_VARIANT_VERSION"
 #define NAME_UWB_CORE_EXT_DEVICE_DEFAULT_CONFIG "UWB_CORE_EXT_DEVICE_DEFAULT_CONFIG"
@@ -73,9 +74,15 @@ int NxpConfig_GetStrArrayVal(const char* name, int index, char* pValue, unsigned
 #define NAME_NXP_SECURE_CONFIG_BLK "NXP_SECURE_CONFIG_BLK_"
 #define NAME_PLATFORM_ID "PLATFORM_ID"
 
-#define NAME_NXP_COUNTRY_CODE_VERSION "VERSION"
-
 #define NAME_REGION_MAP_PATH "REGION_MAP_PATH"
+
+#define NAME_NXP_UCI_CONFIG_PATH "NXP_UCI_CONFIG_PATH"
+
+/* libuwb-uci.conf parameters */
+#define NAME_NXP_UWB_LOW_POWER_MODE "UWB_LOW_POWER_MODE"
+
+/* libuwb-countrycode.conf parameters */
+#define NAME_NXP_COUNTRY_CODE_VERSION "VERSION"
 
 /* default configuration */
 #define default_storage_location "/data/vendor/uwb"
