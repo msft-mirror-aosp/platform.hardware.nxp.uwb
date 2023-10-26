@@ -69,6 +69,10 @@
 
 #define CCC_SUPPORTED_PROTOCOL_VERSIONS_ID 0xA4
 
+/* Low power mode */
+#define LOW_POWER_MODE_TAG_ID 0x01
+#define LOW_POWER_MODE_LENGTH 0x01
+
 /* AOA support handling */
 #define AOA_SUPPORT_TAG_ID 0x13
 #define ANTENNA_RX_PAIR_DEFINE_TAG_ID 0xE4
