@@ -44,6 +44,7 @@
 const char default_nxp_config_path[] = "/vendor/etc/libuwb-nxp.conf";
 const char country_code_config_name[] = "libuwb-countrycode.conf";
 const char country_code_specifier[] = "<country>";
+const char nxp_uci_config_file[] = "libuwb-uci.conf";
 
 using namespace::std;
 
@@ -647,6 +648,9 @@ private:
     // default_nxp_config_path
     CUwbNxpConfig mMainConfig;
 
+    // uci config
+    CUwbNxpConfig mUciConfig;
+
     // EXTRA_CONF_PATH[N]
     vector<CUwbNxpConfig> mExtraConfig;
 
@@ -672,6 +676,26 @@ void CascadeConfig::init(const char *main_config)
         return;
     }
     mMainConfig = move(config);
+
+     {
+        // UCI config file
+        const uwbParam *param = mMainConfig.find(NAME_NXP_UCI_CONFIG_PATH);
+        if (param) {
+            std::string uciConfigFilePath = param->str_value();
+            uciConfigFilePath += nxp_uci_config_file;
+
+            CUwbNxpConfig config(uciConfigFilePath.c_str());
+            if (!config.isValid()) {
+                ALOGW("Failed to load uci config file:%s",
+                      uciConfigFilePath.c_str());
+            } else {
+                mUciConfig = move(config);
+            }
+        } else {
+            ALOGI("NAME_NXP_UCI_CONFIG_PATH param not found in %s",
+                  main_config);
+        }
+    }
 
     // Read EXTRA_CONF_PATH[N]
     for (int i = 1; i <= 10; i++) {
@@ -745,6 +769,8 @@ void CascadeConfig::init(const char *main_config)
         mCapsConfig.dump();
 
         mRegionMap.dump();
+
+        mUciConfig.dump();
     }
 }
 
@@ -763,9 +789,9 @@ void CascadeConfig::setCountryCode(const char country_code[2])
 
     // Load 'COUNTRY_CODE_CAPS' and apply it to 'conf_map'
     auto cc_data = make_unique<uint8_t[]>(UCI_MAX_DATA_LEN);
-    uint32_t retlen = 0;
     const uwbParam *param = mCapsConfig.find(NAME_NXP_UWB_COUNTRY_CODE_CAPS);
     if (param) {
+        uint32_t retlen = param->arr_len();
         phNxpUciHal_getCountryCaps(param->arr_value(), country_code, cc_data.get(), &retlen);
         if (get_conf_map(cc_data.get(), retlen)) {
             isCountryCodeMapCreated = true;
@@ -784,6 +810,9 @@ const uwbParam* CascadeConfig::find(const char *name) const
     }
     if (!param) {
         param = mMainConfig.find(name);
+    }
+    if (!param) {
+        param = mUciConfig.find(name);
     }
     return param;
 }

@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <string.h>
 #include <sys/stat.h>
 
 #include <atomic>
@@ -28,7 +29,7 @@
 #include "phTmlUwb.h"
 #include "phUwbCommon.h"
 
-/* Timeout value to wait for response from SR1xx */
+/* Timeout value to wait for response from DEVICE_TYPE_SR1xx */
 #define HAL_EXTNS_WRITE_RSP_TIMEOUT (100)
 #define HAL_HW_RESET_NTF_TIMEOUT 10000 /* 10 sec wait */
 
@@ -707,6 +708,67 @@ fail_otp_read_data:
 }
 
 /******************************************************************************
+ * Function         phNxpUciHal_parseCoreDeviceInfoRsp
+ *
+ * Description      This function parse Core device Info response.
+ *
+ * Returns          void.
+ *
+ ******************************************************************************/
+static void phNxpUciHal_parseCoreDeviceInfoRsp(const uint8_t *p_rx_data, size_t rx_data_len)
+{
+  uint8_t index = 13; // Excluding the header and Versions
+  uint8_t paramId = 0;
+  uint8_t length = 0;
+
+  if (nxpucihal_ctrl.isDevInfoCached) {
+    return;
+  }
+
+  NXPLOG_UCIHAL_D("phNxpUciHal_parseCoreDeviceInfoRsp Enter..");
+
+  if (rx_data_len > sizeof(nxpucihal_ctrl.dev_info_resp)) {
+      NXPLOG_UCIHAL_E("FIXME: CORE_DEVICE_INFO_RSP buffer overflow!");
+      return;
+  }
+
+  memcpy(nxpucihal_ctrl.dev_info_resp, nxpucihal_ctrl.p_rx_data, nxpucihal_ctrl.rx_data_len);
+
+  uint8_t len = p_rx_data[index++];
+  len = len + index;
+  while (index < len) {
+    paramId = p_rx_data[index++];
+    length = p_rx_data[index++];
+    if (paramId == DEVICE_NAME_PARAM_ID && length >= 5) {
+      /* SR100T --> T */
+      switch(p_rx_data[index + 5]) {
+      case DEVICE_TYPE_SR1xxS:
+        nxpucihal_ctrl.device_type = DEVICE_TYPE_SR1xxS;
+        break;
+      case DEVICE_TYPE_SR1xxT:
+        nxpucihal_ctrl.device_type = DEVICE_TYPE_SR1xxT;
+        break;
+      default:
+        nxpucihal_ctrl.device_type = DEVICE_TYPE_UNKNOWN;
+        break;
+      }
+    } else if (paramId == FW_VERSION_PARAM_ID && length >= 3) {
+      nxpucihal_ctrl.fw_version.major_version = p_rx_data[index];
+      nxpucihal_ctrl.fw_version.minor_version = p_rx_data[index + 1];
+      nxpucihal_ctrl.fw_version.rc_version = p_rx_data[index + 2];
+    } else if (paramId == FW_BOOT_MODE_PARAM_ID && length >= 1) {
+      nxpucihal_ctrl.fw_boot_mode = p_rx_data[index];
+      break;
+    }
+    index = index + length;
+  }
+  NXPLOG_UCIHAL_D("phNxpUciHal_parseCoreDeviceInfoRsp: Device Info cached.");
+  nxpucihal_ctrl.isDevInfoCached = true;
+  return;
+}
+
+
+/******************************************************************************
  * Function         phNxpUciHal_process_response
  *
  * Description      This function handles all the propriotory hal
@@ -741,6 +803,16 @@ void phNxpUciHal_process_response() {
       phNxpUciHal_clear_thermal_runaway_status();
  }
 
+  // Remember CORE_DEVICE_INFO_RSP
+  if (mt == UCI_MT_RSP && (gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_DEVICE_INFO)) {
+    if (pbf) {
+      // FIXME: Fix the whole logic if this really happens
+      NXPLOG_UCIHAL_E("FIXME: CORE_DEVICE_INFO_RSP is fragmented!");
+    } else {
+      phNxpUciHal_parseCoreDeviceInfoRsp(nxpucihal_ctrl.p_rx_data, nxpucihal_ctrl.rx_data_len);
+    }
+  }
+
   //
   // Handle NXP_READ_CALIB_DATA_NTF
   //
@@ -750,9 +822,11 @@ void phNxpUciHal_process_response() {
     const uint8_t *p = &nxpucihal_ctrl.p_rx_data[4];  // payload
     ReadOtpCookie *cookie = (ReadOtpCookie*)nxpucihal_ctrl.calib_data_ntf_wait.pContext;
 
-    if (!cookie || cookie->m_valid) {
+    if (!cookie) {
+      NXPLOG_UCIHAL_E("Otp read: unexpected OTP read.");
+    } else if (cookie->m_valid) {
       // cookie is already valid
-      NXPLOG_UCIHAL_E("Otp read: unexpected read param-id=0x%x", cookie->m_id);
+      NXPLOG_UCIHAL_E("Otp read: unexpected OTP read, param-id=0x%x", cookie->m_id);
     } else if (plen < 2) {
       NXPLOG_UCIHAL_E("Otp read: bad payload length %u", plen);
     } else if (p[0] != UCI_STATUS_OK) {

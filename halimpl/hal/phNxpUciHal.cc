@@ -40,7 +40,7 @@ extern map<uint16_t, vector<uint16_t>> conf_map;
 /*********************** Global Variables *************************************/
 /* UCI HAL Control structure */
 phNxpUciHal_Control_t nxpucihal_ctrl;
-uint8_t *gpCoreDeviceInfoRsp = NULL;
+
 /* TML Context */
 extern phTmlUwb_Context_t* gpphTmlUwb_Context;
 
@@ -50,8 +50,6 @@ bool uwb_get_platform_id = false;
 uint32_t timeoutTimerId = 0;
 char persistant_log_path[120];
 static uint8_t Rx_data[UCI_MAX_DATA_LEN];
-uint8_t deviceType = '\0';
-phNxpUciHal_FW_Version_t fw_version;
 uint8_t channel_5_support = 1;
 uint8_t channel_9_support = 1;
 short conf_tx_power = 0;
@@ -928,12 +926,6 @@ void phNxpUciHal_read_complete(void* pContext,
         }
         if(nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] == UCI_STATUS_OK){
           nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_SUCCESS;
-          if((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_DEVICE_INFO)) {
-            gpCoreDeviceInfoRsp = (uint8_t*)malloc(sizeof(uint8_t) * nxpucihal_ctrl.rx_data_len);
-            if(gpCoreDeviceInfoRsp != NULL) {
-              memcpy(&gpCoreDeviceInfoRsp[0], &nxpucihal_ctrl.p_rx_data[0], nxpucihal_ctrl.rx_data_len);
-            }
-          }
         } else if ((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_SET_CONFIG)){
           NXPLOG_UCIHAL_E(" status = 0x%x",nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET]);
           /* check if any configurations are not supported then ignore the
@@ -1106,49 +1098,6 @@ void phNxpUciHal_init_complete(tHAL_UWB_STATUS status) {
 }
 
 /******************************************************************************
- * Function         phNxpUciHal_parseCoreDeviceInfoRsp
- *
- * Description      This function parse Core device Info response.
- *
- * Returns          void.
- *
- ******************************************************************************/
-static void phNxpUciHal_parseCoreDeviceInfoRsp(uint8_t *fwBootMode, uint8_t *device) {
-  NXPLOG_UCIHAL_D("phNxpUciHal_parseCoreDeviceInfoRsp Enter..");
-  uint8_t index = 13; // Excluding the header and Versions
-  uint8_t paramId = 0;
-  uint8_t length = 0;
-
-  if(fwBootMode == NULL || gpCoreDeviceInfoRsp == NULL){
-    return;
-  }
-
-  uint8_t len = gpCoreDeviceInfoRsp[index++];
-  len = len + index;
-  while (index < len) {
-    paramId = gpCoreDeviceInfoRsp[index++];
-    length = gpCoreDeviceInfoRsp[index++];
-    if (paramId == DEVICE_NAME_PARAM_ID) {
-      *device  = gpCoreDeviceInfoRsp[index + 5];
-      NXPLOG_UCIHAL_D("phNxpUciHal_parseCoreDeviceInfoRsp DeviceType %c", *device);
-    } else if (paramId == FW_VERSION_PARAM_ID) {
-      fw_version.major_version = gpCoreDeviceInfoRsp[index];
-      fw_version.minor_version = gpCoreDeviceInfoRsp[index + 1];
-      fw_version.rc_version = gpCoreDeviceInfoRsp[index + 2];
-    } else if (paramId == FW_BOOT_MODE_PARAM_ID) {
-      *fwBootMode = gpCoreDeviceInfoRsp[index];
-      break;
-    }
-    index = index + length;
-  }
-  if (gpCoreDeviceInfoRsp != NULL) {
-    free(gpCoreDeviceInfoRsp);
-    gpCoreDeviceInfoRsp = NULL;
-  }
-  return;
-}
-
-/******************************************************************************
  * Function         phNxpUciHal_sendGetCoreDeviceInfo
  *
  * Description      This function send Core device Info command.
@@ -1156,20 +1105,16 @@ static void phNxpUciHal_parseCoreDeviceInfoRsp(uint8_t *fwBootMode, uint8_t *dev
  * Returns          status.
  *
  ******************************************************************************/
-uint8_t phNxpUciHal_sendGetCoreDeviceInfo(){
-  std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
-  buffer.fill(0);
+static uint8_t phNxpUciHal_sendGetCoreDeviceInfo(void)
+{
+  if (nxpucihal_ctrl.isDevInfoCached) {
+    return UWBSTATUS_SUCCESS;
+  }
+
   const uint8_t getCoreDeviceInfoConfig[] = {0x20, 0x02, 0x00, 0x00};
   uint8_t getCoreDeviceInfoCmdLen = 4;
+
   tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(getCoreDeviceInfoCmdLen, getCoreDeviceInfoConfig);
-  if(status != UWBSTATUS_SUCCESS) {
-    return status;
-  } else {
-    phNxpUciHal_parseCoreDeviceInfoRsp(&nxpucihal_ctrl.fw_boot_mode,
-                                       &deviceType);
-    NXPLOG_UCIHAL_D(" fw_boot_mode is : %d, deviceType is :%d",
-                    nxpucihal_ctrl.fw_boot_mode, deviceType);
-  }
   return status;
 }
 
@@ -1206,6 +1151,36 @@ void parseAntennaConfig(uint16_t dataLength, const uint8_t *data) {
     NXPLOG_UCIHAL_E("Reading config file for %s failed!!!",
                     NAME_UWB_CORE_EXT_DEVICE_DEFAULT_CONFIG);
   }
+}
+
+/******************************************************************************
+ * Function         phNxpUciHal_configureLowPowerMode
+ *
+ * Description      This function applies low power mode value from config file
+ *
+ * Returns          success/Failure
+ *
+ ******************************************************************************/
+bool phNxpUciHal_configureLowPowerMode() {
+  uint8_t configValue;
+  unsigned long num = 1;
+  bool isSendSuccess = false;
+
+  if (NxpConfig_GetNum(NAME_NXP_UWB_LOW_POWER_MODE, &configValue, num)) {
+    // Core set config packet: GID=0x00 OID=0x04
+    const std::vector<uint8_t> packet(
+        {((UCI_MT_CMD << UCI_MT_SHIFT) | UCI_GID_CORE), UCI_MSG_CORE_SET_CONFIG,
+         0x00, 0x04, 0x01, LOW_POWER_MODE_TAG_ID, LOW_POWER_MODE_LENGTH,
+         configValue});
+
+    if (phNxpUciHal_send_ext_cmd(packet.size(), packet.data()) ==
+        UWBSTATUS_SUCCESS) {
+      isSendSuccess = true;
+    }
+  } else {
+    NXPLOG_UCIHAL_E("NAME_NXP_UWB_LOW_POWER_MODE config read failed");
+  }
+  return isSendSuccess;
 }
 
 /******************************************************************************
@@ -1252,7 +1227,7 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
       }
     }
   }
-  if (deviceType == SR1xxT) {
+  if (nxpucihal_ctrl.device_type == DEVICE_TYPE_SR1xxT) {
     if (NxpConfig_GetByteArray(NAME_UWB_CORE_EXT_DEVICE_SR1XX_T_CONFIG,
                                buffer.data(), buffer.size(),
                                &retlen)) {
@@ -1271,7 +1246,7 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
         }
       }
     }
-  } else if (deviceType == SR1xxS) {
+  } else if (nxpucihal_ctrl.device_type == DEVICE_TYPE_SR1xxS) {
     if (NxpConfig_GetByteArray(NAME_UWB_CORE_EXT_DEVICE_SR1XX_S_CONFIG,
                             buffer.data(), buffer.size(),
                             &retlen)) {
@@ -1344,6 +1319,13 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
           name.c_str());
     }
   }
+
+  // low power mode
+  if (!phNxpUciHal_configureLowPowerMode()) {
+    NXPLOG_UCIHAL_E("phNxpUciHal_send_ext_cmd for %s failed",
+                    NAME_NXP_UWB_LOW_POWER_MODE);
+  }
+
   return UWBSTATUS_SUCCESS;
 }
 
@@ -1690,11 +1672,11 @@ tHAL_UWB_STATUS phNxpUciHal_sessionInitialization(uint32_t sessionId) {
     NXPLOG_UCIHAL_E("HAL not initialized");
     return UWBSTATUS_FAILED;
   }
-  if(deviceType == SR1xxT) {
+  if(nxpucihal_ctrl.device_type == DEVICE_TYPE_SR1xxT) {
     appConfigStatus = NxpConfig_GetByteArray(NAME_NXP_UWB_EXT_APP_SR1XX_T_CONFIG,
                                    buffer.data(), buffer.size(),
                                    &retlen);
-  } else if (deviceType == SR1xxS) {
+  } else if (nxpucihal_ctrl.device_type == DEVICE_TYPE_SR1xxS) {
     appConfigStatus = NxpConfig_GetByteArray(NAME_NXP_UWB_EXT_APP_SR1XX_S_CONFIG,
                                    buffer.data(), buffer.size(),
                                    &retlen);
@@ -1800,11 +1782,11 @@ void phNxpUciHal_getVersionInfo() {
           mwVersion.major_version, mwVersion.minor_version);
   }
 
-  if (fw_version.rc_version) {
-    ALOGI("FW Version: %02x.%02x_RC%02x", fw_version.major_version,
-          fw_version.minor_version, fw_version.rc_version);
+  if (nxpucihal_ctrl.fw_version.rc_version) {
+    ALOGI("FW Version: %02x.%02x_RC%02x", nxpucihal_ctrl.fw_version.major_version,
+          nxpucihal_ctrl.fw_version.minor_version, nxpucihal_ctrl.fw_version.rc_version);
   } else {
-    ALOGI("FW Version: %02x.%02x", fw_version.major_version,
-          fw_version.minor_version);
+    ALOGI("FW Version: %02x.%02x", nxpucihal_ctrl.fw_version.major_version,
+          nxpucihal_ctrl.fw_version.minor_version);
   }
 }
