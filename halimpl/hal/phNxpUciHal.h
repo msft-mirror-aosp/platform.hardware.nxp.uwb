@@ -80,8 +80,11 @@
 
 #define DEVICE_NAME_PARAM_ID 0x00
 
-#define SR1xxT 'T'
-#define SR1xxS 'S'
+typedef enum {
+  DEVICE_TYPE_UNKNOWN = '\0',
+  DEVICE_TYPE_SR1xxT = 'T',
+  DEVICE_TYPE_SR1xxS = 'S',
+} device_type_t;
 
 /* Mem alloc. with 8 byte alignment */
 #define nxp_malloc(x) malloc(((x - 1) | 7) + 1)
@@ -136,6 +139,22 @@ typedef enum {
 #define HAL_ENABLE_EXT() (nxpucihal_ctrl.hal_ext_enabled = 1)
 #define HAL_DISABLE_EXT() (nxpucihal_ctrl.hal_ext_enabled = 0)
 
+typedef struct {
+  uint8_t
+      validation; /* indicates on which platform validation is done like SR100*/
+  uint8_t android_version; /* android version */
+  uint8_t major_version;   /* major version of the MW */
+  uint8_t minor_version;   /* Minor Version of MW */
+  uint8_t rc_version;      /* RC version */
+  uint8_t mw_drop;         /* MW early drops */
+} phNxpUciHal_MW_Version_t;
+
+typedef struct {
+  uint8_t major_version;  /* major */
+  uint8_t minor_version;  /* minor/maintenance */
+  uint8_t rc_version;     /* patch */
+} phNxpUciHal_FW_Version_t;
+
 /* UCI Control structure */
 typedef struct phNxpUciHal_Control {
   phNxpUci_HalStatus halStatus; /* Indicate if hal is open or closed */
@@ -172,6 +191,14 @@ typedef struct phNxpUciHal_Control {
   uint8_t p_rsp_data[UCI_MAX_DATA_LEN];
   uint8_t p_caps_resp[UCI_MAX_DATA_LEN];
 
+  /* CORE_DEVICE_INFO_RSP cache */
+  bool isDevInfoCached;
+  uint8_t dev_info_resp[256];
+
+  phNxpUciHal_FW_Version_t fw_version;
+  device_type_t device_type;
+  uint8_t fw_boot_mode;
+
   /* retry count used to force download */
   uint8_t read_retry_cnt;
 
@@ -182,26 +209,9 @@ typedef struct phNxpUciHal_Control {
   bool_t fw_dwnld_mode;
   uint8_t uwb_binding_status;
   uint8_t uwb_binding_count;
-  uint8_t fw_boot_mode;
   uint8_t  uwbc_device_state;
   uint8_t dev_state_ntf_wait;
 } phNxpUciHal_Control_t;
-
-typedef struct {
-  uint8_t
-      validation; /* indicates on which platform validation is done like SR100*/
-  uint8_t android_version; /* android version */
-  uint8_t major_version;   /* major version of the MW */
-  uint8_t minor_version;   /* Minor Version of MW */
-  uint8_t rc_version;      /* RC version */
-  uint8_t mw_drop;         /* MW early drops */
-} phNxpUciHal_MW_Version_t;
-
-typedef struct {
-  uint8_t major_version; /* major version of the MW */
-  uint8_t minor_version; /* Minor Version of MW */
-  uint8_t rc_version;    /* RC version */
-} phNxpUciHal_FW_Version_t;
 
 /* Internal messages to handle callbacks */
 #define UCI_HAL_OPEN_CPLT_MSG 0x411
@@ -227,7 +237,6 @@ tHAL_UWB_STATUS phNxpUciHal_write_unlocked(uint16_t data_len,
 void phNxpUciHal_read_complete(void* pContext,
                                       phTmlUwb_TransactInfo_t* pInfo);
 tHAL_UWB_STATUS phNxpUciHal_uwb_reset();
-uint8_t phNxpUciHal_sendGetCoreDeviceInfo();
 tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig();
 tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
                                                 const uint8_t *p_cmd,
