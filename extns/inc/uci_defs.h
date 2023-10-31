@@ -158,6 +158,7 @@
  * UCI Parameter IDs : Application Configurations
  ************************************************/
 #define UCI_PARAM_ID_CHANNEL_NUMBER 0x04
+#define UCI_PARAM_ID_TX_ADAPTIVE_PAYLOAD_POWER  0x1C  /* 2.0.0-0.9r4 CR-1038 removed this */
 #define UCI_PARAM_ID_AOA_AZIMUTH_MEASUREMENTS 0xE3
 #define UCI_PARAM_ID_AOA_ELEVATION_MEASUREMENTS 0xE4
 #define UCI_PARAM_ID_RANGE_MEASUREMENTS 0xE5
