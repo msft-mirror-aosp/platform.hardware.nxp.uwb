@@ -13,22 +13,26 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <sys/stat.h>
 
-#include <log/log.h>
-#include <phNxpLog.h>
+#include <array>
+#include <string.h>
+#include <map>
+#include <unordered_set>
+#include <vector>
+
+#include <android-base/stringprintf.h>
 #include <cutils/properties.h>
+#include <log/log.h>
+
+#include <phNxpLog.h>
 #include <phNxpUciHal.h>
 #include <phNxpUciHal_Adaptation.h>
 #include <phNxpUciHal_ext.h>
 #include <phTmlUwb_spi.h>
-#include <sys/stat.h>
-#include <string.h>
-#include <array>
-#include <map>
-#include <vector>
+
 #include "hal_nxpuwb.h"
 #include "phNxpConfig.h"
-#include <android-base/stringprintf.h>
 #include "phNxpUciHal_utils.h"
 
 using namespace std;
@@ -174,8 +178,15 @@ static void* phNxpUciHal_client_thread(void* arg) {
  *
  *************************************************************************************/
 void handlingVendorSpecificAppConfig(uint16_t *data_len, uint8_t *p_data) {
-  uint8_t mt = 0, gid = 0, oid = 0;
+  // removing the vendor specific app config as it's not supported by FW
+  static const std::unordered_set<uint16_t> tags_to_del {
+    UCI_PARAM_ID_TX_ADAPTIVE_PAYLOAD_POWER,
+    UCI_PARAM_ID_AOA_AZIMUTH_MEASUREMENTS,
+    UCI_PARAM_ID_AOA_ELEVATION_MEASUREMENTS,
+    UCI_PARAM_ID_RANGE_MEASUREMENTS
+  };
 
+  uint8_t mt = 0, gid = 0, oid = 0;
   mt = (*(p_data)&UCI_MT_MASK) >> UCI_MT_SHIFT;
   gid = p_data[0] & UCI_GID_MASK;
   oid = p_data[1] & UCI_OID_MASK;
@@ -183,59 +194,76 @@ void handlingVendorSpecificAppConfig(uint16_t *data_len, uint8_t *p_data) {
   if (mt == UCI_MT_CMD) {
     if ((gid == UCI_GID_SESSION_MANAGE) &&
         (oid == UCI_MSG_SESSION_SET_APP_CONFIG)) {
-        uint16_t dataLength = *data_len, numOfbytes = 0, numOfConfigs = 0,
-                 appConfigLength = 0;
+        uint16_t dataLength = *data_len, numOfbytes = 0, numOfConfigs = 0;
 
         /* Create local copy of cmd_data for data manipulation*/
         uint8_t uciCmd[UCI_MAX_DATA_LEN];
+        if (sizeof(uciCmd) < dataLength) {
+          return;
+        }
         memcpy(uciCmd, p_data, dataLength);
 
         uint16_t startOfByteManipulation = UCI_MSG_HDR_SIZE +
                                            UCI_CMD_SESSION_ID_OFFSET +
                                            UCI_CMD_NUM_CONFIG_PARAM_LENGTH;
 
-        uint8_t tlvLength = UCI_CMD_TAG_BYTE_LENGTH +
-                            UCI_CMD_PARAM_SIZE_BYTE_LENGTH +
-                            UCI_CMD_PAYLOAD_BYTE_LENGTH;
-
         for (uint16_t i = startOfByteManipulation, j = startOfByteManipulation;
              i < dataLength;) {
-          // static condition checks
-          // removing the vendor specific app config as it's not supported by FW
-          if ((uciCmd[i] == UCI_PARAM_ID_AOA_AZIMUTH_MEASUREMENTS) &&
-              (uciCmd[i + tlvLength] ==
-               UCI_PARAM_ID_AOA_ELEVATION_MEASUREMENTS) &&
-              (uciCmd[i + (2 * tlvLength)] ==
-               UCI_PARAM_ID_RANGE_MEASUREMENTS)) {
+          uint16_t tag;
+          uint8_t len;
+          uint8_t param_len;
 
-            numOfConfigs = 3; // removing 3 TAG ID's
-            numOfbytes = 9;   // removing 9 bytes out of payload
-            i += 9;           // skipping 9 bytes in byte copying
-            NXPLOG_UCIHAL_D(
-                "Removed param payload with Tag ID:0x%x, 0x%x, 0x%x",
-                UCI_PARAM_ID_AOA_AZIMUTH_MEASUREMENTS,
-                UCI_PARAM_ID_AOA_ELEVATION_MEASUREMENTS,
-                UCI_PARAM_ID_RANGE_MEASUREMENTS);
+          tag = p_data[i];
+          if (tag >= 0xe0 && tag <= 0xe2) {
+            if ((i + 3) > dataLength)
+              return;
+            tag = (tag << 8) | p_data[i + 1];
+            len = p_data[i + 2];
+            param_len = 3 + len;
           } else {
-            p_data[j] = uciCmd[i];
-            i++;
-            j++;
+            if ((i + 2) > dataLength)
+              return;
+            len = p_data[i + 1];
+            param_len = 2 + len;
+          }
+
+          if ((i + param_len) > dataLength)
+            return;
+
+          if (tags_to_del.find(tag) == tags_to_del.end()) {
+            memcpy(&uciCmd[j], &p_data[i], param_len);
+            i += param_len;
+            j += param_len;
+          } else {
+            i += param_len;
+            NXPLOG_UCIHAL_D("Removed param payload with Tag ID:0x%x", tag);
+            numOfConfigs++;
+            numOfbytes += param_len;
           }
         }
 
         // uci number of config params update
-        p_data[UCI_CMD_NUM_CONFIG_PARAM_BYTE] -= numOfConfigs;
+        if (uciCmd[UCI_CMD_NUM_CONFIG_PARAM_BYTE] < numOfConfigs)
+          return;
+        uciCmd[UCI_CMD_NUM_CONFIG_PARAM_BYTE] -= numOfConfigs;
 
         // uci command length update
+        if (dataLength < numOfbytes)
+          return;
         dataLength -= numOfbytes;
-        *data_len = dataLength;
 
         // uci cmd app config length update
-        appConfigLength = (p_data[UCI_CMD_LENGTH_PARAM_BYTE1] & 0xFF) |
-                          ((p_data[UCI_CMD_LENGTH_PARAM_BYTE2] & 0xFF) << 8);
-        appConfigLength -= numOfbytes;
-        p_data[UCI_CMD_LENGTH_PARAM_BYTE2] = (appConfigLength & 0xFF00) >> 8;
-        p_data[UCI_CMD_LENGTH_PARAM_BYTE1] = (appConfigLength & 0xFF);
+        uint16_t header_len = (uciCmd[UCI_CMD_LENGTH_PARAM_BYTE1] & 0xFF) |
+                              ((uciCmd[UCI_CMD_LENGTH_PARAM_BYTE2] & 0xFF) << 8);
+        if (header_len < numOfbytes)
+          return;
+
+        header_len -= numOfbytes;
+        uciCmd[UCI_CMD_LENGTH_PARAM_BYTE2] = (header_len & 0xFF00) >> 8;
+        uciCmd[UCI_CMD_LENGTH_PARAM_BYTE1] = (header_len & 0xFF);
+
+        memcpy(p_data, uciCmd, dataLength);
+        *data_len = dataLength;
     }
   }
 }
