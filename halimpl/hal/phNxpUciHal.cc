@@ -459,12 +459,11 @@ static void phNxpUciHal_kill_client_thread(
  *                  In case of failure returns other failure value.
  *
  ******************************************************************************/
-tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback,
-                     uwb_stack_data_callback_t* p_data_cback) {
+tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_callback_t* p_data_cback)
+{
+  static const char uwb_dev_node[256] = "/dev/srxxx";
   phOsalUwb_Config_t tOsalConfig;
   phTmlUwb_Config_t tTmlConfig;
-  char* uwb_dev_node = NULL;
-  const uint16_t max_len = 260;
   tHAL_UWB_STATUS wConfigStatus = UWBSTATUS_SUCCESS;
   pthread_attr_t attr;
 
@@ -490,14 +489,7 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback,
   memset(&nxpucihal_ctrl, 0x00, sizeof(nxpucihal_ctrl));
   memset(&tOsalConfig, 0x00, sizeof(tOsalConfig));
   memset(&tTmlConfig, 0x00, sizeof(tTmlConfig));
-  uwb_dev_node = (char*)nxp_malloc(max_len * sizeof(char));
-  if (uwb_dev_node == NULL) {
-      NXPLOG_UCIHAL_E("malloc of uwb_dev_node failed ");
-      goto clean_and_return;
-  } else {
-      NXPLOG_UCIHAL_E("Assigning the default helios Node: dev/srxxx");
-      strcpy(uwb_dev_node, "/dev/srxxx");
-  }
+  NXPLOG_UCIHAL_E("Assigning the default helios Node: %s", uwb_dev_node);
   /* By default HAL status is HAL_STATUS_OPEN */
   nxpucihal_ctrl.halStatus = HAL_STATUS_OPEN;
 
@@ -508,7 +500,7 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback,
   /* Configure hardware link */
   nxpucihal_ctrl.gDrvCfg.nClientId = phDal4Uwb_msgget(0, 0600);
   nxpucihal_ctrl.gDrvCfg.nLinkType = ENUM_LINK_TYPE_SPI;
-  tTmlConfig.pDevName = (int8_t*)uwb_dev_node;
+  tTmlConfig.pDevName = uwb_dev_node;
   tOsalConfig.dwCallbackThreadId = (uintptr_t)nxpucihal_ctrl.gDrvCfg.nClientId;
   tOsalConfig.pLogFile = NULL;
   tTmlConfig.dwGetMsgThreadId = (uintptr_t)nxpucihal_ctrl.gDrvCfg.nClientId;
@@ -518,11 +510,6 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback,
   if (wConfigStatus != UWBSTATUS_SUCCESS) {
     NXPLOG_UCIHAL_E("phTmlUwb_Init Failed");
     goto clean_and_return;
-  } else {
-    if (uwb_dev_node != NULL) {
-      free(uwb_dev_node);
-      uwb_dev_node = NULL;
-    }
   }
 
   /* Create the client thread */
@@ -556,10 +543,6 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback,
 
 clean_and_return:
   CONCURRENCY_UNLOCK();
-  if (uwb_dev_node != NULL) {
-    free(uwb_dev_node);
-    uwb_dev_node = NULL;
-  }
 
   /* Report error status */
   (*nxpucihal_ctrl.p_uwb_stack_cback)(HAL_UWB_OPEN_CPLT_EVT, HAL_UWB_ERROR_EVT);

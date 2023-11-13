@@ -152,7 +152,7 @@ typedef struct phTmlUwb_Config {
    *
    * e.g. On Linux based systems this would be /dev/SR100
    */
-  int8_t* pDevName;
+  const char* pDevName;
   /* Callback Thread ID
    *
    * This is the thread ID on which the Reader & Writer thread posts message. */

@@ -51,7 +51,7 @@ tHAL_UWB_STATUS phTmlUwb_spi_open_and_configure(pphTmlUwb_Config_t pConfig,
 
   NXPLOG_TML_D("Opening port=%s\n", pConfig->pDevName);
   /* open port */
-  nHandle = open((const char*)pConfig->pDevName, O_RDWR);
+  nHandle = open(pConfig->pDevName, O_RDWR);
   if (nHandle < 0) {
     NXPLOG_TML_E("_spi_open() Failed: retval %x", nHandle);
     *pLinkHandle = NULL;
