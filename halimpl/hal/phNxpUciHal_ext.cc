@@ -85,8 +85,12 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
   /* Send ext command */
   do {
     NXPLOG_UCIHAL_D("Entered do while loop");
+
     nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_SUCCESS;
+    nxpucihal_ctrl.ext_cb_waiting = true;
+
     *data_written = phNxpUciHal_write_unlocked(cmd_len, p_cmd);
+
     if (*data_written != cmd_len) {
       NXPLOG_UCIHAL_D("phNxpUciHal_write failed for hal ext");
       goto clean_and_return;
@@ -120,6 +124,7 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
         NXPLOG_UCIHAL_E("p_hal_ext->ext_cb_data.sem semaphore error");
         goto clean_and_return;
       }
+      nxpucihal_ctrl.ext_cb_waiting = false;
 
       switch (nxpucihal_ctrl.ext_cb_data.status) {
       case UWBSTATUS_RESPONSE_TIMEOUT:
@@ -127,6 +132,7 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
         ext_cmd_retry_cnt++;
         break;
       case UWBSTATUS_INVALID_COMMAND_LENGTH:
+        // XXX: Why retrying here?
         invalid_len_retry_cnt++;
         break;
       default:
