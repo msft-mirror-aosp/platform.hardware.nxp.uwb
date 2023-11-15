@@ -215,6 +215,11 @@ typedef struct phNxpUciHal_Control {
   uint8_t uwb_binding_count;
   uint8_t  uwbc_device_state;
   uint8_t dev_state_ntf_wait;
+
+  // Extra calibration
+  // Antenna Definitions for extra calibration, b0=Antenna1, b1=Antenna2, ...
+  uint8_t cal_rx_antenna_mask;
+  uint8_t cal_tx_antenna_mask;
 } phNxpUciHal_Control_t;
 
 /* Internal messages to handle callbacks */
