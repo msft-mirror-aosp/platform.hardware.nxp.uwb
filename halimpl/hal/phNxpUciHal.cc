@@ -54,10 +54,7 @@ bool uwb_get_platform_id = false;
 uint32_t timeoutTimerId = 0;
 char persistant_log_path[120];
 static uint8_t Rx_data[UCI_MAX_DATA_LEN];
-uint8_t channel_5_support = 1;
-uint8_t channel_9_support = 1;
-short conf_tx_power = 0;
-bool uwb_enable = true;
+
 /* AOA support handling */
 bool isAntennaRxPairDefined = false;
 int numberOfAntennaPairs = 0;
@@ -275,16 +272,14 @@ bool isCountryCodeMapCreated = false;
  * Returns          It returns true if the incoming command to be skipped.
  *
  ******************************************************************************/
-bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data) {
-  uint8_t mt = 0, gid = 0, oid = 0;
-  uint16_t arrLen = 0, tag = 0, idx = 0;
+bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data)
+{
   bool ret = false;
+  const phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
 
-  map<uint16_t, vector<uint16_t>>::iterator itr;
-  vector<uint16_t>::iterator v_itr;
-  mt = (*(p_data)&UCI_MT_MASK) >> UCI_MT_SHIFT;
-  gid = p_data[0] & UCI_GID_MASK;
-  oid = p_data[1] & UCI_OID_MASK;
+  const uint8_t mt = (p_data[0] &UCI_MT_MASK) >> UCI_MT_SHIFT;
+  const uint8_t gid = p_data[0] & UCI_GID_MASK;
+  const uint8_t oid = p_data[1] & UCI_OID_MASK;
 
   if (mt == UCI_MT_CMD) {
     if ((gid == UCI_GID_ANDROID) && (oid == UCI_MSG_ANDROID_SET_COUNTRY_CODE)) {
@@ -303,63 +298,44 @@ bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data) {
 
         // send country code response to upper layer
         nxpucihal_ctrl.rx_data_len = 5;
-        static uint8_t rsp_data[5];
-        rsp_data[0] = 0x4c;
-        rsp_data[1] = 0x01;
-        rsp_data[2] = 0x00;
-        rsp_data[3] = 0x01;
-        if (uwb_enable) {
+        static uint8_t rsp_data[5] = { 0x4c, 0x01, 0x00, 0x01 };
+        if (rt_set->uwb_enable) {
           rsp_data[4] = 0x00; // Response Success
         } else {
-          NXPLOG_UCIHAL_D("Country code uwb disable "
-                          "UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF!");
+          NXPLOG_UCIHAL_D("Country code uwb disable UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF!");
           rsp_data[4] = UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF;
         }
         ret = true;
         (*nxpucihal_ctrl.p_uwb_stack_data_cback)(nxpucihal_ctrl.rx_data_len,
                                                  rsp_data);
-    } else if ((gid == UCI_GID_PROPRIETARY_0x0F) &&
-               (oid == SET_VENDOR_SET_CALIBRATION)) {
+    } else if ((gid == UCI_GID_PROPRIETARY_0x0F) && (oid == SET_VENDOR_SET_CALIBRATION)) {
         if (p_data[UCI_MSG_HDR_SIZE + 1] ==
             VENDOR_CALIB_PARAM_TX_POWER_PER_ANTENNA) {
-          phNxpUciHal_processCalibParamTxPowerPerAntenna(conf_tx_power, p_data,
-                                                         data_len);
+          phNxpUciHal_processCalibParamTxPowerPerAntenna(p_data, data_len);
         }
-    } else if ((gid == UCI_GID_SESSION_MANAGE) &&
-               (oid == UCI_MSG_SESSION_SET_APP_CONFIG)) {
-        uint8_t index =
-            4 /*UCI_MSG_HDR_SIZE*/ + 4 /*Session_Id*/ + 1 /*Num of configs*/;
-        uint8_t len = p_data[UCI_MSG_HDR_SIZE - 1];
-        len = len + UCI_MSG_HDR_SIZE; // length should be size of payload + size
-                                      // of header
-        uint8_t tagId, length, channel_number, no_of_config;
-        no_of_config = p_data[8];
+    } else if ((gid == UCI_GID_SESSION_MANAGE) && (oid == UCI_MSG_SESSION_SET_APP_CONFIG)) {
+        uint8_t len = p_data[UCI_MSG_HDR_SIZE - 1] +  UCI_MSG_HDR_SIZE;
+        uint8_t index = 9; 	// Header 4 + SessionID 4 + NumOfConfigs 1
+        uint8_t tagId, length, ch;
 
         while (index < len) {
           tagId = p_data[index++];
           length = p_data[index++];
+
           if (tagId == UCI_PARAM_ID_CHANNEL_NUMBER) {
+            ch = p_data[index];
 
-            channel_number = p_data[index];
-
-            if (((channel_number == CHANNEL_NUM_5) && !channel_5_support) ||
-                ((channel_number == CHANNEL_NUM_9) && !channel_9_support)) {
-              NXPLOG_UCIHAL_D("Country code blocked channel");
+            if (((ch == CHANNEL_NUM_5) && !rt_set->channel_5_support) ||
+                ((ch == CHANNEL_NUM_9) && !rt_set->channel_9_support)) {
+              NXPLOG_UCIHAL_D("Country code blocked channel %u", ch);
 
               // send setAppConfig response with COUNTRY_CODE_BLOCKED response
-              nxpucihal_ctrl.rx_data_len = 8;
-              static uint8_t rsp_data[8];
-              rsp_data[0] = 0x41;
-              rsp_data[1] = 0x03;
-              rsp_data[2] = 0x00;
-              rsp_data[3] = 0x04; // Length
-              rsp_data[4] = 0x02;
-              rsp_data[5] = 0x01;
-              rsp_data[6] = 0x04;
-              rsp_data[7] = UCI_STATUS_COUNTRY_CODE_BLOCKED_CHANNEL;
+              static uint8_t rsp_data[] = { 0x41, 0x03, 0x04, 0x04,
+                UCI_STATUS_FAILED, 0x01, UCI_STATUS_INVALID_PARAM, UCI_STATUS_COUNTRY_CODE_BLOCKED_CHANNEL
+              };
+              nxpucihal_ctrl.rx_data_len = sizeof(rsp_data);
               ret = true;
-              (*nxpucihal_ctrl.p_uwb_stack_data_cback)(
-                  nxpucihal_ctrl.rx_data_len, rsp_data);
+              (*nxpucihal_ctrl.p_uwb_stack_data_cback)(nxpucihal_ctrl.rx_data_len, rsp_data);
               break;
             }
           }
@@ -368,6 +344,10 @@ bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data) {
     }
   } else if (mt == UCI_MT_RSP) {
     if ((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_GET_CAPS_INFO)) {
+        map<uint16_t, vector<uint16_t>>::iterator itr;
+        vector<uint16_t>::iterator v_itr;
+        uint16_t arrLen, tag, idx;
+
         // do not modify caps if the country code is not received from upper
         // layer.
         if (isCountryCodeMapCreated == false) {
