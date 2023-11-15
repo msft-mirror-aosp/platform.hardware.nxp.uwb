@@ -180,6 +180,10 @@ typedef struct phNxpUciHal_Control {
   /* Waiting semaphore */
   phNxpUciHal_Sem_t ext_cb_data;
 
+  // in case of fragmented response,
+  // ext_cb_data is flagged only from the 1st response packet
+  bool ext_cb_waiting;
+
   phNxpUciHal_Sem_t dev_status_ntf_wait;
   phNxpUciHal_Sem_t uwb_binding_status_ntf_wait;
   phNxpUciHal_Sem_t uwb_get_binding_status_ntf_wait;
