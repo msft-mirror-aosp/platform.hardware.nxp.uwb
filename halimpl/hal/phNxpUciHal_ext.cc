@@ -848,6 +848,118 @@ void phNxpUciHal_process_response() {
   }
 }
 
+// Based on NXP SR1xx UCI v2.0.5
+// current HAL impl only supports "xtal" read from otp
+// others should be existed in .conf files
+
+typedef enum {
+  /* Calibration */
+  EXTCAL_PARAM_CLK_ACCURACY   = 0x1,    // xtal
+  EXTCAL_PARAM_RX_ANT_DELAY   = 0x2,    // ant_delay
+} extcal_param_id_t;
+
+static tHAL_UWB_STATUS sr1xx_set_calibration(const uint8_t channel, const std::vector<uint8_t> &tlv)
+{
+  // SET_CALIBRATION_CMD header: GID=0xF OID=0x21
+  std::vector<uint8_t> packet({ (0x20 | UCI_GID_PROPRIETARY_0X0F), UCI_MSG_SET_DEVICE_CALIBRATION, 0x00, 0x00});
+  packet.push_back(channel);
+  packet.insert(packet.end(), tlv.begin(), tlv.end());
+  packet[3] = packet.size() - 4;
+  return phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
+}
+
+/******************************************************************************
+ * Function         phNxpUciHal_apply_calibration
+ *
+ * Description      Send calibration/dev-config command to UWBS
+ *
+ * Parameters       channel   - channel number, 0 if it's channe independentt
+ *                  id        - parameter id
+ *                  data      - parameter value
+ *                  data_len  - length of data
+ *
+ * Returns          0 : success, <0 : errno
+ *
+ ******************************************************************************/
+tHAL_UWB_STATUS sr1xx_apply_calibration(extcal_param_id_t id, const uint8_t channel, const uint8_t *data, size_t data_len)
+{
+
+  switch (id) {
+  case EXTCAL_PARAM_CLK_ACCURACY: {
+    // data format:
+    //   [1:0] cap1
+    //   [3:2] cap2
+    //   [5:4] gm current control
+    if (data_len != 6) {
+      return UWBSTATUS_FAILED;
+    }
+
+    std::vector<uint8_t> tlv;
+    // Tag
+    tlv.push_back(UCI_PARAM_ID_RF_CLK_ACCURACY_CALIB);
+    // Length
+    tlv.push_back((uint8_t)data_len + 1);
+    // Value
+    tlv.push_back(3); // number of register (must be 0x03)
+    tlv.insert(tlv.end(), data, data + data_len);
+
+    return sr1xx_set_calibration(channel, tlv);
+  }
+  case EXTCAL_PARAM_RX_ANT_DELAY: {
+    // data format:
+    //   [0] = N = number of entries
+    //     [N * 3 + 1] = Antenna ID
+    //     [N * 3 + 2] = RX delay(Q14.2)
+    if (data_len < 1 || data[0] != ((data_len - 1) / 3)) {
+      return UWBSTATUS_FAILED;
+    }
+
+    std::vector<uint8_t> tlv;
+    // Tag
+    tlv.push_back(UCI_PARAM_ID_RX_ANT_DELAY_CALIB);
+    // Length
+    tlv.push_back((uint8_t)data_len);
+    // Value
+    tlv.insert(tlv.end(), data, data + data_len);
+
+    return sr1xx_set_calibration(channel, tlv);
+  }
+  default:
+    break;
+  }
+}
+
+tHAL_UWB_STATUS sr1xx_read_otp(extcal_param_id_t id, uint8_t *data, size_t data_len, size_t *retlen)
+{
+  switch(id) {
+  case EXTCAL_PARAM_CLK_ACCURACY:
+    {
+      const size_t param_len = 6;
+      uint8_t otp_xtal_data[3];
+
+      if (data_len < param_len) {
+        NXPLOG_UCIHAL_E("Requested RF_CLK_ACCURACY_CALIB with %zu bytes (expected >= %zu)", data_len, param_len);
+        return UWBSTATUS_FAILED;
+      }
+      if (!otp_read_data(0x09, OTP_ID_XTAL_CAP_GM_CTRL, otp_xtal_data, sizeof(otp_xtal_data))) {
+        NXPLOG_UCIHAL_E("Failed to read OTP XTAL_CAP_GM_CTRL");
+        return UWBSTATUS_FAILED;
+      }
+      memset(data, 0, param_len);
+      // convert OTP_ID_XTAL_CAP_GM_CTRL to EXTCAL_PARAM_RX_ANT_DELAY
+      data[0] = otp_xtal_data[0]; // cap1
+      data[2] = otp_xtal_data[1]; // cap2
+      data[4] = otp_xtal_data[2]; // gm_current_control (default: 0x30)
+      *retlen = param_len;
+      return UWBSTATUS_SUCCESS;
+    }
+    break;
+  default:
+    NXPLOG_UCIHAL_E("Unsupported otp parameter %d", id);
+    return UWBSTATUS_FAILED;
+  }
+}
+
 /******************************************************************************
  * Function         phNxpUciHal_extcal_handle_coreinit
  *
@@ -858,7 +970,7 @@ void phNxpUciHal_process_response() {
  ******************************************************************************/
 void phNxpUciHal_extcal_handle_coreinit(void)
 {
-  long retlen = 0;
+  int ret;
 
   // Channels
   const uint8_t cal_channels[] = {5, 6, 8, 9};
@@ -869,70 +981,35 @@ void phNxpUciHal_extcal_handle_coreinit(void)
   std::bitset<8> rx_antenna_mask(rx_antenna_mask_n);
   const uint8_t n_rx_antennas = rx_antenna_mask.size();
 
-  // SET_CALIBRATION_CMD header: GID=0xF OID=0x21
-  const std::vector<uint8_t> packet_header({ (0x20 | UCI_GID_PROPRIETARY_0X0F), UCI_MSG_SET_DEVICE_CALIBRATION, 0x00, 0x00});
-
-  // Supported calibrations,
-  //  current HAL impl only supports "xtal" read from otp
-  //  others should be existed in .conf files
-  //
-  // | name          |otp-id|cal-id| size |per-   |per-   | otp |
-  // |               |      |      |      |channel|antenna|     |
-  // |---------------|------|------|------|-------|-------|-----|
-  // | xtal          | 0x02 | 0x02 | 3    | n     | n     | y   |
-  // | tx_power      | 0x04 | 0x17 | 2    | y     | y     |     |
-  // | ant_delay     | 0x0b | 0x02 | 2    | y     | y     |     |
-
-  // XTAL_CAP_GM_CTRL
-  // Check otp.xtal
+  // RF_CLK_ACCURACY_CALIB (otp supported)
+  // Configuration parameters = cal.otp.xtal, cal.xtal
   uint8_t otp_xtal_flag = 0;
-  uint8_t otp_xtal_data[3];
-  uint8_t xtal_data[6];
-  bool need_xtal_calibration = false;
+  uint8_t xtal_data[32];
+  size_t xtal_data_len = 0;
 
   if (NxpConfig_GetNum("cal.otp.xtal", &otp_xtal_flag, 1) && otp_xtal_flag) {
-    if (otp_read_data(0x09, OTP_ID_XTAL_CAP_GM_CTRL, otp_xtal_data, sizeof(otp_xtal_data))) {
-      // convert OTP_ID_XTAL_CAP_GM_CTRL to RF_CLK_ACCURACY_CALIB
-      memset(xtal_data, 0, sizeof(xtal_data));
-      xtal_data[0] = otp_xtal_data[0];
-      xtal_data[2] = otp_xtal_data[1];
-      xtal_data[4] = otp_xtal_data[2];
-      need_xtal_calibration = true;
-    } else {
-      NXPLOG_UCIHAL_E("Failed to read OTP XTAL_CAP_GM_CTRL");
-    }
-  } else if (NxpConfig_GetByteArray("cal.xtal", otp_xtal_data, sizeof(otp_xtal_data), &retlen) &&
-             retlen == sizeof(otp_xtal_data)) {
-    need_xtal_calibration = true;
+    sr1xx_read_otp(EXTCAL_PARAM_CLK_ACCURACY, xtal_data, sizeof(xtal_data), &xtal_data_len);
   }
-
-  if (need_xtal_calibration) {
-    std::vector<uint8_t> payload;
-
-    // Channel, 9, don't care for RF_CLK_ACCURACY_CALIB
-    payload.push_back(9);
-    // Tag
-    payload.push_back(UCI_PARAM_ID_RF_CLK_ACCURACY_CALIB);
-    // Length = 7
-    payload.push_back(1 + sizeof(xtal_data));
-    // octet[0] = 3
-    payload.push_back(3);
-    // octet[6:1] = cap1(2), cap2(2), gm_current_control(2)
-    payload.insert(payload.end(), &xtal_data[0], &xtal_data[6]);
-
-    std::vector<uint8_t> packet(packet_header);
-    packet[3] = payload.size();
-    packet.insert(packet.end(), payload.begin(), payload.end());
-
-    tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
-    if (status != UWBSTATUS_SUCCESS) {
-      NXPLOG_UCIHAL_E("Failed to apply XTAL_CAP_GM_CTRL={%02x,%02x,%02x,%02x,%02x,%02x}",
-      xtal_data[0], xtal_data[1], xtal_data[2], xtal_data[3], xtal_data[4], xtal_data[5]);
+  if (!xtal_data_len) {
+    long retlen = 0;
+    if (NxpConfig_GetByteArray("cal.xtal", xtal_data, sizeof(xtal_data), &retlen)) {
+      xtal_data_len = retlen;
     }
   }
 
-  // RX_ANT_DELAY_CALIB(0x0F)
-  // Read configuration file ant1.ch5.ant_delay
+  if (xtal_data_len) {
+    NXPLOG_UCIHAL_E("Apply CLK_ACCURARY (len=%zu, from-otp=%c)", xtal_data_len, otp_xtal_flag ? 'y' : 'n');
+
+    ret = sr1xx_apply_calibration(EXTCAL_PARAM_CLK_ACCURACY, 9, xtal_data, xtal_data_len);
+
+    if (ret != UWBSTATUS_SUCCESS) {
+      NXPLOG_UCIHAL_E("Failed to apply CLK_ACCURARY (len=%zu, from-otp=%c)",
+          xtal_data_len, otp_xtal_flag ? 'y' : 'n');
+    }
+  }
+
+  // RX_ANT_DELAY_CALIB
+  // Configuration parameters = ant<N>.ch<N>.ant_delay
   // N(1) + N * {AntennaID(1), Rxdelay(Q14.2)}
   if (n_rx_antennas) {
     for (auto ch : cal_channels) {
@@ -963,22 +1040,9 @@ void phNxpUciHal_extcal_handle_coreinit(void)
         continue;
 
       entries.insert(entries.begin(), n_entries);
-
-      std::vector<uint8_t> payload;
-      payload.push_back(ch);
-      payload.push_back(UCI_PARAM_ID_RX_ANT_DELAY_CALIB);
-      payload.push_back(entries.size());
-      payload.insert(payload.end(), entries.begin(), entries.end());
-
-      std::vector<uint8_t> packet(packet_header);
-      packet[3] = payload.size();
-      packet.insert(packet.end(), payload.begin(), payload.end());
-
-      tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
-      if (status != UWBSTATUS_SUCCESS) {
-        NXPLOG_UCIHAL_E("Failed to apply RX_ANT_DELAY_CALIB for channel %u", ch);
-      } else {
-        NXPLOG_UCIHAL_E("RX_ANT_DELAY_CALIB: applied for channel %u", ch);
+      ret = sr1xx_apply_calibration(EXTCAL_PARAM_RX_ANT_DELAY, ch, entries.data(), entries.size());
+      if (ret != UWBSTATUS_SUCCESS) {
+        NXPLOG_UCIHAL_E("Failed to apply RX_ANT_DELAY for channel %u", ch);
       }
     }
   }
