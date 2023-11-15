@@ -298,7 +298,7 @@ bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data) {
         if ((country_code[0] == '0') && (country_code[1] == '0')) {
           NXPLOG_UCIHAL_D("Country code %c%c is Invalid!", country_code[0], country_code[1]);
         } else {
-          NxpConfig_SetCountryCode(country_code);
+          phNxpUciHal_handle_set_country_code(country_code);
         }
 
         // send country code response to upper layer
