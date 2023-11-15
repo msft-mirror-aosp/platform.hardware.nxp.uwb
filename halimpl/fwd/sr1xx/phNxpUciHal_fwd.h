@@ -397,10 +397,7 @@ phHbci_MisoApdu_t gphHbci_MisoApdu;
 phPalSr100_Config_t tPalConfig;
 Options_t gOpts;
 
-bool gPasswd, gImg;
 uint8_t gDummyMiso[PHHBCI_MAX_LEN_PAYLOAD_MISO];
-
-static uint8_t gphHbci_ImgHelios[256 * 1024] __attribute__((aligned(4)));
 
 phHbci_Status_t phHbci_GetStatus(void);
 phHbci_Status_t phHbci_GeneralStatus(phHbci_General_Command_t mode);
