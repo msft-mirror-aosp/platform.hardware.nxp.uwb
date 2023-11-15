@@ -156,8 +156,7 @@ typedef struct {
 } phNxpUciHal_FW_Version_t;
 
 typedef struct {
-  bool channel_5_support;
-  bool channel_9_support;
+  uint16_t restricted_channel_mask;
   bool uwb_enable;
   short tx_power_offset;    // From UWB_COUNTRY_CODE_CAPS
 } phNxpUciHal_Runtime_Settings_t;
