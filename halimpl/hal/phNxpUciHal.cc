@@ -325,8 +325,8 @@ bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data)
           if (tagId == UCI_PARAM_ID_CHANNEL_NUMBER) {
             ch = p_data[index];
 
-            if (((ch == CHANNEL_NUM_5) && !rt_set->channel_5_support) ||
-                ((ch == CHANNEL_NUM_9) && !rt_set->channel_9_support)) {
+            if (((ch == CHANNEL_NUM_5) && (rt_set->restricted_channel_mask & (1 << 5))) ||
+                ((ch == CHANNEL_NUM_9) && (rt_set->restricted_channel_mask & (1 << 9)))) {
               NXPLOG_UCIHAL_D("Country code blocked channel %u", ch);
 
               // send setAppConfig response with COUNTRY_CODE_BLOCKED response

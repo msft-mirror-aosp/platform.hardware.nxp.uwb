@@ -331,6 +331,21 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_rsp(uint16_t rsp_len, uint8_t* p_buff){
 static bool phNxpUciHal_setCalibParamTxPower(void);
 
 /*******************************************************************************
+ * Function      phNxpUciHal_resetRuntimeSettings
+ *
+ * Description   reset per-country code settigs to default
+ *
+ *******************************************************************************/
+static void phNxpUciHal_resetRuntimeSettings(void)
+{
+  phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
+  rt_set->uwb_enable = true;
+  rt_set->restricted_channel_mask = 0;
+  rt_set->tx_power_offset = 0;
+
+}
+
+/*******************************************************************************
  * Function      phNxpUciHal_applyCountryCaps
  *
  * Description   Creates supported channel's and Tx power TLV format for
@@ -345,11 +360,7 @@ static void phNxpUciHal_applyCountryCaps(const char country_code[2],
 {
   phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
 
-  // reset country code config to default
-  rt_set->uwb_enable = true;
-  rt_set->channel_5_support = 1;
-  rt_set->channel_9_support = 1;
-  rt_set->tx_power_offset = 0;
+  phNxpUciHal_resetRuntimeSettings();
 
   uint16_t idx = 1; // first byte = number countries
   bool country_code_found = false;
@@ -367,14 +378,14 @@ static void phNxpUciHal_applyCountryCaps(const char country_code[2],
         }
         break;
       case CHANNEL_5_TAG:
-        if (len == 1) {
-          rt_set->channel_5_support = cc_resp[idx];
+        if (len == 1 && !cc_resp[idx]) {
+          rt_set->restricted_channel_mask |= 1<< 5;
           NXPLOG_UCIHAL_D("CountryCaps channel 5 support = %u", cc_resp[idx]);
         }
         break;
       case CHANNEL_9_TAG:
-        if (len == 1) {
-          rt_set->channel_9_support = cc_resp[idx];
+        if (len == 1 && !cc_resp[idx]) {
+          rt_set->restricted_channel_mask |= 1<< 9;
           NXPLOG_UCIHAL_D("CountryCaps channel 9 support = %u", cc_resp[idx]);
         }
         break;
@@ -398,15 +409,15 @@ static void phNxpUciHal_applyCountryCaps(const char country_code[2],
 
   // consist up 'cc_data' TLVs
   uint8_t fira_channels = 0xff;
-  if (!rt_set->channel_5_support)
+  if (rt_set->restricted_channel_mask & (1 << 5))
     fira_channels &= CHANNEL_5_MASK;
-  if (!rt_set->channel_9_support)
+  if (rt_set->restricted_channel_mask & (1 << 9))
     fira_channels &= CHANNEL_9_MASK;
 
   uint8_t ccc_channels = 0;
-  if (rt_set->channel_5_support)
+  if (!(rt_set->restricted_channel_mask & (1 << 5)))
     ccc_channels |= 0x01;
-  if (rt_set->channel_9_support)
+  if (!(rt_set->restricted_channel_mask & (1 << 9)))
     ccc_channels |= 0x02;
 
   uint8_t index = 0;
@@ -1226,6 +1237,25 @@ static void extcal_do_tx_base_band(void)
   }
 }
 
+static void extcal_do_restrictions(void)
+{
+  phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
+
+  phNxpUciHal_resetRuntimeSettings();
+
+  uint16_t mask= 0;
+  if (NxpConfig_GetNum("cal.restricted_channels", &mask, sizeof(mask))) {
+    NXPLOG_UCIHAL_D("Restriction flag, restricted channel mask=0x%x", mask);
+    rt_set->restricted_channel_mask = mask;
+  }
+
+  uint8_t uwb_disable = 0;
+  if (NxpConfig_GetNum("cal.uwb_disable", &uwb_disable, sizeof(uwb_disable))) {
+    NXPLOG_UCIHAL_D("Restriction flag, uwb_disable=%u", uwb_disable);
+    rt_set->uwb_enable = !uwb_disable;
+  }
+}
+
 /******************************************************************************
  * Function         phNxpUciHal_extcal_handle_coreinit
  *
@@ -1250,10 +1280,6 @@ void phNxpUciHal_extcal_handle_coreinit(void)
 
   extcal_do_xtal();
   extcal_do_ant_delay();
-
-  extcal_do_tx_power();
-  extcal_do_tx_pulse_shape();
-  extcal_do_tx_base_band();
 }
 
 extern bool isCountryCodeMapCreated;
@@ -1295,8 +1321,13 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
   // per-country extra calibrations are only triggered when 'COUNTRY_CODE_CAPS' is not provided
   if (!isCountryCodeMapCreated) {
     NXPLOG_UCIHAL_D("Apply per-country extra calibrations");
-    extcal_do_tx_power();
-    extcal_do_tx_pulse_shape();
-    extcal_do_tx_base_band();
+    extcal_do_restrictions();
+
+    phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
+    if (rt_set->uwb_enable) {
+      extcal_do_tx_power();
+      extcal_do_tx_pulse_shape();
+      extcal_do_tx_base_band();
+    }
   }
 }
