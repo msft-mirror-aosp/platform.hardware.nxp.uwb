@@ -353,7 +353,7 @@ void phNxpUciHal_reset_country_code_config() {
  * Returns       void
  *
  *******************************************************************************/
-void phNxpUciHal_getCountryCaps(const uint8_t *cc_resp, const char country_code[2],
+static void phNxpUciHal_getCountryCaps(const uint8_t *cc_resp, const char country_code[2],
                                 uint8_t *cc_data, uint32_t *retlen) {
  uint16_t idx = 0;
  uint16_t index = 0;
@@ -1277,10 +1277,13 @@ void phNxpUciHal_extcal_handle_coreinit(void)
 
   extcal_do_xtal();
   extcal_do_ant_delay();
+
   extcal_do_tx_power();
   extcal_do_tx_pulse_shape();
   extcal_do_tx_base_band();
 }
+
+extern bool isCountryCodeMapCreated;
 
 /******************************************************************************
  * Function         phNxpUciHal_handle_set_country_code
@@ -1295,4 +1298,28 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
   NXPLOG_UCIHAL_D("Apply country code %c%c", country_code[0], country_code[1]);
 
   NxpConfig_SetCountryCode(country_code);
+
+  // Load 'COUNTRY_CODE_CAPS' and apply it to 'conf_map'
+  uint8_t cc_caps[UCI_MAX_DATA_LEN];
+  auto cc_data = std::make_unique<uint8_t[]>(UCI_MAX_DATA_LEN);
+  long retlen = 0;
+  if (NxpConfig_GetByteArray(NAME_NXP_UWB_COUNTRY_CODE_CAPS, cc_caps, sizeof(cc_caps), &retlen) && retlen) {
+    isCountryCodeMapCreated = false;
+
+    uint32_t cc_caps_len = retlen;
+    phNxpUciHal_getCountryCaps(cc_caps, country_code, cc_data.get(), &cc_caps_len);
+
+    if (get_conf_map(cc_data.get(), cc_caps_len)) {
+      isCountryCodeMapCreated = true;
+      NXPLOG_UCIHAL_D("Country code caps loaded");
+    }
+  }
+
+  // per-country extra calibrations are only triggered when 'COUNTRY_CODE_CAPS' is not provided
+  if (!isCountryCodeMapCreated) {
+    NXPLOG_UCIHAL_D("Apply per-country extra calibrations");
+    extcal_do_tx_power();
+    extcal_do_tx_pulse_shape();
+    extcal_do_tx_base_band();
+  }
 }
