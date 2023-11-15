@@ -947,8 +947,9 @@ void phNxpUciHal_extcal_handle_coreinit(void)
 
         NXPLOG_UCIHAL_D("RX_ANT_DELAY_CALIB: found %s = %u", key, delay_value);
         entries.push_back(ant_id);
-        entries.push_back(delay_value >> 8);
+        // Little Endian
         entries.push_back(delay_value & 0xff);
+        entries.push_back(delay_value >> 8);
         n_entries++;
       }
 
