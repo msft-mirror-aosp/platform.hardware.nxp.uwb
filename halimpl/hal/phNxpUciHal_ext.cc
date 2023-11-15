@@ -39,12 +39,11 @@ extern phNxpUciHal_Control_t nxpucihal_ctrl;
 extern uint32_t cleanup_timer;
 extern bool uwb_debug_enabled;
 extern uint32_t timeoutTimerId;
-extern uint8_t channel_5_support;
-extern uint8_t channel_9_support;
 extern short conf_tx_power;
-extern bool uwb_enable;
-uint8_t *gtx_power = NULL, *gRMS_tx_power = NULL;
-uint8_t gtx_power_length = 0;
+
+static std::vector<uint8_t> gtx_power;
+static std::vector<uint8_t> gRMS_tx_power;
+
 phNxpUciHalProp_Control_t extNxpucihal_ctrl;
 uint32_t hwResetTimer;
 
@@ -329,23 +328,10 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_rsp(uint16_t rsp_len, uint8_t* p_buff){
  return status;
 }
 
-/*******************************************************************************
- * Function      phNxpUciHal_reset_country_code_config
- *
- * Description   Reset the country code config
- *
- * Returns       void
- *
- *******************************************************************************/
-void phNxpUciHal_reset_country_code_config() {
- uwb_enable = true;
- channel_5_support = 1;
- channel_9_support = 1;
- conf_tx_power = 0;
-}
+static bool phNxpUciHal_setCalibParamTxPower(void);
 
 /*******************************************************************************
- * Function      phNxpUciHal_getCountryCaps
+ * Function      phNxpUciHal_applyCountryCaps
  *
  * Description   Creates supported channel's and Tx power TLV format for
  *specific country code  and updates map.
@@ -353,70 +339,89 @@ void phNxpUciHal_reset_country_code_config() {
  * Returns       void
  *
  *******************************************************************************/
-static void phNxpUciHal_getCountryCaps(const uint8_t *cc_resp, const char country_code[2],
-                                uint8_t *cc_data, uint32_t *retlen) {
- uint16_t idx = 0;
- uint16_t index = 0;
- bool country_code_found = false;
- uint8_t tx_power_len = 0;
- uint32_t cc_resp_len = *retlen;
- phNxpUciHal_reset_country_code_config();
- while (idx < cc_resp_len) {
-      if (cc_resp[idx++] == COUNTRY_CODE_TAG) { // ISO country code TAG
-        uint16_t len_idx = idx++;
-        uint8_t len = cc_resp[len_idx];
-        for (uint8_t index = 0; index < len; index++) {
-            if (cc_resp[idx] != country_code[index]) {
-              idx = len_idx + len + 1;
-              country_code_found = false;
-              break;
-            } else {
-              idx++;
-              country_code_found = true;
-            }
-        }
-        while (cc_resp[idx] != COUNTRY_CODE_TAG) {
-            uint8_t cc_tag = cc_resp[idx++];
-            len = cc_resp[idx++];
-            if (country_code_found) {
-              switch (cc_tag) {
-              case UWB_ENABLE_TAG:
-                uwb_enable = cc_resp[idx++];
-                break;
-              case CHANNEL_5_TAG:
-                channel_5_support = cc_resp[idx++];
-                break;
-              case CHANNEL_9_TAG:
-                channel_9_support = cc_resp[idx++];
-                break;
-              case TX_POWER_TAG:
-                conf_tx_power = (cc_resp[idx++] << RMS_TX_POWER_SHIFT);
-                conf_tx_power |= (cc_resp[idx++]);
-                phNxpUciHal_setCalibParamTxPower(conf_tx_power);
-                tx_power_len = len;
-                break;
-              }
-            } else {
-              idx += len;
-            }
-        }
-      }
- }
- NXPLOG_UCIHAL_D("channel_5_support = %d", channel_5_support);
- NXPLOG_UCIHAL_D("channel_9_support = %d", channel_9_support);
+static void phNxpUciHal_applyCountryCaps(const char country_code[2],
+    const uint8_t *cc_resp, uint32_t cc_resp_len,
+    uint8_t *cc_data, uint32_t *cc_data_len)
+{
+  phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
 
- uint8_t channel_info = (channel_5_support | CHANNEL_5_MASK) & 0xFF &
-                        ((channel_9_support << 3) | CHANNEL_9_MASK);
- uint8_t ccc_channel_info =
-     (channel_5_support | (channel_9_support << 1)) & CCC_CHANNEL_INFO_BIT_MASK;
- NXPLOG_UCIHAL_D("channel_info = %d", channel_info);
- cc_data[index++] = UWB_CHANNELS;
- cc_data[index++] = 0x01;
- cc_data[index++] = channel_info;
- cc_data[index++] = CCC_UWB_CHANNELS;
- cc_data[index++] = 0x01;
- cc_data[index++] = ccc_channel_info;
- *retlen = index;
+  // reset country code config to default
+  rt_set->uwb_enable = true;
+  rt_set->channel_5_support = 1;
+  rt_set->channel_9_support = 1;
+  rt_set->tx_power_offset = 0;
+
+  uint16_t idx = 1; // first byte = number countries
+  bool country_code_found = false;
+
+  while (idx < cc_resp_len) {
+    uint8_t tag = cc_resp[idx++];
+    uint8_t len = cc_resp[idx++];
+
+    if (country_code_found) {
+      switch (tag) {
+      case UWB_ENABLE_TAG:
+        if (len == 1) {
+          rt_set->uwb_enable = cc_resp[idx];
+          NXPLOG_UCIHAL_D("CountryCaps uwb_enable = %u", cc_resp[idx]);
+        }
+        break;
+      case CHANNEL_5_TAG:
+        if (len == 1) {
+          rt_set->channel_5_support = cc_resp[idx];
+          NXPLOG_UCIHAL_D("CountryCaps channel 5 support = %u", cc_resp[idx]);
+        }
+        break;
+      case CHANNEL_9_TAG:
+        if (len == 1) {
+          rt_set->channel_9_support = cc_resp[idx];
+          NXPLOG_UCIHAL_D("CountryCaps channel 9 support = %u", cc_resp[idx]);
+        }
+        break;
+      case TX_POWER_TAG:
+        if (len == 2) {
+          rt_set->tx_power_offset = (short)((cc_resp[idx + 0] << RMS_TX_POWER_SHIFT) | (cc_resp[idx + 1]));
+          NXPLOG_UCIHAL_D("CountryCaps tx_power_offset = %d", rt_set->tx_power_offset);
+
+          phNxpUciHal_setCalibParamTxPower();
+        }
+        break;
+      default:
+        break;
+      }
+    }
+    if (tag == COUNTRY_CODE_TAG) {
+      country_code_found = (cc_resp[idx + 0] == country_code[0]) && (cc_resp[idx + 1] == country_code[1]);
+    }
+    idx += len;
+  }
+
+  // consist up 'cc_data' TLVs
+  uint8_t fira_channels = 0xff;
+  if (!rt_set->channel_5_support)
+    fira_channels &= CHANNEL_5_MASK;
+  if (!rt_set->channel_9_support)
+    fira_channels &= CHANNEL_9_MASK;
+
+  uint8_t ccc_channels = 0;
+  if (rt_set->channel_5_support)
+    ccc_channels |= 0x01;
+  if (rt_set->channel_9_support)
+    ccc_channels |= 0x02;
+
+  uint8_t index = 0;
+  if ((index + 3) <= *cc_data_len) {
+    cc_data[index++] = UWB_CHANNELS;
+    cc_data[index++] = 0x01;
+    cc_data[index++] = fira_channels;
+  }
+
+  if ((index + 3) <= *cc_data_len) {
+    cc_data[index++] = CCC_UWB_CHANNELS;
+    cc_data[index++] = 0x01;
+    cc_data[index++] = ccc_channels;
+  }
+  *cc_data_len = index;
 }
 
 /*******************************************************************************
@@ -451,38 +456,40 @@ static bool phNxpUciHal_is_retry_required(uint8_t uci_octet0) {
 }
 
 /******************************************************************************
- * Function         phNxpUciHal_sendSetCalibration
+ * Function         phNxpUciHal_updateTxPower
  *
- * Description      This function send set calibration command
+ * Description      This function updates the tx antenna power
  *
- * Returns          void
+ * Returns          true/false
  *
  ******************************************************************************/
-static void phNxpUciHal_sendSetCalibration(const uint8_t *setCalibData,
-                                           uint8_t length) {
- // GID : 0xF / OID : 0x21
- const uint8_t setCalibHeader[] = {0x2F, 0x21, 0x00};
- uint8_t *setCalibCmd = NULL;
- setCalibCmd = (uint8_t *)malloc(sizeof(uint8_t) * (length + UCI_MSG_HDR_SIZE));
- memcpy(&setCalibCmd[0], &setCalibHeader[0], 3);
- setCalibCmd[UCI_MSG_HDR_SIZE - 1] = length;
- memcpy(&setCalibCmd[UCI_MSG_HDR_SIZE], &setCalibData[0], length);
- length += UCI_MSG_HDR_SIZE;
- tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(length, setCalibCmd);
- if (status != UWBSTATUS_SUCCESS) {
-      NXPLOG_UCIHAL_D("%s: send failed", __func__);
- }
- if (setCalibCmd != NULL) {
-      free(setCalibCmd);
- }
- if (gtx_power != NULL) {
-      free(gtx_power);
-      gtx_power = NULL;
- }
- if (gRMS_tx_power != NULL) {
-      free(gRMS_tx_power);
-      gRMS_tx_power = NULL;
- }
+static void phNxpUciHal_updateTxPower(void)
+{
+  phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
+
+  if (rt_set->tx_power_offset == 0)
+    return;
+
+  if (gtx_power.empty())
+    return;
+
+  uint8_t index = 2;  // channel + param ID
+
+  if (gtx_power[index++]) { // number of entries
+    uint8_t num_of_antennas = gtx_power[index++];
+    while (num_of_antennas--) {
+      index += 3; // antenna Id(1) + Peak Tx(2)
+      long tx_power_long = (gtx_power[index] & 0xff) | (gtx_power[index + 1] << RMS_TX_POWER_SHIFT);
+      tx_power_long += rt_set->tx_power_offset;
+
+      // long to 16bit little endian
+      if (tx_power_long < 0)
+        tx_power_long = 0;
+      uint16_t tx_power_u16 = (uint16_t)tx_power_long;
+      gtx_power[index++] = tx_power_u16 & 0xff;
+      gtx_power[index++] = tx_power_u16 >> RMS_TX_POWER_SHIFT;
+    }
+  }
 }
 
 /*******************************************************************************
@@ -493,63 +500,18 @@ static void phNxpUciHal_sendSetCalibration(const uint8_t *setCalibData,
  * Returns      void
  *
  *******************************************************************************/
-void phNxpUciHal_processCalibParamTxPowerPerAntenna(const short conf_tx_power,
-                                                    const uint8_t *p_data,
-                                                    uint16_t data_len) {
- // RMS Tx power -> Octet [4, 5] in calib data
- NXPLOG_UCIHAL_D("phNxpUciHal_processCalibParamTxPowerPerAntenna %d",
-                 conf_tx_power);
+void phNxpUciHal_processCalibParamTxPowerPerAntenna(const uint8_t *p_data, uint16_t data_len)
+{
+  phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
 
- if (gtx_power != NULL) {
-      free(gtx_power);
-      gtx_power = NULL;
- }
- gtx_power = (uint8_t *)malloc(sizeof(uint8_t) * data_len);
+  // RMS Tx power -> Octet [4, 5] in calib data
+  NXPLOG_UCIHAL_D("phNxpUciHal_processCalibParamTxPowerPerAntenna %d", rt_set->tx_power_offset);
 
- if (gtx_power != NULL) {
-      gtx_power_length = p_data[UCI_MSG_HDR_SIZE - 1];
-      memcpy(&gtx_power[0], &p_data[UCI_MSG_HDR_SIZE],
-             data_len - UCI_MSG_HDR_SIZE);
- }
+  gtx_power = std::move(std::vector<uint8_t> {p_data + UCI_MSG_HDR_SIZE, p_data + data_len});
 
- if (conf_tx_power != 0) {
-      phNxpUciHal_updateTxPower(conf_tx_power);
- }
+  phNxpUciHal_updateTxPower();
 
- if (gtx_power != NULL) {
-      memcpy(&nxpucihal_ctrl.p_cmd_data[UCI_MSG_HDR_SIZE], &gtx_power[0],
-             data_len - UCI_MSG_HDR_SIZE);
- }
-}
-
-/******************************************************************************
- * Function         phNxpUciHal_updateTxPower
- *
- * Description      This function updates the tx antenna power
- *
- * Returns          true/false
- *
- ******************************************************************************/
-bool phNxpUciHal_updateTxPower(short conf_tx_power) {
- if (gtx_power != NULL) {
-      uint8_t index = 0;
-      index++; // channel num
-      index++; // param ID
-      if (gtx_power[index++]) {
-        uint8_t num_of_antennas = gtx_power[index++];
-        while (num_of_antennas--) {
-            index++;    // antenna Id
-            index += 2; // Peak Tx
-            short calib_tx_pow =
-                gtx_power[index] << RMS_TX_POWER_SHIFT | gtx_power[index + 1];
-            gtx_power[index++] =
-                (conf_tx_power + calib_tx_pow) >> RMS_TX_POWER_SHIFT;
-            gtx_power[index++] = (conf_tx_power + calib_tx_pow);
-        }
-        return true;
-      }
- }
- return false;
+  memcpy(&nxpucihal_ctrl.p_cmd_data[UCI_MSG_HDR_SIZE], gtx_power.data(),  gtx_power.size());
 }
 
 /******************************************************************************
@@ -560,13 +522,24 @@ bool phNxpUciHal_updateTxPower(short conf_tx_power) {
  * Returns          true/false
  *
  ******************************************************************************/
-bool phNxpUciHal_setCalibParamTxPower(short conf_tx_power) {
+static bool phNxpUciHal_setCalibParamTxPower(void)
+{
+  phNxpUciHal_updateTxPower();
 
- phNxpUciHal_updateTxPower(conf_tx_power);
- if (gtx_power != NULL) {
-      phNxpUciHal_sendSetCalibration(gtx_power, gtx_power_length);
- }
- return true;
+  // GID : 0xF / OID : 0x21
+  std::vector<uint8_t> packet{0x2f, 0x21, 0x00, 0x00};
+  packet.insert(packet.end(), gtx_power.begin(), gtx_power.end());
+  packet[3] = gtx_power.size();
+
+  tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
+  if (status != UWBSTATUS_SUCCESS) {
+      NXPLOG_UCIHAL_D("%s: send failed", __func__);
+  }
+
+  gtx_power.clear();
+  gRMS_tx_power.clear();
+
+  return true;
 }
 
 /******************************************************************************
@@ -745,7 +718,7 @@ static void phNxpUciHal_parseCoreDeviceInfoRsp(const uint8_t *p_rx_data, size_t 
   while (index < len) {
     paramId = p_rx_data[index++];
     length = p_rx_data[index++];
-    if (paramId == DEVICE_NAME_PARAM_ID && length >= 5) {
+    if (paramId == DEVICE_NAME_PARAM_ID && length >= 6) {
       /* SR100T --> T */
       switch(p_rx_data[index + 5]) {
       case DEVICE_TYPE_SR1xxS:
@@ -1301,18 +1274,22 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
 
   // Load 'COUNTRY_CODE_CAPS' and apply it to 'conf_map'
   uint8_t cc_caps[UCI_MAX_DATA_LEN];
-  auto cc_data = std::make_unique<uint8_t[]>(UCI_MAX_DATA_LEN);
   long retlen = 0;
   if (NxpConfig_GetByteArray(NAME_NXP_UWB_COUNTRY_CODE_CAPS, cc_caps, sizeof(cc_caps), &retlen) && retlen) {
+    NXPLOG_UCIHAL_D("COUNTRY_CODE_CAPS is provided.");
     isCountryCodeMapCreated = false;
 
     uint32_t cc_caps_len = retlen;
-    phNxpUciHal_getCountryCaps(cc_caps, country_code, cc_data.get(), &cc_caps_len);
+    uint8_t cc_data[UCI_MAX_DATA_LEN];
+    uint32_t cc_data_len = sizeof(cc_data);
+    phNxpUciHal_applyCountryCaps(country_code, cc_caps, cc_caps_len, cc_data, &cc_data_len);
 
-    if (get_conf_map(cc_data.get(), cc_caps_len)) {
+    if (get_conf_map(cc_data, cc_data_len)) {
       isCountryCodeMapCreated = true;
       NXPLOG_UCIHAL_D("Country code caps loaded");
     }
+  } else {
+    NXPLOG_UCIHAL_D("COUNTRY_CODE_CAPS was not provided.");
   }
 
   // per-country extra calibrations are only triggered when 'COUNTRY_CODE_CAPS' is not provided

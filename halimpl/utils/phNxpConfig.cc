@@ -790,6 +790,11 @@ void CascadeConfig::setCountryCode(const char country_code[2])
 const uwbParam* CascadeConfig::find(const char *name) const
 {
     const uwbParam* param = NULL;
+
+    param = mCapsConfig.find(name);
+    if (param)
+      return param;
+
     for (auto it = mExtraConfig.rbegin(); it != mExtraConfig.rend(); it++) {
         param = it->find(name);
         if (param)
