@@ -18,35 +18,30 @@
 /*************************************************************************************/
 /*   INCLUDES                                                                        */
 /*************************************************************************************/
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
-#include <ctype.h>
-#include <errno.h>
-#include <fcntl.h>
 #include <sys/ioctl.h>
-#include <unistd.h>
-#include <string.h>
+
 #include <string>
-#include  "phNxpLog.h"
-#include <cstring>
-#include <iostream>
-#include <sstream>
-#include <phTmlUwb_spi.h>
+
+#include "phNxpConfig.h"
+#include "phNxpLog.h"
 #include "phNxpUciHal_fwd.h"
 #include <phNxpUciHal_utils.h>
-#include "phNxpConfig.h"
+#include <phTmlUwb_spi.h>
+
 using namespace std;
 #define FILEPATH_MAXLEN 500
 
 static uint8_t chip_id = 0x00;
 static uint8_t deviceLcInfo = 0x00;
 static uint8_t is_fw_download_log_enabled = 0x00;
-const char* default_prod_fw = "libsr100t_prod_fw.bin";
-const char* default_dev_fw = "libsr100t_dev_fw.bin";
+static const char* default_prod_fw = "libsr100t_prod_fw.bin";
+static const char* default_dev_fw = "libsr100t_dev_fw.bin";
+static const char* default_fw_dir = "/vendor/firmware/uwb/";
+static string default_fw_path;
 
-char* configured_fw_name = NULL;
-char default_fw_path[FILEPATH_MAXLEN] = "/vendor/firmware/uwb/";
 /*************************************************************************************/
 /*   LOCAL FUNCTIONS                                                                 */
 /*************************************************************************************/
@@ -61,53 +56,40 @@ static void setOpts(void)
     gOpts.fMosi         = NULL;
     gOpts.misoFile      = (char*)"Miso.bin";
     gOpts.fMiso         = NULL;
-
-    gPasswd             = FALSE;
-    gImg                = FALSE;
 }
 
 
-static int init(void) {
-  const uint16_t fw_max_len = 260;
-  configured_fw_name = (char*)malloc(fw_max_len * sizeof(char));
+static int init(void)
+{
   const char *pDefaultFwFileName = NULL;
-  int maxSrcLen = (FILEPATH_MAXLEN-strlen(default_fw_path)) - 1;
-  if (configured_fw_name == NULL) {
-    ALOGD("malloc of configured_fw_name failed ");
-    return 1;
-  }
+  char configured_fw_name[FILEPATH_MAXLEN];
+  default_fw_path = default_fw_dir;
+
   if((deviceLcInfo == PHHBCI_HELIOS_PROD_KEY_1) || (deviceLcInfo == PHHBCI_HELIOS_PROD_KEY_2)) {
     pDefaultFwFileName = default_prod_fw;
-    if (!NxpConfig_GetStr(NAME_NXP_UWB_PROD_FW_FILENAME, configured_fw_name, fw_max_len)) {
+    if (!NxpConfig_GetStr(NAME_NXP_UWB_PROD_FW_FILENAME, configured_fw_name, sizeof(configured_fw_name))) {
       ALOGD("Invalid Prod Fw  name keeping the default name: %s", pDefaultFwFileName);
-      strncat(default_fw_path, pDefaultFwFileName, maxSrcLen);
+      default_fw_path += pDefaultFwFileName;
     } else{
       ALOGD("configured_fw_name : %s", configured_fw_name);
-      strncat(default_fw_path, configured_fw_name, maxSrcLen);
+      default_fw_path += configured_fw_name;
     }
   } else if (deviceLcInfo == PHHBCI_HELIOS_DEV_KEY) {
     pDefaultFwFileName = default_dev_fw;
-    if (!NxpConfig_GetStr(NAME_NXP_UWB_DEV_FW_FILENAME, configured_fw_name, fw_max_len)) {
+    if (!NxpConfig_GetStr(NAME_NXP_UWB_DEV_FW_FILENAME, configured_fw_name, sizeof(configured_fw_name))) {
       ALOGD("Invalid Dev Fw  name keeping the default name: %s", pDefaultFwFileName);
-      strncat(default_fw_path, pDefaultFwFileName, maxSrcLen);
+      default_fw_path += pDefaultFwFileName;
     } else{
       ALOGD("configured_fw_name : %s", configured_fw_name);
-       strncat(default_fw_path, configured_fw_name, maxSrcLen);
+      default_fw_path += configured_fw_name;
     }
   } else {
     ALOGD("Invalid DeviceLCInfo : 0x%x\n", deviceLcInfo);
     return 1;
   }
 
-  ALOGD("Referring FW path..........: %s", default_fw_path);
-  if (gImg && (NULL == (gOpts.fImg = fopen(default_fw_path, "rb")))) {
-    ALOGD("ERROR: Cannot open %s file for reading!\n", gOpts.imgFile);
-    return 1;
-  } else {
-    ALOGD("FW FILE OPEN SUCCESS....\n");
-    gImg = true;
-    // gOpts.capture = Capture_Apdu_With_Dummy_Miso;
-  }
+  ALOGD("Referring FW path..........: %s", default_fw_path.c_str());
+  // gOpts.capture = Capture_Apdu_With_Dummy_Miso;
 
   if (Capture_Off != gOpts.capture) {
     ALOGD("Not Capture_Off.....\n");
@@ -132,11 +114,7 @@ static int init(void) {
 static void cleanup(void)
 {
     ioctl((intptr_t)tPalConfig.pDevHandle, SRXXX_SET_FWD, 0);
-    if(configured_fw_name !=NULL){
-        free(configured_fw_name);
-        memset(default_fw_path, '\0', sizeof(char)*256);
-        strcpy(default_fw_path, "/vendor/firmware/uwb/");
-    }
+
     if (NULL != gOpts.fImg)
     {
         fclose(gOpts.fImg);
@@ -939,8 +917,9 @@ phHbci_Status_t phHbci_GetDeviceLcInfo(){
  *                  update the acutual state of operation in arg pointer
  *
  ******************************************************************************/
-int phNxpUciHal_fw_download() {
-    uint8_t                     *pImg = gphHbci_ImgHelios;
+int phNxpUciHal_fw_download()
+{
+    uint8_t pImg[256 * 1024] __attribute__((aligned(4)));
     uint32_t                    imgSz=0, maxSz, err = 0;
     unsigned long                num = 0;
     phHbci_General_Command_t    cmd;
@@ -993,29 +972,27 @@ int phNxpUciHal_fw_download() {
         ALOGD("ERROR: Undefined Master Mode = %u\n", gOpts.mode);
         return 1;
     }
-    if (gImg)
-    {
-        if(gOpts.fImg == NULL) {
-            gOpts.fImg = fopen(default_fw_path, "rb");
-        }
-        if(gOpts.fImg == NULL) {
-            ALOGD("Firmware file does not exist:");
-            return phHbci_File_Not_found;
-        }
-        fseek(gOpts.fImg, 0, SEEK_END);
-        imgSz = (uint32_t)ftell(gOpts.fImg);
-        ALOGD("FWD file size ftell returns: %d\n",imgSz);
-        if (!imgSz || (maxSz < imgSz))
-        {
-            ALOGD("ERROR: %s image size (%d) not supported!\n", gOpts.imgFile, imgSz);
-            cleanup();
-            return 1;
-        }
 
-        rewind(gOpts.fImg);
+    if(gOpts.fImg == NULL) {
+        gOpts.fImg = fopen(default_fw_path.c_str(), "rb");
     }
+    if(gOpts.fImg == NULL) {
+        ALOGD("Firmware file does not exist:");
+        return phHbci_File_Not_found;
+    }
+    fseek(gOpts.fImg, 0, SEEK_END);
+    imgSz = (uint32_t)ftell(gOpts.fImg);
+    ALOGD("FWD file size ftell returns: %d\n",imgSz);
+    if (!imgSz || (maxSz < imgSz) || (sizeof(pImg) < imgSz))
+    {
+        ALOGD("ERROR: %s image size (%d) not supported!\n", gOpts.imgFile, imgSz);
+        cleanup();
+        return 1;
+    }
+    rewind(gOpts.fImg);
+
     ALOGD("FWD file size: %d\n",imgSz);
-    if (!gImg || (imgSz == fread(pImg, sizeof(uint8_t), imgSz, gOpts.fImg)))
+    if (imgSz == fread(pImg, sizeof(uint8_t), imgSz, gOpts.fImg))
     {
         if(cmd == phHbci_General_Cmd_Mode_HIF_Image) {
             ALOGD("HIF Image mode.\n");
@@ -1035,7 +1012,6 @@ int phNxpUciHal_fw_download() {
 
     cleanup();
     return err;
-
 }
 
 void setDeviceHandle(void* pDevHandle)
