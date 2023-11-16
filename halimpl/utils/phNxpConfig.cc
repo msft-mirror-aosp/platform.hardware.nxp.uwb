@@ -774,7 +774,6 @@ void CascadeConfig::init(const char *main_config)
     }
 }
 
-extern bool isCountryCodeMapCreated;
 void CascadeConfig::setCountryCode(const char country_code[2])
 {
     string strCountry = mRegionMap.xlateCountryCode(country_code);
@@ -786,23 +785,16 @@ void CascadeConfig::setCountryCode(const char country_code[2])
             x.dump();
         }
     }
-
-    // Load 'COUNTRY_CODE_CAPS' and apply it to 'conf_map'
-    auto cc_data = make_unique<uint8_t[]>(UCI_MAX_DATA_LEN);
-    const uwbParam *param = mCapsConfig.find(NAME_NXP_UWB_COUNTRY_CODE_CAPS);
-    if (param) {
-        uint32_t retlen = param->arr_len();
-        phNxpUciHal_getCountryCaps(param->arr_value(), country_code, cc_data.get(), &retlen);
-        if (get_conf_map(cc_data.get(), retlen)) {
-            isCountryCodeMapCreated = true;
-            NXPLOG_UCIHAL_D("Country code caps loaded");
-        }
-    }
 }
 
 const uwbParam* CascadeConfig::find(const char *name) const
 {
     const uwbParam* param = NULL;
+
+    param = mCapsConfig.find(name);
+    if (param)
+      return param;
+
     for (auto it = mExtraConfig.rbegin(); it != mExtraConfig.rend(); it++) {
         param = it->find(name);
         if (param)
