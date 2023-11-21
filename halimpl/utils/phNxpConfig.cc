@@ -41,10 +41,15 @@
 #include "phNxpUciHal_utils.h"
 #include "phNxpLog.h"
 
-const char default_nxp_config_path[] = "/vendor/etc/libuwb-nxp.conf";
-const char country_code_config_name[] = "libuwb-countrycode.conf";
-const char country_code_specifier[] = "<country>";
-const char nxp_uci_config_file[] = "libuwb-uci.conf";
+static const char default_nxp_config_path[] = "/vendor/etc/libuwb-nxp.conf";
+static const char country_code_config_name[] = "libuwb-countrycode.conf";
+static const char nxp_uci_config_file[] = "libuwb-uci.conf";
+
+static const char country_code_specifier[] = "<country>";
+static const char sku_specifier[] = "<sku>";
+
+static const char prop_name_calsku[] = "persist.vendor.uwb.cal.sku";
+static const char prop_default_calsku[] = "defaultsku";
 
 using namespace::std;
 
@@ -403,7 +408,15 @@ CUwbNxpConfig::CUwbNxpConfig(const char *filepath) :
     mFilePath(filepath),
     mCountrySpecific(false)
 {
-    auto pos = mFilePath.find(country_code_specifier);
+    auto pos = mFilePath.find(sku_specifier);
+    if (pos != string::npos) {
+        char prop_str[PROPERTY_VALUE_MAX];
+        property_get(prop_name_calsku, prop_str,prop_default_calsku);
+        mFilePath.replace(pos, strlen(sku_specifier), prop_str);
+    }
+
+    // country specifier will be evaluated later in setCountry() path
+    pos = mFilePath.find(country_code_specifier);
     if (pos == string::npos) {
         mCurrentFile = mFilePath;
         readConfig();
