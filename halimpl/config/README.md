@@ -68,6 +68,8 @@ Main configuration can specifies additional extra calibrations with *EXTRA_CONF_
 
 * *EXTRA_CONF_PATH[N+1]* has higher priority over *EXTRA_CONF_PATH[N]*.
 * if the file path has `<country>` in it, `<country>` part will be replaced with country code (or region string)
+* if the file path has `<sku>` in it, `<sku>` part will be replace with the 'persist.vendor.uwb.cal.sku' property value.
+  if `persist.vendor.uwb.cal.sku` is unspecified, HAL will try to use `defaultsku` as a default.
 
 Example:
 
@@ -75,8 +77,9 @@ Example:
 # /vendor/etc/libuwb-nxp.conf:
 
 EXTRA_CONF_PATH_1="/vendor/etc/uwb/cal-base.conf"
-EXTRA_CONF_PATH_2="/vendor/etc/uwb/cal-<country>.conf"
-EXTRA_CONF_PATH_3="/mnt/vendor/persist/uwb/cal-factory.conf"
+EXTRA_CONF_PATH_2="/vendor/etc/uwb/cal-<sku>.conf"
+EXTRA_CONF_PATH_3="/vendor/etc/uwb/cal-<country>.conf"
+EXTRA_CONF_PATH_4="/mnt/vendor/persist/uwb/cal-factory.conf"
 ```
 
 #### Region mapping
@@ -160,14 +163,25 @@ Per-country, Enable DC supression. Default is 0.
 REGION_MAP_PATH="/vendor/etc/uwb/regions.conf"
 
 EXTRA_CONF_PATH_1="/vendor/etc/uwb/cal-base.conf"
-EXTRA_CONF_PATH_2="/vendor/etc/uwb/cal-<country>.conf"
-EXTRA_CONF_PATH_3="/mnt/vendor/persist/uwb/cal-factory.conf"
+EXTRA_CONF_PATH_2="/vendor/etc/uwb/cal-<sku>.conf"
+EXTRA_CONF_PATH_3="/vendor/etc/uwb/cal-<country>.conf"
+EXTRA_CONF_PATH_4="/mnt/vendor/persist/uwb/cal-factory.conf"
 
 # /vendor/etc/uwb/cal-base.conf:
 cal.rx_antenna_mask=0x03
 cal.tx_antenna_mask=0x01
 cal.otp.xtal=1
 cal.restricted_channels=0
+
+# /vendor/etc/uwb/cal-defaultsku.conf:
+# effective when persist.vendor.uwb.cal.sku is unspecified
+cal.ant1.ch5.tx_power={01, 00, 02, 00}
+cal.ant1.ch9.tx_power={01, 00, 03, 00}
+
+# /vendor/etc/uwb/cal-modelA.conf:
+# effective when persist.vendor.uwb.cal.sku=modelA
+cal.ant1.ch5.tx_power={01, 00, 12, 00}
+cal.ant1.ch9.tx_power={01, 00, 13, 00}
 
 # /vendor/etc/uwb/cal-FCC.conf:
 cal.restricted_channel=0x0
