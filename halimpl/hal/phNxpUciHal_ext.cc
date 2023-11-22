@@ -39,12 +39,11 @@ extern phNxpUciHal_Control_t nxpucihal_ctrl;
 extern uint32_t cleanup_timer;
 extern bool uwb_debug_enabled;
 extern uint32_t timeoutTimerId;
-extern uint8_t channel_5_support;
-extern uint8_t channel_9_support;
 extern short conf_tx_power;
-extern bool uwb_enable;
-uint8_t *gtx_power = NULL, *gRMS_tx_power = NULL;
-uint8_t gtx_power_length = 0;
+
+static std::vector<uint8_t> gtx_power;
+static std::vector<uint8_t> gRMS_tx_power;
+
 phNxpUciHalProp_Control_t extNxpucihal_ctrl;
 uint32_t hwResetTimer;
 
@@ -85,8 +84,12 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
   /* Send ext command */
   do {
     NXPLOG_UCIHAL_D("Entered do while loop");
+
     nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_SUCCESS;
+    nxpucihal_ctrl.ext_cb_waiting = true;
+
     *data_written = phNxpUciHal_write_unlocked(cmd_len, p_cmd);
+
     if (*data_written != cmd_len) {
       NXPLOG_UCIHAL_D("phNxpUciHal_write failed for hal ext");
       goto clean_and_return;
@@ -120,6 +123,7 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
         NXPLOG_UCIHAL_E("p_hal_ext->ext_cb_data.sem semaphore error");
         goto clean_and_return;
       }
+      nxpucihal_ctrl.ext_cb_waiting = false;
 
       switch (nxpucihal_ctrl.ext_cb_data.status) {
       case UWBSTATUS_RESPONSE_TIMEOUT:
@@ -127,6 +131,7 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
         ext_cmd_retry_cnt++;
         break;
       case UWBSTATUS_INVALID_COMMAND_LENGTH:
+        // XXX: Why retrying here?
         invalid_len_retry_cnt++;
         break;
       default:
@@ -323,23 +328,25 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_rsp(uint16_t rsp_len, uint8_t* p_buff){
  return status;
 }
 
+static bool phNxpUciHal_setCalibParamTxPower(void);
+
 /*******************************************************************************
- * Function      phNxpUciHal_reset_country_code_config
+ * Function      phNxpUciHal_resetRuntimeSettings
  *
- * Description   Reset the country code config
- *
- * Returns       void
+ * Description   reset per-country code settigs to default
  *
  *******************************************************************************/
-void phNxpUciHal_reset_country_code_config() {
- uwb_enable = true;
- channel_5_support = 1;
- channel_9_support = 1;
- conf_tx_power = 0;
+static void phNxpUciHal_resetRuntimeSettings(void)
+{
+  phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
+  rt_set->uwb_enable = true;
+  rt_set->restricted_channel_mask = 0;
+  rt_set->tx_power_offset = 0;
+
 }
 
 /*******************************************************************************
- * Function      phNxpUciHal_getCountryCaps
+ * Function      phNxpUciHal_applyCountryCaps
  *
  * Description   Creates supported channel's and Tx power TLV format for
  *specific country code  and updates map.
@@ -347,70 +354,85 @@ void phNxpUciHal_reset_country_code_config() {
  * Returns       void
  *
  *******************************************************************************/
-void phNxpUciHal_getCountryCaps(const uint8_t *cc_resp, const char country_code[2],
-                                uint8_t *cc_data, uint32_t *retlen) {
- uint16_t idx = 0;
- uint16_t index = 0;
- bool country_code_found = false;
- uint8_t tx_power_len = 0;
- uint32_t cc_resp_len = *retlen;
- phNxpUciHal_reset_country_code_config();
- while (idx < cc_resp_len) {
-      if (cc_resp[idx++] == COUNTRY_CODE_TAG) { // ISO country code TAG
-        uint16_t len_idx = idx++;
-        uint8_t len = cc_resp[len_idx];
-        for (uint8_t index = 0; index < len; index++) {
-            if (cc_resp[idx] != country_code[index]) {
-              idx = len_idx + len + 1;
-              country_code_found = false;
-              break;
-            } else {
-              idx++;
-              country_code_found = true;
-            }
-        }
-        while (cc_resp[idx] != COUNTRY_CODE_TAG) {
-            uint8_t cc_tag = cc_resp[idx++];
-            len = cc_resp[idx++];
-            if (country_code_found) {
-              switch (cc_tag) {
-              case UWB_ENABLE_TAG:
-                uwb_enable = cc_resp[idx++];
-                break;
-              case CHANNEL_5_TAG:
-                channel_5_support = cc_resp[idx++];
-                break;
-              case CHANNEL_9_TAG:
-                channel_9_support = cc_resp[idx++];
-                break;
-              case TX_POWER_TAG:
-                conf_tx_power = (cc_resp[idx++] << RMS_TX_POWER_SHIFT);
-                conf_tx_power |= (cc_resp[idx++]);
-                phNxpUciHal_setCalibParamTxPower(conf_tx_power);
-                tx_power_len = len;
-                break;
-              }
-            } else {
-              idx += len;
-            }
-        }
-      }
- }
- NXPLOG_UCIHAL_D("channel_5_support = %d", channel_5_support);
- NXPLOG_UCIHAL_D("channel_9_support = %d", channel_9_support);
+static void phNxpUciHal_applyCountryCaps(const char country_code[2],
+    const uint8_t *cc_resp, uint32_t cc_resp_len,
+    uint8_t *cc_data, uint32_t *cc_data_len)
+{
+  phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
 
- uint8_t channel_info = (channel_5_support | CHANNEL_5_MASK) & 0xFF &
-                        ((channel_9_support << 3) | CHANNEL_9_MASK);
- uint8_t ccc_channel_info =
-     (channel_5_support | (channel_9_support << 1)) & CCC_CHANNEL_INFO_BIT_MASK;
- NXPLOG_UCIHAL_D("channel_info = %d", channel_info);
- cc_data[index++] = UWB_CHANNELS;
- cc_data[index++] = 0x01;
- cc_data[index++] = channel_info;
- cc_data[index++] = CCC_UWB_CHANNELS;
- cc_data[index++] = 0x01;
- cc_data[index++] = ccc_channel_info;
- *retlen = index;
+  phNxpUciHal_resetRuntimeSettings();
+
+  uint16_t idx = 1; // first byte = number countries
+  bool country_code_found = false;
+
+  while (idx < cc_resp_len) {
+    uint8_t tag = cc_resp[idx++];
+    uint8_t len = cc_resp[idx++];
+
+    if (country_code_found) {
+      switch (tag) {
+      case UWB_ENABLE_TAG:
+        if (len == 1) {
+          rt_set->uwb_enable = cc_resp[idx];
+          NXPLOG_UCIHAL_D("CountryCaps uwb_enable = %u", cc_resp[idx]);
+        }
+        break;
+      case CHANNEL_5_TAG:
+        if (len == 1 && !cc_resp[idx]) {
+          rt_set->restricted_channel_mask |= 1<< 5;
+          NXPLOG_UCIHAL_D("CountryCaps channel 5 support = %u", cc_resp[idx]);
+        }
+        break;
+      case CHANNEL_9_TAG:
+        if (len == 1 && !cc_resp[idx]) {
+          rt_set->restricted_channel_mask |= 1<< 9;
+          NXPLOG_UCIHAL_D("CountryCaps channel 9 support = %u", cc_resp[idx]);
+        }
+        break;
+      case TX_POWER_TAG:
+        if (len == 2) {
+          rt_set->tx_power_offset = (short)((cc_resp[idx + 0] << RMS_TX_POWER_SHIFT) | (cc_resp[idx + 1]));
+          NXPLOG_UCIHAL_D("CountryCaps tx_power_offset = %d", rt_set->tx_power_offset);
+
+          phNxpUciHal_setCalibParamTxPower();
+        }
+        break;
+      default:
+        break;
+      }
+    }
+    if (tag == COUNTRY_CODE_TAG) {
+      country_code_found = (cc_resp[idx + 0] == country_code[0]) && (cc_resp[idx + 1] == country_code[1]);
+    }
+    idx += len;
+  }
+
+  // consist up 'cc_data' TLVs
+  uint8_t fira_channels = 0xff;
+  if (rt_set->restricted_channel_mask & (1 << 5))
+    fira_channels &= CHANNEL_5_MASK;
+  if (rt_set->restricted_channel_mask & (1 << 9))
+    fira_channels &= CHANNEL_9_MASK;
+
+  uint8_t ccc_channels = 0;
+  if (!(rt_set->restricted_channel_mask & (1 << 5)))
+    ccc_channels |= 0x01;
+  if (!(rt_set->restricted_channel_mask & (1 << 9)))
+    ccc_channels |= 0x02;
+
+  uint8_t index = 0;
+  if ((index + 3) <= *cc_data_len) {
+    cc_data[index++] = UWB_CHANNELS;
+    cc_data[index++] = 0x01;
+    cc_data[index++] = fira_channels;
+  }
+
+  if ((index + 3) <= *cc_data_len) {
+    cc_data[index++] = CCC_UWB_CHANNELS;
+    cc_data[index++] = 0x01;
+    cc_data[index++] = ccc_channels;
+  }
+  *cc_data_len = index;
 }
 
 /*******************************************************************************
@@ -445,38 +467,40 @@ static bool phNxpUciHal_is_retry_required(uint8_t uci_octet0) {
 }
 
 /******************************************************************************
- * Function         phNxpUciHal_sendSetCalibration
+ * Function         phNxpUciHal_updateTxPower
  *
- * Description      This function send set calibration command
+ * Description      This function updates the tx antenna power
  *
- * Returns          void
+ * Returns          true/false
  *
  ******************************************************************************/
-static void phNxpUciHal_sendSetCalibration(const uint8_t *setCalibData,
-                                           uint8_t length) {
- // GID : 0xF / OID : 0x21
- const uint8_t setCalibHeader[] = {0x2F, 0x21, 0x00};
- uint8_t *setCalibCmd = NULL;
- setCalibCmd = (uint8_t *)malloc(sizeof(uint8_t) * (length + UCI_MSG_HDR_SIZE));
- memcpy(&setCalibCmd[0], &setCalibHeader[0], 3);
- setCalibCmd[UCI_MSG_HDR_SIZE - 1] = length;
- memcpy(&setCalibCmd[UCI_MSG_HDR_SIZE], &setCalibData[0], length);
- length += UCI_MSG_HDR_SIZE;
- tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(length, setCalibCmd);
- if (status != UWBSTATUS_SUCCESS) {
-      NXPLOG_UCIHAL_D("%s: send failed", __func__);
- }
- if (setCalibCmd != NULL) {
-      free(setCalibCmd);
- }
- if (gtx_power != NULL) {
-      free(gtx_power);
-      gtx_power = NULL;
- }
- if (gRMS_tx_power != NULL) {
-      free(gRMS_tx_power);
-      gRMS_tx_power = NULL;
- }
+static void phNxpUciHal_updateTxPower(void)
+{
+  phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
+
+  if (rt_set->tx_power_offset == 0)
+    return;
+
+  if (gtx_power.empty())
+    return;
+
+  uint8_t index = 2;  // channel + param ID
+
+  if (gtx_power[index++]) { // number of entries
+    uint8_t num_of_antennas = gtx_power[index++];
+    while (num_of_antennas--) {
+      index += 3; // antenna Id(1) + Peak Tx(2)
+      long tx_power_long = (gtx_power[index] & 0xff) | (gtx_power[index + 1] << RMS_TX_POWER_SHIFT);
+      tx_power_long += rt_set->tx_power_offset;
+
+      // long to 16bit little endian
+      if (tx_power_long < 0)
+        tx_power_long = 0;
+      uint16_t tx_power_u16 = (uint16_t)tx_power_long;
+      gtx_power[index++] = tx_power_u16 & 0xff;
+      gtx_power[index++] = tx_power_u16 >> RMS_TX_POWER_SHIFT;
+    }
+  }
 }
 
 /*******************************************************************************
@@ -487,63 +511,18 @@ static void phNxpUciHal_sendSetCalibration(const uint8_t *setCalibData,
  * Returns      void
  *
  *******************************************************************************/
-void phNxpUciHal_processCalibParamTxPowerPerAntenna(const short conf_tx_power,
-                                                    const uint8_t *p_data,
-                                                    uint16_t data_len) {
- // RMS Tx power -> Octet [4, 5] in calib data
- NXPLOG_UCIHAL_D("phNxpUciHal_processCalibParamTxPowerPerAntenna %d",
-                 conf_tx_power);
+void phNxpUciHal_processCalibParamTxPowerPerAntenna(const uint8_t *p_data, uint16_t data_len)
+{
+  phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
 
- if (gtx_power != NULL) {
-      free(gtx_power);
-      gtx_power = NULL;
- }
- gtx_power = (uint8_t *)malloc(sizeof(uint8_t) * data_len);
+  // RMS Tx power -> Octet [4, 5] in calib data
+  NXPLOG_UCIHAL_D("phNxpUciHal_processCalibParamTxPowerPerAntenna %d", rt_set->tx_power_offset);
 
- if (gtx_power != NULL) {
-      gtx_power_length = p_data[UCI_MSG_HDR_SIZE - 1];
-      memcpy(&gtx_power[0], &p_data[UCI_MSG_HDR_SIZE],
-             data_len - UCI_MSG_HDR_SIZE);
- }
+  gtx_power = std::move(std::vector<uint8_t> {p_data + UCI_MSG_HDR_SIZE, p_data + data_len});
 
- if (conf_tx_power != 0) {
-      phNxpUciHal_updateTxPower(conf_tx_power);
- }
+  phNxpUciHal_updateTxPower();
 
- if (gtx_power != NULL) {
-      memcpy(&nxpucihal_ctrl.p_cmd_data[UCI_MSG_HDR_SIZE], &gtx_power[0],
-             data_len - UCI_MSG_HDR_SIZE);
- }
-}
-
-/******************************************************************************
- * Function         phNxpUciHal_updateTxPower
- *
- * Description      This function updates the tx antenna power
- *
- * Returns          true/false
- *
- ******************************************************************************/
-bool phNxpUciHal_updateTxPower(short conf_tx_power) {
- if (gtx_power != NULL) {
-      uint8_t index = 0;
-      index++; // channel num
-      index++; // param ID
-      if (gtx_power[index++]) {
-        uint8_t num_of_antennas = gtx_power[index++];
-        while (num_of_antennas--) {
-            index++;    // antenna Id
-            index += 2; // Peak Tx
-            short calib_tx_pow =
-                gtx_power[index] << RMS_TX_POWER_SHIFT | gtx_power[index + 1];
-            gtx_power[index++] =
-                (conf_tx_power + calib_tx_pow) >> RMS_TX_POWER_SHIFT;
-            gtx_power[index++] = (conf_tx_power + calib_tx_pow);
-        }
-        return true;
-      }
- }
- return false;
+  memcpy(&nxpucihal_ctrl.p_cmd_data[UCI_MSG_HDR_SIZE], gtx_power.data(),  gtx_power.size());
 }
 
 /******************************************************************************
@@ -554,13 +533,24 @@ bool phNxpUciHal_updateTxPower(short conf_tx_power) {
  * Returns          true/false
  *
  ******************************************************************************/
-bool phNxpUciHal_setCalibParamTxPower(short conf_tx_power) {
+static bool phNxpUciHal_setCalibParamTxPower(void)
+{
+  phNxpUciHal_updateTxPower();
 
- phNxpUciHal_updateTxPower(conf_tx_power);
- if (gtx_power != NULL) {
-      phNxpUciHal_sendSetCalibration(gtx_power, gtx_power_length);
- }
- return true;
+  // GID : 0xF / OID : 0x21
+  std::vector<uint8_t> packet{0x2f, 0x21, 0x00, 0x00};
+  packet.insert(packet.end(), gtx_power.begin(), gtx_power.end());
+  packet[3] = gtx_power.size();
+
+  tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
+  if (status != UWBSTATUS_SUCCESS) {
+      NXPLOG_UCIHAL_D("%s: send failed", __func__);
+  }
+
+  gtx_power.clear();
+  gRMS_tx_power.clear();
+
+  return true;
 }
 
 /******************************************************************************
@@ -739,7 +729,7 @@ static void phNxpUciHal_parseCoreDeviceInfoRsp(const uint8_t *p_rx_data, size_t 
   while (index < len) {
     paramId = p_rx_data[index++];
     length = p_rx_data[index++];
-    if (paramId == DEVICE_NAME_PARAM_ID && length >= 5) {
+    if (paramId == DEVICE_NAME_PARAM_ID && length >= 6) {
       /* SR100T --> T */
       switch(p_rx_data[index + 5]) {
       case DEVICE_TYPE_SR1xxS:
@@ -842,91 +832,269 @@ void phNxpUciHal_process_response() {
   }
 }
 
+// SW defined data structures
+typedef enum {
+  // 6 bytes
+  // [1:0] cap1 [3:2] cap2 [5:4] gm current control
+  EXTCAL_PARAM_CLK_ACCURACY   = 0x1,    // xtal
+
+  // 3n + 1 bytes
+  // [0] n, number of entries +  n * { [0] antenna-id [1:0] RX delay(Q14.2) }
+  EXTCAL_PARAM_RX_ANT_DELAY   = 0x2,    // ant_delay
+
+  // 5N + 1 bytes
+  // [0]: n, number of entries + n * { [0] antenna-id [2:1] delta-peak [4:3] id-rms }
+  EXTCAL_PARAM_TX_POWER       = 0x3,    // tx_power
+
+  // channel independent
+  // 1 byte
+  //  b0: enable/disable DDFS tone generation (default off)
+  //  b1: enable/disable DC suppression (default off)
+  EXTCAL_PARAM_TX_BASE_BAND_CONTROL   = 0x101,  // ddfs_enable, dc_suppress
+
+  // channel independent (raw data contains channel info)
+  // bytes array
+  EXTCAL_PARAM_DDFS_TONE_CONFIG       = 0x102,  // ddfs_tone_config
+
+  // channel independent
+  // byte array
+  EXTCAL_PARAM_TX_PULSE_SHAPE         = 0x103,  // tx_pulse_shape
+} extcal_param_id_t;
+
+// Based on NXP SR1xx UCI v2.0.5
+// current HAL impl only supports "xtal" read from otp
+// others should be existed in .conf files
+
+static tHAL_UWB_STATUS sr1xx_set_calibration(uint8_t channel, const std::vector<uint8_t> &tlv)
+{
+  // SET_CALIBRATION_CMD header: GID=0xF OID=0x21
+  std::vector<uint8_t> packet({ (0x20 | UCI_GID_PROPRIETARY_0X0F), UCI_MSG_SET_DEVICE_CALIBRATION, 0x00, 0x00});
+
+  // use 9 for channel-independent parameters
+  if (!channel) {
+    channel = 9;
+  }
+  packet.push_back(channel);
+  packet.insert(packet.end(), tlv.begin(), tlv.end());
+  packet[3] = packet.size() - 4;
+  return phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
+}
+
+static tHAL_UWB_STATUS sr1xx_set_conf(const std::vector<uint8_t> &tlv)
+{
+  // SET_CALIBRATION_CMD header: GID=0xF OID=0x21
+  std::vector<uint8_t> packet({ (0x20 | UCI_GID_CORE), UCI_MSG_CORE_SET_CONFIG, 0x00, 0x00});
+  packet.push_back(1);  // number of parameters
+  packet.insert(packet.end(), tlv.begin(), tlv.end());
+  packet[3] = packet.size() - 4;
+  return phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
+}
+
 /******************************************************************************
- * Function         phNxpUciHal_extcal_handle_coreinit
+ * Function         phNxpUciHal_apply_calibration
  *
- * Description      Apply additional core device settings
+ * Description      Send calibration/dev-config command to UWBS
  *
- * Returns          void.
+ * Parameters       id        - parameter id
+ *                  channel   - channel number. 0 if it's channel independentt
+ *                  data      - parameter value
+ *                  data_len  - length of data
+ *
+ * Returns          0 : success, <0 : errno
  *
  ******************************************************************************/
-void phNxpUciHal_extcal_handle_coreinit(void)
+tHAL_UWB_STATUS sr1xx_apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len)
 {
-  long retlen = 0;
+  // Device Calibration
+  const uint8_t UCI_PARAM_ID_RF_CLK_ACCURACY_CALIB    = 0x01;
+  const uint8_t UCI_PARAM_ID_RX_ANT_DELAY_CALIB       = 0x02;
+  const uint8_t UCI_PARAM_ID_TX_POWER_PER_ANTENNA     = 0x04;
 
-  // Channels
-  const uint8_t cal_channels[] = {5, 6, 8, 9};
+  // Device Configurations
+  const uint16_t UCI_PARAM_ID_TX_BASE_BAND_CONFIG     = 0xe426;
+  const uint16_t UCI_PARAM_ID_DDFS_TONE_CONFIG        = 0xe427;
+  const uint16_t UCI_PARAM_ID_TX_PULSE_SHAPE_CONFIG   = 0xe428;
 
-  // Antenna Definitions: rx_antenna_mask(1), tx_antenna_mask(1)
-  uint8_t rx_antenna_mask_n = 0xff;
-  NxpConfig_GetNum("cal.rx_antenna_mask", &rx_antenna_mask_n, 1);
-  std::bitset<8> rx_antenna_mask(rx_antenna_mask_n);
-  const uint8_t n_rx_antennas = rx_antenna_mask.size();
+  switch (id) {
+  case EXTCAL_PARAM_CLK_ACCURACY:
+    {
+      if (data_len != 6) {
+        return UWBSTATUS_FAILED;
+      }
 
-  // SET_CALIBRATION_CMD header: GID=0xF OID=0x21
-  const std::vector<uint8_t> packet_header({ (0x20 | UCI_GID_PROPRIETARY_0X0F), UCI_MSG_SET_DEVICE_CALIBRATION, 0x00, 0x00});
+      std::vector<uint8_t> tlv;
+      // Tag
+      tlv.push_back(UCI_PARAM_ID_RF_CLK_ACCURACY_CALIB);
+      // Length
+      tlv.push_back((uint8_t)data_len + 1);
+      // Value
+      tlv.push_back(3); // number of register (must be 0x03)
+      tlv.insert(tlv.end(), data, data + data_len);
 
-  // Supported calibrations,
-  //  current HAL impl only supports "xtal" read from otp
-  //  others should be existed in .conf files
-  //
-  // | name          |otp-id|cal-id| size |per-   |per-   | otp |
-  // |               |      |      |      |channel|antenna|     |
-  // |---------------|------|------|------|-------|-------|-----|
-  // | xtal          | 0x02 | 0x02 | 3    | n     | n     | y   |
-  // | tx_power      | 0x04 | 0x17 | 2    | y     | y     |     |
-  // | ant_delay     | 0x0b | 0x02 | 2    | y     | y     |     |
+      return sr1xx_set_calibration(ch, tlv);
+    }
+  case EXTCAL_PARAM_RX_ANT_DELAY:
+    {
+      if (!ch || data_len < 1 || !data[0] || (data[0] * 3) != (data_len - 1)) {
+        return UWBSTATUS_FAILED;
+      }
 
-  // XTAL_CAP_GM_CTRL
-  // Check otp.xtal
+      std::vector<uint8_t> tlv;
+      // Tag
+      tlv.push_back(UCI_PARAM_ID_RX_ANT_DELAY_CALIB);
+      // Length
+      tlv.push_back((uint8_t)data_len);
+      // Value
+      tlv.insert(tlv.end(), data, data + data_len);
+
+      return sr1xx_set_calibration(ch, tlv);
+    }
+  case EXTCAL_PARAM_TX_POWER:
+    {
+      if (!ch || data_len < 1 || !data[0] || (data[0] * 5) != (data_len - 1)) {
+        return UWBSTATUS_FAILED;
+      }
+
+      std::vector<uint8_t> tlv;
+      // Tag
+      tlv.push_back(UCI_PARAM_ID_TX_POWER_PER_ANTENNA);
+      // Length
+      tlv.push_back((uint8_t)data_len);
+      // Value
+      tlv.insert(tlv.end(), data, data + data_len);
+
+      return sr1xx_set_calibration(ch, tlv);
+    }
+  case EXTCAL_PARAM_TX_BASE_BAND_CONTROL:
+    {
+      if (data_len != 1) {
+        return UWBSTATUS_FAILED;
+      }
+
+      std::vector<uint8_t> tlv;
+      // Tag
+      tlv.push_back(UCI_PARAM_ID_TX_BASE_BAND_CONFIG >> 8);
+      tlv.push_back(UCI_PARAM_ID_TX_BASE_BAND_CONFIG & 0xff);
+      // Length
+      tlv.push_back(1);
+      // Value
+      tlv.push_back(data[0]);
+
+      return sr1xx_set_conf(tlv);
+    }
+  case EXTCAL_PARAM_DDFS_TONE_CONFIG:
+    {
+      if (!data_len) {
+        return UWBSTATUS_FAILED;
+      }
+
+      std::vector<uint8_t> tlv;
+      // Tag
+      tlv.push_back(UCI_PARAM_ID_DDFS_TONE_CONFIG >> 8);
+      tlv.push_back(UCI_PARAM_ID_DDFS_TONE_CONFIG & 0xff);
+      // Length
+      tlv.push_back(data_len);
+      // Value
+      tlv.insert(tlv.end(), data, data + data_len);
+
+      return sr1xx_set_conf(tlv);
+    }
+  case EXTCAL_PARAM_TX_PULSE_SHAPE:
+    {
+      if (!data_len) {
+        return UWBSTATUS_FAILED;
+      }
+
+      std::vector<uint8_t> tlv;
+      // Tag
+      tlv.push_back(UCI_PARAM_ID_TX_PULSE_SHAPE_CONFIG >> 8);
+      tlv.push_back(UCI_PARAM_ID_TX_PULSE_SHAPE_CONFIG & 0xff);
+      // Length
+      tlv.push_back(data_len);
+      // Value
+      tlv.insert(tlv.end(), data, data + data_len);
+
+      return sr1xx_set_conf(tlv);
+    }
+  default:
+    NXPLOG_UCIHAL_E("Unsupported parameter: 0x%x", id);
+    return UWBSTATUS_FAILED;
+  }
+}
+
+tHAL_UWB_STATUS sr1xx_read_otp(extcal_param_id_t id, uint8_t *data, size_t data_len, size_t *retlen)
+{
+  switch(id) {
+  case EXTCAL_PARAM_CLK_ACCURACY:
+    {
+      const size_t param_len = 6;
+      uint8_t otp_xtal_data[3];
+
+      if (data_len < param_len) {
+        NXPLOG_UCIHAL_E("Requested RF_CLK_ACCURACY_CALIB with %zu bytes (expected >= %zu)", data_len, param_len);
+        return UWBSTATUS_FAILED;
+      }
+      if (!otp_read_data(0x09, OTP_ID_XTAL_CAP_GM_CTRL, otp_xtal_data, sizeof(otp_xtal_data))) {
+        NXPLOG_UCIHAL_E("Failed to read OTP XTAL_CAP_GM_CTRL");
+        return UWBSTATUS_FAILED;
+      }
+      memset(data, 0, param_len);
+      // convert OTP_ID_XTAL_CAP_GM_CTRL to EXTCAL_PARAM_RX_ANT_DELAY
+      data[0] = otp_xtal_data[0]; // cap1
+      data[2] = otp_xtal_data[1]; // cap2
+      data[4] = otp_xtal_data[2]; // gm_current_control (default: 0x30)
+      *retlen = param_len;
+      return UWBSTATUS_SUCCESS;
+    }
+    break;
+  default:
+    NXPLOG_UCIHAL_E("Unsupported otp parameter %d", id);
+    return UWBSTATUS_FAILED;
+  }
+}
+
+// Channels
+const static uint8_t cal_channels[] = {5, 6, 8, 9};
+
+static void extcal_do_xtal(void)
+{
+  int ret;
+
+  // RF_CLK_ACCURACY_CALIB (otp supported)
+  // parameters: cal.otp.xtal=0|1, cal.xtal=X
   uint8_t otp_xtal_flag = 0;
-  uint8_t otp_xtal_data[3];
-  uint8_t xtal_data[6];
-  bool need_xtal_calibration = false;
+  uint8_t xtal_data[32];
+  size_t xtal_data_len = 0;
 
   if (NxpConfig_GetNum("cal.otp.xtal", &otp_xtal_flag, 1) && otp_xtal_flag) {
-    if (otp_read_data(0x09, OTP_ID_XTAL_CAP_GM_CTRL, otp_xtal_data, sizeof(otp_xtal_data))) {
-      // convert OTP_ID_XTAL_CAP_GM_CTRL to RF_CLK_ACCURACY_CALIB
-      memset(xtal_data, 0, sizeof(xtal_data));
-      xtal_data[0] = otp_xtal_data[0];
-      xtal_data[2] = otp_xtal_data[1];
-      xtal_data[4] = otp_xtal_data[2];
-      need_xtal_calibration = true;
-    } else {
-      NXPLOG_UCIHAL_E("Failed to read OTP XTAL_CAP_GM_CTRL");
-    }
-  } else if (NxpConfig_GetByteArray("cal.xtal", otp_xtal_data, sizeof(otp_xtal_data), &retlen) &&
-             retlen == sizeof(otp_xtal_data)) {
-    need_xtal_calibration = true;
+    sr1xx_read_otp(EXTCAL_PARAM_CLK_ACCURACY, xtal_data, sizeof(xtal_data), &xtal_data_len);
   }
-
-  if (need_xtal_calibration) {
-    std::vector<uint8_t> payload;
-
-    // Channel, 9, don't care for RF_CLK_ACCURACY_CALIB
-    payload.push_back(9);
-    // Tag
-    payload.push_back(UCI_PARAM_ID_RF_CLK_ACCURACY_CALIB);
-    // Length = 7
-    payload.push_back(1 + sizeof(xtal_data));
-    // octet[0] = 3
-    payload.push_back(3);
-    // octet[6:1] = cap1(2), cap2(2), gm_current_control(2)
-    payload.insert(payload.end(), &xtal_data[0], &xtal_data[6]);
-
-    std::vector<uint8_t> packet(packet_header);
-    packet[3] = payload.size();
-    packet.insert(packet.end(), payload.begin(), payload.end());
-
-    tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
-    if (status != UWBSTATUS_SUCCESS) {
-      NXPLOG_UCIHAL_E("Failed to apply XTAL_CAP_GM_CTRL={%02x,%02x,%02x,%02x,%02x,%02x}",
-      xtal_data[0], xtal_data[1], xtal_data[2], xtal_data[3], xtal_data[4], xtal_data[5]);
+  if (!xtal_data_len) {
+    long retlen = 0;
+    if (NxpConfig_GetByteArray("cal.xtal", xtal_data, sizeof(xtal_data), &retlen)) {
+      xtal_data_len = retlen;
     }
   }
 
-  // RX_ANT_DELAY_CALIB(0x0F)
-  // Read configuration file ant1.ch5.ant_delay
+  if (xtal_data_len) {
+    NXPLOG_UCIHAL_E("Apply CLK_ACCURARY (len=%zu, from-otp=%c)", xtal_data_len, otp_xtal_flag ? 'y' : 'n');
+
+    ret = sr1xx_apply_calibration(EXTCAL_PARAM_CLK_ACCURACY, 0, xtal_data, xtal_data_len);
+
+    if (ret != UWBSTATUS_SUCCESS) {
+      NXPLOG_UCIHAL_E("Failed to apply CLK_ACCURACY (len=%zu, from-otp=%c)",
+          xtal_data_len, otp_xtal_flag ? 'y' : 'n');
+    }
+  }
+}
+
+static void extcal_do_ant_delay(void)
+{
+  std::bitset<8> rx_antenna_mask(nxpucihal_ctrl.cal_rx_antenna_mask);
+  const uint8_t n_rx_antennas = rx_antenna_mask.size();
+
+  // RX_ANT_DELAY_CALIB
+  // parameter: cal.ant<N>.ch<N>.ant_delay=X
   // N(1) + N * {AntennaID(1), Rxdelay(Q14.2)}
   if (n_rx_antennas) {
     for (auto ch : cal_channels) {
@@ -945,10 +1113,11 @@ void phNxpUciHal_extcal_handle_coreinit(void)
         if (!NxpConfig_GetNum(key, &delay_value, 2))
           continue;
 
-        NXPLOG_UCIHAL_D("RX_ANT_DELAY_CALIB: found %s = %u", key, delay_value);
+        NXPLOG_UCIHAL_D("Apply RX_ANT_DELAY_CALIB: %s = %u", key, delay_value);
         entries.push_back(ant_id);
-        entries.push_back(delay_value >> 8);
+        // Little Endian
         entries.push_back(delay_value & 0xff);
+        entries.push_back(delay_value >> 8);
         n_entries++;
       }
 
@@ -956,23 +1125,209 @@ void phNxpUciHal_extcal_handle_coreinit(void)
         continue;
 
       entries.insert(entries.begin(), n_entries);
-
-      std::vector<uint8_t> payload;
-      payload.push_back(ch);
-      payload.push_back(UCI_PARAM_ID_RX_ANT_DELAY_CALIB);
-      payload.push_back(entries.size());
-      payload.insert(payload.end(), entries.begin(), entries.end());
-
-      std::vector<uint8_t> packet(packet_header);
-      packet[3] = payload.size();
-      packet.insert(packet.end(), payload.begin(), payload.end());
-
-      tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
-      if (status != UWBSTATUS_SUCCESS) {
-        NXPLOG_UCIHAL_E("Failed to apply RX_ANT_DELAY_CALIB for channel %u", ch);
-      } else {
-        NXPLOG_UCIHAL_E("RX_ANT_DELAY_CALIB: applied for channel %u", ch);
+      tHAL_UWB_STATUS ret = sr1xx_apply_calibration(EXTCAL_PARAM_RX_ANT_DELAY, ch, entries.data(), entries.size());
+      if (ret != UWBSTATUS_SUCCESS) {
+        NXPLOG_UCIHAL_E("Failed to apply RX_ANT_DELAY for channel %u", ch);
       }
+    }
+  }
+}
+
+static void extcal_do_tx_power(void)
+{
+  std::bitset<8> tx_antenna_mask(nxpucihal_ctrl.cal_tx_antenna_mask);
+  const uint8_t n_tx_antennas = tx_antenna_mask.size();
+
+  // TX_POWER
+  // parameter: cal.ant<N>.ch<N>.tx_power={...}
+  if (n_tx_antennas) {
+    for (auto ch : cal_channels) {
+      std::vector<uint8_t> entries;
+      uint8_t n_entries = 0;
+
+      for (auto i = 0; i < n_tx_antennas; i++) {
+        if (!tx_antenna_mask[i])
+          continue;
+
+        char key[32];
+        const uint8_t ant_id = i + 1;
+        std::snprintf(key, sizeof(key), "cal.ant%u.ch%u.tx_power", ant_id, ch);
+
+        uint8_t power_value[32];
+        long retlen = 0;
+        if (!NxpConfig_GetByteArray(key, power_value, sizeof(power_value), &retlen)) {
+          continue;
+        }
+
+        NXPLOG_UCIHAL_D("Apply TX_POWER: %s = { %lu bytes }", key, retlen);
+        entries.push_back(ant_id);
+        entries.insert(entries.end(), power_value, power_value + retlen);
+        n_entries++;
+      }
+
+      if (!n_entries)
+        continue;
+
+      entries.insert(entries.begin(), n_entries);
+      tHAL_UWB_STATUS ret = sr1xx_apply_calibration(EXTCAL_PARAM_TX_POWER, ch, entries.data(), entries.size());
+      if (ret != UWBSTATUS_SUCCESS) {
+        NXPLOG_UCIHAL_E("Failed to apply TX_POWER for channel %u", ch);
+      }
+    }
+  }
+}
+
+static void extcal_do_tx_pulse_shape(void)
+{
+  // parameters: cal.tx_pulse_shape={...}
+  long retlen = 0;
+  uint8_t data[64];
+
+  if (NxpConfig_GetByteArray("cal.tx_pulse_shape", data, sizeof(data), &retlen) && retlen) {
+      NXPLOG_UCIHAL_D("Apply TX_PULSE_SHAPE: data = { %lu bytes }", retlen);
+
+      tHAL_UWB_STATUS ret = sr1xx_apply_calibration(EXTCAL_PARAM_TX_PULSE_SHAPE, 0, data, (size_t)retlen);
+      if (ret != UWBSTATUS_SUCCESS) {
+        NXPLOG_UCIHAL_E("Failed to apply TX_PULSE_SHAPE.");
+      }
+  }
+}
+
+static void extcal_do_tx_base_band(void)
+{
+  // TX_BASE_BAND_CONTROL, DDFS_TONE_CONFIG
+  // parameters: cal.ddfs_enable=1|0, cal.dc_suppress=1|0, ddfs_tone_config={...}
+  uint8_t ddfs_enable = 0, dc_suppress = 0;
+  uint8_t ddfs_tone[256];
+  long retlen = 0;
+  tHAL_UWB_STATUS ret;
+
+  NxpConfig_GetNum("cal.ddfs_enable", &ddfs_enable, 1);
+  NxpConfig_GetNum("cal.dc_suppress", &dc_suppress, 1);
+
+  // DDFS_TONE_CONFIG
+  if (ddfs_enable) {
+    if (!NxpConfig_GetByteArray("cal.ddfs_tone_config", ddfs_tone, sizeof(ddfs_tone), &retlen) || !retlen) {
+      NXPLOG_UCIHAL_E("cal.ddfs_tone_config is not supplied while cal.ddfs_enable=1, ddfs was not enabled.");
+      ddfs_enable = 0;
+    } else {
+      NXPLOG_UCIHAL_D("Apply DDFS_TONE_CONFIG: ddfs_tone_config = { %lu bytes }", retlen);
+
+      ret = sr1xx_apply_calibration(EXTCAL_PARAM_DDFS_TONE_CONFIG, 0, ddfs_tone, (size_t)retlen);
+      if (ret != UWBSTATUS_SUCCESS) {
+        NXPLOG_UCIHAL_E("Failed to apply DDFS_TONE_CONFIG, ddfs was not enabled.");
+        ddfs_enable = 0;
+      }
+    }
+  }
+
+  // TX_BASE_BAND_CONTROL
+  {
+    NXPLOG_UCIHAL_E("Apply TX_BASE_BAND_CONTROL: ddfs_enable=%u, dc_suppress=%u", ddfs_enable, dc_suppress);
+
+    uint8_t flag = 0;
+    if (ddfs_enable)
+      flag |= 0x01;
+    if (dc_suppress)
+      flag |= 0x02;
+    ret = sr1xx_apply_calibration(EXTCAL_PARAM_TX_BASE_BAND_CONTROL, 0, &flag, 1);
+    if (ret) {
+      NXPLOG_UCIHAL_E("Failed to apply TX_BASE_BAND_CONTROL");
+    }
+  }
+}
+
+static void extcal_do_restrictions(void)
+{
+  phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
+
+  phNxpUciHal_resetRuntimeSettings();
+
+  uint16_t mask= 0;
+  if (NxpConfig_GetNum("cal.restricted_channels", &mask, sizeof(mask))) {
+    NXPLOG_UCIHAL_D("Restriction flag, restricted channel mask=0x%x", mask);
+    rt_set->restricted_channel_mask = mask;
+  }
+
+  uint8_t uwb_disable = 0;
+  if (NxpConfig_GetNum("cal.uwb_disable", &uwb_disable, sizeof(uwb_disable))) {
+    NXPLOG_UCIHAL_D("Restriction flag, uwb_disable=%u", uwb_disable);
+    rt_set->uwb_enable = !uwb_disable;
+  }
+}
+
+/******************************************************************************
+ * Function         phNxpUciHal_extcal_handle_coreinit
+ *
+ * Description      Apply additional core device settings
+ *
+ * Returns          void.
+ *
+ ******************************************************************************/
+void phNxpUciHal_extcal_handle_coreinit(void)
+{
+  // read rx_aantenna_mask, tx_antenna_mask
+  uint8_t rx_antenna_mask_n = 0x1;
+  uint8_t tx_antenna_mask_n = 0x1;
+  if (!NxpConfig_GetNum("cal.rx_antenna_mask", &rx_antenna_mask_n, 1)) {
+      NXPLOG_UCIHAL_E("cal.rx_antenna_mask is not specified, use default 0x%x", rx_antenna_mask_n);
+  }
+  if (!NxpConfig_GetNum("cal.tx_antenna_mask", &tx_antenna_mask_n, 1)) {
+      NXPLOG_UCIHAL_E("cal.tx_antenna_mask is not specified, use default 0x%x", tx_antenna_mask_n);
+  }
+  nxpucihal_ctrl.cal_rx_antenna_mask = rx_antenna_mask_n;
+  nxpucihal_ctrl.cal_tx_antenna_mask = tx_antenna_mask_n;
+
+  extcal_do_xtal();
+  extcal_do_ant_delay();
+}
+
+extern bool isCountryCodeMapCreated;
+
+/******************************************************************************
+ * Function         phNxpUciHal_handle_set_country_code
+ *
+ * Description      Apply per-country settings
+ *
+ * Returns          void.
+ *
+ ******************************************************************************/
+void phNxpUciHal_handle_set_country_code(const char country_code[2])
+{
+  NXPLOG_UCIHAL_D("Apply country code %c%c", country_code[0], country_code[1]);
+
+  NxpConfig_SetCountryCode(country_code);
+
+  // Load 'COUNTRY_CODE_CAPS' and apply it to 'conf_map'
+  uint8_t cc_caps[UCI_MAX_DATA_LEN];
+  long retlen = 0;
+  if (NxpConfig_GetByteArray(NAME_NXP_UWB_COUNTRY_CODE_CAPS, cc_caps, sizeof(cc_caps), &retlen) && retlen) {
+    NXPLOG_UCIHAL_D("COUNTRY_CODE_CAPS is provided.");
+    isCountryCodeMapCreated = false;
+
+    uint32_t cc_caps_len = retlen;
+    uint8_t cc_data[UCI_MAX_DATA_LEN];
+    uint32_t cc_data_len = sizeof(cc_data);
+    phNxpUciHal_applyCountryCaps(country_code, cc_caps, cc_caps_len, cc_data, &cc_data_len);
+
+    if (get_conf_map(cc_data, cc_data_len)) {
+      isCountryCodeMapCreated = true;
+      NXPLOG_UCIHAL_D("Country code caps loaded");
+    }
+  } else {
+    NXPLOG_UCIHAL_D("COUNTRY_CODE_CAPS was not provided.");
+  }
+
+  // per-country extra calibrations are only triggered when 'COUNTRY_CODE_CAPS' is not provided
+  if (!isCountryCodeMapCreated) {
+    NXPLOG_UCIHAL_D("Apply per-country extra calibrations");
+    extcal_do_restrictions();
+
+    phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
+    if (rt_set->uwb_enable) {
+      extcal_do_tx_power();
+      extcal_do_tx_pulse_shape();
+      extcal_do_tx_base_band();
     }
   }
 }

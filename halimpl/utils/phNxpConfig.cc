@@ -41,10 +41,15 @@
 #include "phNxpUciHal_utils.h"
 #include "phNxpLog.h"
 
-const char default_nxp_config_path[] = "/vendor/etc/libuwb-nxp.conf";
-const char country_code_config_name[] = "libuwb-countrycode.conf";
-const char country_code_specifier[] = "<country>";
-const char nxp_uci_config_file[] = "libuwb-uci.conf";
+static const char default_nxp_config_path[] = "/vendor/etc/libuwb-nxp.conf";
+static const char country_code_config_name[] = "libuwb-countrycode.conf";
+static const char nxp_uci_config_file[] = "libuwb-uci.conf";
+
+static const char country_code_specifier[] = "<country>";
+static const char sku_specifier[] = "<sku>";
+
+static const char prop_name_calsku[] = "persist.vendor.uwb.cal.sku";
+static const char prop_default_calsku[] = "defaultsku";
 
 using namespace::std;
 
@@ -403,7 +408,15 @@ CUwbNxpConfig::CUwbNxpConfig(const char *filepath) :
     mFilePath(filepath),
     mCountrySpecific(false)
 {
-    auto pos = mFilePath.find(country_code_specifier);
+    auto pos = mFilePath.find(sku_specifier);
+    if (pos != string::npos) {
+        char prop_str[PROPERTY_VALUE_MAX];
+        property_get(prop_name_calsku, prop_str,prop_default_calsku);
+        mFilePath.replace(pos, strlen(sku_specifier), prop_str);
+    }
+
+    // country specifier will be evaluated later in setCountry() path
+    pos = mFilePath.find(country_code_specifier);
     if (pos == string::npos) {
         mCurrentFile = mFilePath;
         readConfig();
@@ -774,7 +787,6 @@ void CascadeConfig::init(const char *main_config)
     }
 }
 
-extern bool isCountryCodeMapCreated;
 void CascadeConfig::setCountryCode(const char country_code[2])
 {
     string strCountry = mRegionMap.xlateCountryCode(country_code);
@@ -786,23 +798,16 @@ void CascadeConfig::setCountryCode(const char country_code[2])
             x.dump();
         }
     }
-
-    // Load 'COUNTRY_CODE_CAPS' and apply it to 'conf_map'
-    auto cc_data = make_unique<uint8_t[]>(UCI_MAX_DATA_LEN);
-    const uwbParam *param = mCapsConfig.find(NAME_NXP_UWB_COUNTRY_CODE_CAPS);
-    if (param) {
-        uint32_t retlen = param->arr_len();
-        phNxpUciHal_getCountryCaps(param->arr_value(), country_code, cc_data.get(), &retlen);
-        if (get_conf_map(cc_data.get(), retlen)) {
-            isCountryCodeMapCreated = true;
-            NXPLOG_UCIHAL_D("Country code caps loaded");
-        }
-    }
 }
 
 const uwbParam* CascadeConfig::find(const char *name) const
 {
     const uwbParam* param = NULL;
+
+    param = mCapsConfig.find(name);
+    if (param)
+      return param;
+
     for (auto it = mExtraConfig.rbegin(); it != mExtraConfig.rend(); it++) {
         param = it->find(name);
         if (param)
