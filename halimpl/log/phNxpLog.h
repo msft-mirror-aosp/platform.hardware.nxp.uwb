@@ -30,7 +30,6 @@ typedef struct uci_log_level {
 
 /* global log level Ref */
 extern uci_log_level_t gLog_level;
-extern bool uwb_debug_enabled;
 /* define log module included when compile */
 #define ENABLE_EXTNS_TRACES TRUE
 #define ENABLE_HAL_TRACES TRUE
@@ -110,14 +109,12 @@ extern const char* NXPLOG_ITEM_HCPR; /* Android logging tag for NxpHcpR   */
 #if (ENABLE_EXTNS_TRACES == TRUE)
 #define NXPLOG_EXTNS_D(...)                                        \
   {                                                                \
-    if ((uwb_debug_enabled) ||                                     \
-        (gLog_level.extns_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL)) \
+    if ((gLog_level.extns_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL)) \
       LOG_PRI(ANDROID_LOG_DEBUG, NXPLOG_ITEM_EXTNS, __VA_ARGS__);  \
   }
 #define NXPLOG_EXTNS_W(...)                                       \
   {                                                               \
-    if ((uwb_debug_enabled) ||                                    \
-        (gLog_level.extns_log_level >= NXPLOG_LOG_WARN_LOGLEVEL)) \
+    if ((gLog_level.extns_log_level >= NXPLOG_LOG_WARN_LOGLEVEL)) \
       LOG_PRI(ANDROID_LOG_WARN, NXPLOG_ITEM_EXTNS, __VA_ARGS__);  \
   }
 #define NXPLOG_EXTNS_E(...)                                       \
@@ -135,14 +132,12 @@ extern const char* NXPLOG_ITEM_HCPR; /* Android logging tag for NxpHcpR   */
 #if (ENABLE_HAL_TRACES == TRUE)
 #define NXPLOG_UCIHAL_D(...)                                       \
   {                                                                \
-    if ((uwb_debug_enabled) ||                                     \
-        (gLog_level.hal_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL))   \
+    if ((gLog_level.hal_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL))   \
       LOG_PRI(ANDROID_LOG_DEBUG, NXPLOG_ITEM_UCIHAL, __VA_ARGS__); \
   }
 #define NXPLOG_UCIHAL_W(...)                                      \
   {                                                               \
-    if ((uwb_debug_enabled) ||                                    \
-        (gLog_level.hal_log_level >= NXPLOG_LOG_WARN_LOGLEVEL))   \
+    if ((gLog_level.hal_log_level >= NXPLOG_LOG_WARN_LOGLEVEL))   \
       LOG_PRI(ANDROID_LOG_WARN, NXPLOG_ITEM_UCIHAL, __VA_ARGS__); \
   }
 #define NXPLOG_UCIHAL_E(...)                                       \
@@ -160,14 +155,12 @@ extern const char* NXPLOG_ITEM_HCPR; /* Android logging tag for NxpHcpR   */
 #if (ENABLE_UCIX_TRACES == TRUE)
 #define NXPLOG_UCIX_D(...)                                        \
   {                                                               \
-    if ((uwb_debug_enabled) ||                                    \
-        (gLog_level.ucix_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL)) \
+    if ((gLog_level.ucix_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL)) \
       LOG_PRI(ANDROID_LOG_DEBUG, NXPLOG_ITEM_UCIX, __VA_ARGS__);  \
   }
 #define NXPLOG_UCIX_W(...)                                       \
   {                                                              \
-    if ((uwb_debug_enabled) ||                                   \
-        (gLog_level.ucix_log_level >= NXPLOG_LOG_WARN_LOGLEVEL)) \
+    if ((gLog_level.ucix_log_level >= NXPLOG_LOG_WARN_LOGLEVEL)) \
       LOG_PRI(ANDROID_LOG_WARN, NXPLOG_ITEM_UCIX, __VA_ARGS__);  \
   }
 #define NXPLOG_UCIX_E(...)                                       \
@@ -185,14 +178,12 @@ extern const char* NXPLOG_ITEM_HCPR; /* Android logging tag for NxpHcpR   */
 #if (ENABLE_UCIR_TRACES == TRUE)
 #define NXPLOG_UCIR_D(...)                                        \
   {                                                               \
-    if ((uwb_debug_enabled) ||                                    \
-        (gLog_level.ucir_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL)) \
+    if ((gLog_level.ucir_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL)) \
       LOG_PRI(ANDROID_LOG_DEBUG, NXPLOG_ITEM_UCIR, __VA_ARGS__);  \
   }
 #define NXPLOG_UCIR_W(...)                                       \
   {                                                              \
-    if ((uwb_debug_enabled) ||                                   \
-        (gLog_level.ucir_log_level >= NXPLOG_LOG_WARN_LOGLEVEL)) \
+    if ((gLog_level.ucir_log_level >= NXPLOG_LOG_WARN_LOGLEVEL)) \
       LOG_PRI(ANDROID_LOG_WARN, NXPLOG_ITEM_UCIR, __VA_ARGS__);  \
   }
 #define NXPLOG_UCIR_E(...)                                       \
@@ -210,14 +201,12 @@ extern const char* NXPLOG_ITEM_HCPR; /* Android logging tag for NxpHcpR   */
 #if (ENABLE_FWDNLD_TRACES == TRUE)
 #define NXPLOG_FWDNLD_D(...)                                       \
   {                                                                \
-    if ((uwb_debug_enabled) ||                                     \
-        (gLog_level.dnld_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL))  \
+    if ((gLog_level.dnld_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL))  \
       LOG_PRI(ANDROID_LOG_DEBUG, NXPLOG_ITEM_FWDNLD, __VA_ARGS__); \
   }
 #define NXPLOG_FWDNLD_W(...)                                      \
   {                                                               \
-    if ((uwb_debug_enabled) ||                                    \
-        (gLog_level.dnld_log_level >= NXPLOG_LOG_WARN_LOGLEVEL))  \
+    if ((gLog_level.dnld_log_level >= NXPLOG_LOG_WARN_LOGLEVEL))  \
       LOG_PRI(ANDROID_LOG_WARN, NXPLOG_ITEM_FWDNLD, __VA_ARGS__); \
   }
 #define NXPLOG_FWDNLD_E(...)                                       \
@@ -235,14 +224,12 @@ extern const char* NXPLOG_ITEM_HCPR; /* Android logging tag for NxpHcpR   */
 #if (ENABLE_TML_TRACES == TRUE)
 #define NXPLOG_TML_D(...)                                        \
   {                                                              \
-    if ((uwb_debug_enabled) ||                                   \
-        (gLog_level.tml_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL)) \
+    if ((gLog_level.tml_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL)) \
       LOG_PRI(ANDROID_LOG_DEBUG, NXPLOG_ITEM_TML, __VA_ARGS__);  \
   }
 #define NXPLOG_TML_W(...)                                       \
   {                                                             \
-    if ((uwb_debug_enabled) ||                                  \
-        (gLog_level.tml_log_level >= NXPLOG_LOG_WARN_LOGLEVEL)) \
+    if ((gLog_level.tml_log_level >= NXPLOG_LOG_WARN_LOGLEVEL)) \
       LOG_PRI(ANDROID_LOG_WARN, NXPLOG_ITEM_TML, __VA_ARGS__);  \
   }
 #define NXPLOG_TML_E(...)                                       \
@@ -261,14 +248,12 @@ extern const char* NXPLOG_ITEM_HCPR; /* Android logging tag for NxpHcpR   */
 #if (ENABLE_HCPX_TRACES == TRUE)
 #define NXPLOG_HCPX_D(...)                                         \
   {                                                                \
-    if ((uwb_debug_enabled) ||                                     \
-        (gLog_level.dnld_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL))  \
+    if ((gLog_level.dnld_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL))  \
       LOG_PRI(ANDROID_LOG_DEBUG, NXPLOG_ITEM_FWDNLD, __VA_ARGS__); \
   }
 #define NXPLOG_HCPX_W(...)                                        \
   {                                                               \
-    if ((uwb_debug_enabled) ||                                    \
-        (gLog_level.dnld_log_level >= NXPLOG_LOG_WARN_LOGLEVEL))  \
+    if ((gLog_level.dnld_log_level >= NXPLOG_LOG_WARN_LOGLEVEL))  \
       LOG_PRI(ANDROID_LOG_WARN, NXPLOG_ITEM_FWDNLD, __VA_ARGS__); \
   }
 #define NXPLOG_HCPX_E(...)                                         \
@@ -286,14 +271,12 @@ extern const char* NXPLOG_ITEM_HCPR; /* Android logging tag for NxpHcpR   */
 #if (ENABLE_HCPR_TRACES == TRUE)
 #define NXPLOG_HCPR_D(...)                                         \
   {                                                                \
-    if ((uwb_debug_enabled) ||                                     \
-        (gLog_level.dnld_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL))  \
+    if ((gLog_level.dnld_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL))  \
       LOG_PRI(ANDROID_LOG_DEBUG, NXPLOG_ITEM_FWDNLD, __VA_ARGS__); \
   }
 #define NXPLOG_HCPR_W(...)                                        \
   {                                                               \
-    if ((uwb_debug_enabled) ||                                    \
-        (gLog_level.dnld_log_level >= NXPLOG_LOG_WARN_LOGLEVEL))  \
+    if ((gLog_level.dnld_log_level >= NXPLOG_LOG_WARN_LOGLEVEL))  \
       LOG_PRI(ANDROID_LOG_WARN, NXPLOG_ITEM_FWDNLD, __VA_ARGS__); \
   }
 #define NXPLOG_HCPR_E(...)                                         \
