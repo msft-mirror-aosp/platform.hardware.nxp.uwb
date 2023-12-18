@@ -48,7 +48,6 @@ phNxpUciHal_Control_t nxpucihal_ctrl;
 /* TML Context */
 extern phTmlUwb_Context_t* gpphTmlUwb_Context;
 
-bool uwb_debug_enabled = false;
 bool uwb_device_initialized = false;
 bool uwb_get_platform_id = false;
 uint32_t timeoutTimerId = 0;
