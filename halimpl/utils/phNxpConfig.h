@@ -28,6 +28,7 @@ extern "C"
 #endif
 
 void NxpConfig_Init(void);
+void NxpConfig_Deinit(void);
 void NxpConfig_SetCountryCode(const char country_code[2]);
 
 int NxpConfig_GetStr(const char* name, char* p_value, unsigned long len);
