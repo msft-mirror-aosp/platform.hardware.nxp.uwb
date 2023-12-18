@@ -37,8 +37,6 @@ const char* NXPLOG_ITEM_HCPR = "NxpHcpR";
 /* global log level structure */
 uci_log_level_t gLog_level;
 
-extern bool uwb_debug_enabled;
-
 /*******************************************************************************
  *
  * Function         phNxpLog_SetGlobalLogLevel
@@ -249,8 +247,7 @@ void phNxpLog_InitializeLogLevel(void) {
   phNxpLog_SetDnldLogLevel(level);
   phNxpLog_SetUciTxLogLevel(level);
 
-  ALOGD_IF(uwb_debug_enabled,
-           "%s: global =%u, Fwdnld =%u, extns =%u, \
+  ALOGV("%s: global =%u, Fwdnld =%u, extns =%u, \
                 hal =%u, tml =%u, ucir =%u, \
                 ucix =%u",
            __func__, gLog_level.global_log_level, gLog_level.dnld_log_level,
