@@ -37,7 +37,6 @@
 extern phNxpUciHal_Control_t nxpucihal_ctrl;
 
 extern uint32_t cleanup_timer;
-extern bool uwb_debug_enabled;
 extern uint32_t timeoutTimerId;
 extern short conf_tx_power;
 
