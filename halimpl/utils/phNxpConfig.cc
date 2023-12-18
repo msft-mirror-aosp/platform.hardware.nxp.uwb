@@ -628,6 +628,10 @@ public:
         }
         return code;
     }
+    void reset() {
+        m_config.reset();
+        m_map.clear();
+    }
     void dump() {
         ALOGD("Region mapping dump:");
         for (auto &entry : m_map) {
@@ -651,6 +655,7 @@ public:
     CascadeConfig();
 
     void init(const char *main_config);
+    void deinit();
     void setCountryCode(const char country_code[2]);
 
     const uwbParam* find(const char *name)  const;
@@ -787,6 +792,15 @@ void CascadeConfig::init(const char *main_config)
     }
 }
 
+void CascadeConfig::deinit()
+{
+    mMainConfig.reset();
+    mExtraConfig.clear();
+    mCapsConfig.reset();
+    mRegionMap.reset();
+    mUciConfig.reset();
+}
+
 void CascadeConfig::setCountryCode(const char country_code[2])
 {
     string strCountry = mRegionMap.xlateCountryCode(country_code);
@@ -871,6 +885,11 @@ static CascadeConfig gConfig;
 extern "C" void NxpConfig_Init(void)
 {
     gConfig.init(default_nxp_config_path);
+}
+
+extern "C" void NxpConfig_Deinit(void)
+{
+    gConfig.deinit();
 }
 
 extern "C" void NxpConfig_SetCountryCode(const char country_code[2])

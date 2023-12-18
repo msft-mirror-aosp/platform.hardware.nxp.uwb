@@ -1050,6 +1050,8 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
 
   phNxpUciHal_cleanup_monitor();
 
+  NxpConfig_Deinit();
+
   /* Return success always */
   return UWBSTATUS_SUCCESS;
 }
