@@ -255,21 +255,15 @@ typedef enum phHbci_Status {
 /*********************************************************************************************************************/
 /*   GLOBAL DATATYPES */
 /*********************************************************************************************************************/
-typedef enum phHbci_Class {
-  phHbci_Class_General = 0x00,
-  phHbci_Class_Patch_ROM = 0x20,
-  phHbci_Class_HIF_Image = 0x50,
-  phHbci_Class_IM4_Image = 0x60
+constexpr uint8_t phHbci_Class_General = 0x00;
+constexpr uint8_t phHbci_Class_Patch_ROM = 0x20;
+constexpr uint8_t phHbci_Class_HIF_Image = 0x50;
+constexpr uint8_t phHbci_Class_IM4_Image = 0x60;
 
-} phHbci_Class_t;
-
-typedef enum phHbci_SubClass {
-  phHbci_SubClass_Query = 0x01,
-  phHbci_SubClass_Answer = 0x02,
-  phHbci_SubClass_Command = 0x03,
-  phHbci_SubClass_Ack = 0x04
-
-} phHbci_SubClass_t;
+constexpr uint8_t phHbci_SubClass_Query = 0x01;
+constexpr uint8_t phHbci_SubClass_Answer = 0x02;
+constexpr uint8_t phHbci_SubClass_Command = 0x03;
+constexpr uint8_t phHbci_SubClass_Ack = 0x04;
 
 typedef enum phHbci_Ack {
   phHbci_Valid_APDU = 0x01,

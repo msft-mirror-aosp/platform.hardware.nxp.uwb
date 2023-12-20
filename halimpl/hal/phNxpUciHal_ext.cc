@@ -37,7 +37,6 @@
 extern phNxpUciHal_Control_t nxpucihal_ctrl;
 
 extern uint32_t cleanup_timer;
-extern bool uwb_debug_enabled;
 extern uint32_t timeoutTimerId;
 extern short conf_tx_power;
 
@@ -1077,7 +1076,7 @@ static void extcal_do_xtal(void)
   }
 
   if (xtal_data_len) {
-    NXPLOG_UCIHAL_E("Apply CLK_ACCURARY (len=%zu, from-otp=%c)", xtal_data_len, otp_xtal_flag ? 'y' : 'n');
+    NXPLOG_UCIHAL_D("Apply CLK_ACCURARY (len=%zu, from-otp=%c)", xtal_data_len, otp_xtal_flag ? 'y' : 'n');
 
     ret = sr1xx_apply_calibration(EXTCAL_PARAM_CLK_ACCURACY, 0, xtal_data, xtal_data_len);
 
@@ -1223,7 +1222,7 @@ static void extcal_do_tx_base_band(void)
 
   // TX_BASE_BAND_CONTROL
   {
-    NXPLOG_UCIHAL_E("Apply TX_BASE_BAND_CONTROL: ddfs_enable=%u, dc_suppress=%u", ddfs_enable, dc_suppress);
+    NXPLOG_UCIHAL_D("Apply TX_BASE_BAND_CONTROL: ddfs_enable=%u, dc_suppress=%u", ddfs_enable, dc_suppress);
 
     uint8_t flag = 0;
     if (ddfs_enable)
