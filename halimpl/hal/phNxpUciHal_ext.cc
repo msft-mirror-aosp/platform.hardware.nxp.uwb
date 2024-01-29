@@ -390,7 +390,7 @@ static void phNxpUciHal_applyCountryCaps(const char country_code[2],
         break;
       case TX_POWER_TAG:
         if (len == 2) {
-          rt_set->tx_power_offset = (short)((cc_resp[idx + 0] << RMS_TX_POWER_SHIFT) | (cc_resp[idx + 1]));
+          rt_set->tx_power_offset = (short)((cc_resp[idx + 0]) | (((cc_resp[idx + 1]) << RMS_TX_POWER_SHIFT) & 0xFF00));
           NXPLOG_UCIHAL_D("CountryCaps tx_power_offset = %d", rt_set->tx_power_offset);
 
           phNxpUciHal_setCalibParamTxPower();
@@ -489,7 +489,7 @@ static void phNxpUciHal_updateTxPower(void)
     uint8_t num_of_antennas = gtx_power[index++];
     while (num_of_antennas--) {
       index += 3; // antenna Id(1) + Peak Tx(2)
-      long tx_power_long = (gtx_power[index] & 0xff) | (gtx_power[index + 1] << RMS_TX_POWER_SHIFT);
+      long tx_power_long = gtx_power[index]  | ((gtx_power[index + 1] << RMS_TX_POWER_SHIFT) & 0xFF00);
       tx_power_long += rt_set->tx_power_offset;
 
       // long to 16bit little endian
