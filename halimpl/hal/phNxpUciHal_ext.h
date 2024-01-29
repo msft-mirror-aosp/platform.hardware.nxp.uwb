@@ -70,4 +70,5 @@ void phNxpUciHal_processCalibParamTxPowerPerAntenna(const uint8_t *p_data, uint1
 void phNxpUciHal_extcal_handle_coreinit(void);
 void phNxpUciHal_process_response();
 void phNxpUciHal_handle_set_country_code(const char country_code[2]);
+bool phNxpUciHal_handle_set_app_config(uint16_t *data_len, uint8_t *p_data);
 #endif /* _PHNXPNICHAL_EXT_H_ */

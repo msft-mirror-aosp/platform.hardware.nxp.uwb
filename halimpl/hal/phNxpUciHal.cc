@@ -238,106 +238,6 @@ static void* phNxpUciHal_client_thread(void* arg) {
   return NULL;
 }
 
-/*************************************************************************************
- * Function         handlingVendorSpecificAppConfig
- *
- * Description      This function removes the vendor specific app config from
- *UCI command
- *
- * Returns          void
- *
- *************************************************************************************/
-void handlingVendorSpecificAppConfig(uint16_t *data_len, uint8_t *p_data) {
-  // removing the vendor specific app config as it's not supported by FW
-  static const std::unordered_set<uint16_t> tags_to_del {
-    UCI_PARAM_ID_TX_ADAPTIVE_PAYLOAD_POWER,
-    UCI_PARAM_ID_AOA_AZIMUTH_MEASUREMENTS,
-    UCI_PARAM_ID_AOA_ELEVATION_MEASUREMENTS,
-    UCI_PARAM_ID_RANGE_MEASUREMENTS
-  };
-
-  uint8_t mt = 0, gid = 0, oid = 0;
-  mt = (*(p_data)&UCI_MT_MASK) >> UCI_MT_SHIFT;
-  gid = p_data[0] & UCI_GID_MASK;
-  oid = p_data[1] & UCI_OID_MASK;
-
-  if (mt == UCI_MT_CMD) {
-    if ((gid == UCI_GID_SESSION_MANAGE) &&
-        (oid == UCI_MSG_SESSION_SET_APP_CONFIG)) {
-        uint16_t dataLength = *data_len, numOfbytes = 0, numOfConfigs = 0;
-
-        /* Create local copy of cmd_data for data manipulation*/
-        uint8_t uciCmd[UCI_MAX_DATA_LEN];
-        if (sizeof(uciCmd) < dataLength) {
-          return;
-        }
-        memcpy(uciCmd, p_data, dataLength);
-
-        uint16_t startOfByteManipulation = UCI_MSG_HDR_SIZE +
-                                           UCI_CMD_SESSION_ID_OFFSET +
-                                           UCI_CMD_NUM_CONFIG_PARAM_LENGTH;
-
-        for (uint16_t i = startOfByteManipulation, j = startOfByteManipulation;
-             i < dataLength;) {
-          uint16_t tag;
-          uint8_t len;
-          uint8_t param_len;
-
-          tag = p_data[i];
-          if (tag >= 0xe0 && tag <= 0xe2) {
-            if ((i + 3) > dataLength)
-              return;
-            tag = (tag << 8) | p_data[i + 1];
-            len = p_data[i + 2];
-            param_len = 3 + len;
-          } else {
-            if ((i + 2) > dataLength)
-              return;
-            len = p_data[i + 1];
-            param_len = 2 + len;
-          }
-
-          if ((i + param_len) > dataLength)
-            return;
-
-          if (tags_to_del.find(tag) == tags_to_del.end()) {
-            memcpy(&uciCmd[j], &p_data[i], param_len);
-            i += param_len;
-            j += param_len;
-          } else {
-            i += param_len;
-            NXPLOG_UCIHAL_D("Removed param payload with Tag ID:0x%x", tag);
-            numOfConfigs++;
-            numOfbytes += param_len;
-          }
-        }
-
-        // uci number of config params update
-        if (uciCmd[UCI_CMD_NUM_CONFIG_PARAM_BYTE] < numOfConfigs)
-          return;
-        uciCmd[UCI_CMD_NUM_CONFIG_PARAM_BYTE] -= numOfConfigs;
-
-        // uci command length update
-        if (dataLength < numOfbytes)
-          return;
-        dataLength -= numOfbytes;
-
-        // uci cmd app config length update
-        uint16_t header_len = (uciCmd[UCI_CMD_LENGTH_PARAM_BYTE1] & 0xFF) |
-                              ((uciCmd[UCI_CMD_LENGTH_PARAM_BYTE2] & 0xFF) << 8);
-        if (header_len < numOfbytes)
-          return;
-
-        header_len -= numOfbytes;
-        uciCmd[UCI_CMD_LENGTH_PARAM_BYTE2] = (header_len & 0xFF00) >> 8;
-        uciCmd[UCI_CMD_LENGTH_PARAM_BYTE1] = (header_len & 0xFF);
-
-        memcpy(p_data, uciCmd, dataLength);
-        *data_len = dataLength;
-    }
-  }
-}
-
 bool isCountryCodeMapCreated = false;
 /******************************************************************************
  * Function         phNxpUciHal_parse
@@ -350,7 +250,9 @@ bool isCountryCodeMapCreated = false;
 bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data)
 {
   bool ret = false;
-  const phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
+
+  if (data_len < UCI_MSG_HDR_SIZE)
+    return false;
 
   const uint8_t mt = (p_data[0] &UCI_MT_MASK) >> UCI_MT_SHIFT;
   const uint8_t gid = p_data[0] & UCI_GID_MASK;
@@ -375,33 +277,7 @@ bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data)
           phNxpUciHal_processCalibParamTxPowerPerAntenna(p_data, data_len);
         }
     } else if ((gid == UCI_GID_SESSION_MANAGE) && (oid == UCI_MSG_SESSION_SET_APP_CONFIG)) {
-        uint8_t len = p_data[UCI_MSG_HDR_SIZE - 1] +  UCI_MSG_HDR_SIZE;
-        uint8_t index = 9; 	// Header 4 + SessionID 4 + NumOfConfigs 1
-        uint8_t tagId, length, ch;
-
-        while (index < len) {
-          tagId = p_data[index++];
-          length = p_data[index++];
-
-          if (tagId == UCI_PARAM_ID_CHANNEL_NUMBER) {
-            ch = p_data[index];
-
-            if (((ch == CHANNEL_NUM_5) && (rt_set->restricted_channel_mask & (1 << 5))) ||
-                ((ch == CHANNEL_NUM_9) && (rt_set->restricted_channel_mask & (1 << 9)))) {
-              NXPLOG_UCIHAL_D("Country code blocked channel %u", ch);
-
-              // send setAppConfig response with COUNTRY_CODE_BLOCKED response
-              static uint8_t rsp_data[] = { 0x41, 0x03, 0x04, 0x04,
-                UCI_STATUS_FAILED, 0x01, UCI_STATUS_INVALID_PARAM, UCI_STATUS_COUNTRY_CODE_BLOCKED_CHANNEL
-              };
-              nxpucihal_ctrl.rx_data_len = sizeof(rsp_data);
-              ret = true;
-              (*nxpucihal_ctrl.p_uwb_stack_data_cback)(nxpucihal_ctrl.rx_data_len, rsp_data);
-              break;
-            }
-          }
-          index += length;
-        }
+      return phNxpUciHal_handle_set_app_config(&nxpucihal_ctrl.cmd_len, nxpucihal_ctrl.p_cmd_data);
     }
   } else if (mt == UCI_MT_RSP) {
     if ((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_GET_CAPS_INFO)) {
@@ -707,10 +583,6 @@ tHAL_UWB_STATUS phNxpUciHal_write_unlocked(uint16_t data_len, const uint8_t* p_d
   data_len = nxpucihal_ctrl.cmd_len;
   UCI_MSG_PRS_HDR0(p_data, mt, pbf, gid);
   UCI_MSG_PRS_HDR1(p_data, oid);
-
-  /*vendor specific params handling*/
-  handlingVendorSpecificAppConfig(&nxpucihal_ctrl.cmd_len,
-                                  nxpucihal_ctrl.p_cmd_data);
 
   /* Vendor Specific Parsing logic */
   nxpucihal_ctrl.hal_parse_enabled =
