@@ -192,6 +192,7 @@ typedef struct phNxpUciHal_Control {
 
   phNxpUciHal_Sem_t dev_status_ntf_wait;
   phNxpUciHal_Sem_t uwb_binding_status_ntf_wait;
+  phNxpUciHal_Sem_t uwb_close_complete_wait;
   phNxpUciHal_Sem_t uwb_get_binding_status_ntf_wait;
   phNxpUciHal_Sem_t uwb_do_bind_ntf_wait;
   phNxpUciHal_Sem_t calib_data_ntf_wait;

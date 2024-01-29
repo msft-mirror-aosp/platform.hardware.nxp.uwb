@@ -128,6 +128,7 @@ static void* phNxpUciHal_client_thread(void* arg) {
           (*nxpucihal_ctrl.p_uwb_stack_cback)(HAL_UWB_CLOSE_CPLT_EVT,
                                               HAL_UWB_STATUS_OK);
           phNxpUciHal_kill_client_thread(&nxpucihal_ctrl);
+          SEM_POST(&(nxpucihal_ctrl.uwb_close_complete_wait));
         }
         REENTRANCE_UNLOCK();
         break;
@@ -1029,6 +1030,12 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
   nxpucihal_ctrl.halStatus = HAL_STATUS_CLOSE;
 
   if (NULL != gpphTmlUwb_Context->pDevHandle) {
+    if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.uwb_close_complete_wait, NULL) !=
+      UWBSTATUS_SUCCESS) {
+      NXPLOG_UCIHAL_D("Create uwb_close_complete_wait failed");
+      return UWBSTATUS_FAILED;
+    }
+
     phNxpUciHal_close_complete(UWBSTATUS_SUCCESS);
     /* Abort any pending read and write */
     status = phTmlUwb_ReadAbort();
@@ -1040,12 +1047,19 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
 
     phDal4Uwb_msgrelease(nxpucihal_ctrl.gDrvCfg.nClientId);
 
+    phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.uwb_close_complete_wait);
+    if (nxpucihal_ctrl.uwb_close_complete_wait.status != UWBSTATUS_SUCCESS) {
+      NXPLOG_UCIHAL_E("uwb_close_complete_wait semaphore timed out");
+    }
+
     memset(&nxpucihal_ctrl, 0x00, sizeof(nxpucihal_ctrl));
 
     NXPLOG_UCIHAL_D("phNxpUciHal_close - phOsalUwb_DeInit completed");
   }
 
   CONCURRENCY_UNLOCK();
+
+  phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.uwb_close_complete_wait);
 
   phNxpUciHal_cleanup_monitor();
 
