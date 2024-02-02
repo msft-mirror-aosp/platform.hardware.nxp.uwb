@@ -16,6 +16,7 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+//#define LOG_NDEBUG 0
 #define LOG_TAG "NxpUwbConf"
 
 #include <sys/stat.h>
@@ -230,10 +231,10 @@ bool CUwbNxpConfig::readConfig()
     /* open config file, read it into a buffer */
     if ((fd = fopen(name, "r")) == NULL)
     {
-        ALOGD_IF(uwb_debug_enabled, "%s Cannot open config file %s\n", __func__, name);
+        ALOGD("%s Cannot open config file %s\n", __func__, name);
         return false;
     }
-    ALOGD_IF(uwb_debug_enabled, "%s Opened config %s\n", __func__, name);
+    ALOGV("%s Opened config %s\n", __func__, name);
 
     for (;;) {
         c = fgetc(fd);
@@ -493,7 +494,7 @@ const uwbParam* CUwbNxpConfig::find(const char* p_name) const
 *******************************************************************************/
 void CUwbNxpConfig::dump() const
 {
-    ALOGD("Dump configuration file %s : %s, %zu entries", mCurrentFile.c_str(),
+    ALOGV("Dump configuration file %s : %s, %zu entries", mCurrentFile.c_str(),
         mValidFile ? "valid" : "invalid", m_map.size());
 
     for (auto &it : m_map) {
@@ -521,7 +522,6 @@ uwbParam::uwbParam(const uwbParam &param) :
     m_arrStrValue(param.m_arrStrValue),
     m_type(param.m_type)
 {
-    ALOGD_IF(uwb_debug_enabled, "uwbParam copy-constructor");
 }
 
 uwbParam::uwbParam(uwbParam &&param) :
@@ -562,22 +562,22 @@ uwbParam::uwbParam(vector<string> &&value) :
 void uwbParam::dump(const string &tag) const
 {
     if (m_type == type::NUMBER) {
-        ALOGD(" - %s = 0x%lx", tag.c_str(), m_numValue);
+        ALOGV(" - %s = 0x%lx", tag.c_str(), m_numValue);
     } else if (m_type == type::STRING) {
-        ALOGD(" - %s = %s", tag.c_str(), m_str_value.c_str());
+        ALOGV(" - %s = %s", tag.c_str(), m_str_value.c_str());
     } else if (m_type == type::BYTEARRAY) {
         stringstream ss_hex;
         ss_hex.fill('0');
         for (auto b : m_arrValue) {
             ss_hex << setw(2) << hex << (int)b << " ";
         }
-        ALOGD(" - %s = { %s}", tag.c_str(), ss_hex.str().c_str());
+        ALOGV(" - %s = { %s}", tag.c_str(), ss_hex.str().c_str());
     } else if (m_type == type::STRINGARRAY) {
         stringstream ss;
         for (auto s : m_arrStrValue) {
             ss << "\"" << s << "\", ";
         }
-        ALOGD(" - %s = { %s}", tag.c_str(), ss.str().c_str());
+        ALOGV(" - %s = { %s}", tag.c_str(), ss.str().c_str());
     }
 }
 /*******************************************************************************/
@@ -620,7 +620,7 @@ public:
                 const auto &region_str = it.first;
                 const auto &cc_set = it.second;
                 if (cc_set.find(code) != cc_set.end()) {
-                    ALOGD_IF(uwb_debug_enabled, "map country code %c%c --> %s",
+                    ALOGV("map country code %c%c --> %s",
                             country_code[0], country_code[1], region_str.c_str());
                     return region_str;
                 }
@@ -628,8 +628,12 @@ public:
         }
         return code;
     }
+    void reset() {
+        m_config.reset();
+        m_map.clear();
+    }
     void dump() {
-        ALOGD("Region mapping dump:");
+        ALOGV("Region mapping dump:");
         for (auto &entry : m_map) {
             const auto &region_str = entry.first;
             const auto &cc_set = entry.second;
@@ -637,7 +641,7 @@ public:
             for (const auto s : cc_set) {
                 ss << "\"" << s << "\", ";
             }
-            ALOGD("- %s = { %s}", region_str.c_str(), ss.str().c_str());
+            ALOGV("- %s = { %s}", region_str.c_str(), ss.str().c_str());
         }
     }
 private:
@@ -651,6 +655,7 @@ public:
     CascadeConfig();
 
     void init(const char *main_config);
+    void deinit();
     void setCountryCode(const char country_code[2]);
 
     const uwbParam* find(const char *name)  const;
@@ -672,6 +677,17 @@ private:
 
     // Region Code mapping
     RegionCodeMap mRegionMap;
+
+    void dump() {
+        mMainConfig.dump();
+        mUciConfig.dump();
+
+        for (const auto &config : mExtraConfig)
+            config.dump();
+
+        mCapsConfig.dump();
+        mRegionMap.dump();
+    }
 };
 
 CascadeConfig::CascadeConfig()
@@ -680,7 +696,7 @@ CascadeConfig::CascadeConfig()
 
 void CascadeConfig::init(const char *main_config)
 {
-    ALOGD("CascadeConfig initialize with %s", main_config);
+    ALOGV("CascadeConfig initialize with %s", main_config);
 
     // Main config file
     CUwbNxpConfig config(main_config);
@@ -718,7 +734,7 @@ void CascadeConfig::init(const char *main_config)
         if (!param)
             continue;
         CUwbNxpConfig config(param->str_value());
-        ALOGI("Extra calibration file %s : %svalid", param->str_value(), config.isValid() ? "" : "in");
+        ALOGD("Extra calibration file %s : %svalid", param->str_value(), config.isValid() ? "" : "in");
         if (config.isValid() || config.isCountrySpecific()) {
             mExtraConfig.emplace_back(move(config));
         }
@@ -742,7 +758,7 @@ void CascadeConfig::init(const char *main_config)
             string strPath(loc.get());
             strPath += country_code_config_name;
 
-            ALOGD_IF(uwb_debug_enabled, "Try to load %s", strPath.c_str());
+            ALOGV("Try to load %s", strPath.c_str());
 
             CUwbNxpConfig config(strPath.c_str());
 
@@ -771,27 +787,25 @@ void CascadeConfig::init(const char *main_config)
         mRegionMap.loadMapping(param->str_value());
     }
 
-    if (uwb_debug_enabled) {
-        ALOGD("CascadeConfig initialized");
+    ALOGD("CascadeConfig initialized");
 
-        mMainConfig.dump();
+    dump();
+}
 
-        for (const auto &config : mExtraConfig)
-            config.dump();
-
-        mCapsConfig.dump();
-
-        mRegionMap.dump();
-
-        mUciConfig.dump();
-    }
+void CascadeConfig::deinit()
+{
+    mMainConfig.reset();
+    mExtraConfig.clear();
+    mCapsConfig.reset();
+    mRegionMap.reset();
+    mUciConfig.reset();
 }
 
 void CascadeConfig::setCountryCode(const char country_code[2])
 {
     string strCountry = mRegionMap.xlateCountryCode(country_code);
 
-    ALOGD_IF(uwb_debug_enabled, "Apply country code %c%c --> %s\n", country_code[0], country_code[1], strCountry.c_str());
+    ALOGI("Apply country code %c%c --> %s\n", country_code[0], country_code[1], strCountry.c_str());
     for (auto &x : mExtraConfig) {
         if (x.isCountrySpecific()) {
             x.setCountry(strCountry);
@@ -871,6 +885,11 @@ static CascadeConfig gConfig;
 extern "C" void NxpConfig_Init(void)
 {
     gConfig.init(default_nxp_config_path);
+}
+
+extern "C" void NxpConfig_Deinit(void)
+{
+    gConfig.deinit();
 }
 
 extern "C" void NxpConfig_SetCountryCode(const char country_code[2])

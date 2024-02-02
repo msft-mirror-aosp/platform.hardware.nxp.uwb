@@ -28,6 +28,7 @@ extern "C"
 #endif
 
 void NxpConfig_Init(void);
+void NxpConfig_Deinit(void);
 void NxpConfig_SetCountryCode(const char country_code[2]);
 
 int NxpConfig_GetStr(const char* name, char* p_value, unsigned long len);
@@ -61,6 +62,7 @@ int NxpConfig_GetStrArrayVal(const char* name, int index, char* pValue, unsigned
 #define NAME_COUNTRY_CODE_CAP_FILE_LOCATION "COUNTRY_CODE_CAP_FILE_LOCATION"
 #define NAME_UWB_VENDOR_CAPABILITY "UWB_VENDOR_CAPABILITY"
 
+#define NAME_UWB_BINDING_LOCKING_ALLOWED "UWB_BINDING_LOCKING_ALLOWED"
 #define NAME_NXP_UWB_PROD_FW_FILENAME "NXP_UWB_PROD_FW_FILENAME"
 #define NAME_NXP_UWB_DEV_FW_FILENAME "NXP_UWB_DEV_FW_FILENAME"
 #define NAME_NXP_UWB_FW_FILENAME "NXP_UWB_FW_FILENAME"

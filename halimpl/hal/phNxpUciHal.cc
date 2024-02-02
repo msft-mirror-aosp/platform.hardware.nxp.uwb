@@ -48,7 +48,6 @@ phNxpUciHal_Control_t nxpucihal_ctrl;
 /* TML Context */
 extern phTmlUwb_Context_t* gpphTmlUwb_Context;
 
-bool uwb_debug_enabled = false;
 bool uwb_device_initialized = false;
 bool uwb_get_platform_id = false;
 uint32_t timeoutTimerId = 0;
@@ -1050,6 +1049,8 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
 
   phNxpUciHal_cleanup_monitor();
 
+  NxpConfig_Deinit();
+
   /* Return success always */
   return UWBSTATUS_SUCCESS;
 }
@@ -1496,6 +1497,14 @@ static tHAL_UWB_STATUS phNxpUciHal_parse_binding_status_ntf() {
   return status;
 }
 
+bool phNxpUciHal_getBindingConfig() {
+  uint32_t num = 0;
+  bool isBindingLockingAllowed = false;
+  NxpConfig_GetNum(NAME_UWB_BINDING_LOCKING_ALLOWED, &num, sizeof(num));
+  isBindingLockingAllowed = (bool)num;
+  return isBindingLockingAllowed;
+}
+
 /******************************************************************************
  * Function         phNxpUciHal_coreInitialization
  *
@@ -1600,13 +1609,16 @@ fwd_retry:
           }
           phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.uwb_binding_status_ntf_wait);
           if (nxpucihal_ctrl.uwb_binding_status_ntf_wait.status == UWBSTATUS_SUCCESS) {
-            NXPLOG_UCIHAL_D("binding status notification received");
-            if (nxpucihal_ctrl.fw_boot_mode == USER_FW_BOOT_MODE) {
-        status = phNxpUciHal_parse_binding_status_ntf();
-        if (status != UWBSTATUS_SUCCESS) {
-          NXPLOG_UCIHAL_E("binding failed with status %d", status);
-        }
-            }
+              NXPLOG_UCIHAL_D("binding status notification received");
+              if (nxpucihal_ctrl.fw_boot_mode == USER_FW_BOOT_MODE) {
+                 bool isBindingAllowed = phNxpUciHal_getBindingConfig();
+                 if (isBindingAllowed) {
+                    status = phNxpUciHal_parse_binding_status_ntf();
+                    if (status != UWBSTATUS_SUCCESS) {
+                       NXPLOG_UCIHAL_E("binding failed with status %d", status);
+                    }
+                 }
+              }
           } else {
             NXPLOG_UCIHAL_D("%s:binding status notification timed out",
                             __func__);
