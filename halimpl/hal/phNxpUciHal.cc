@@ -283,31 +283,17 @@ bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data)
 
   if (mt == UCI_MT_CMD) {
     if ((gid == UCI_GID_ANDROID) && (oid == UCI_MSG_ANDROID_SET_COUNTRY_CODE)) {
-        if (data_len < 6) {
-          return true;
-        }
-        char country_code[2];
+      char country_code[2];
+      if (data_len == 6) {
         country_code[0] = (char)p_data[4];
         country_code[1] = (char)p_data[5];
-
-        if ((country_code[0] == '0') && (country_code[1] == '0')) {
-          NXPLOG_UCIHAL_D("Country code %c%c is Invalid!", country_code[0], country_code[1]);
-        } else {
-          phNxpUciHal_handle_set_country_code(country_code);
-        }
-
-        // send country code response to upper layer
-        nxpucihal_ctrl.rx_data_len = 5;
-        static uint8_t rsp_data[5] = { 0x4c, 0x01, 0x00, 0x01 };
-        if (rt_set->uwb_enable) {
-          rsp_data[4] = 0x00; // Response Success
-        } else {
-          NXPLOG_UCIHAL_D("Country code uwb disable UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF!");
-          rsp_data[4] = UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF;
-        }
-        ret = true;
-        (*nxpucihal_ctrl.p_uwb_stack_data_cback)(nxpucihal_ctrl.rx_data_len,
-                                                 rsp_data);
+      } else {
+        NXPLOG_UCIHAL_E("Unexpected payload length for ANDROID_SET_COUNTRY_CODE, handle this with 00 country code");
+        country_code[0] = '0';
+        country_code[1] = '0';
+      }
+      phNxpUciHal_handle_set_country_code(country_code);
+      return true;
     } else if ((gid == UCI_GID_PROPRIETARY_0x0F) && (oid == SET_VENDOR_SET_CALIBRATION)) {
         if (p_data[UCI_MSG_HDR_SIZE + 1] ==
             VENDOR_CALIB_PARAM_TX_POWER_PER_ANTENNA) {
