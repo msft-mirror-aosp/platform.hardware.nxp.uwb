@@ -152,7 +152,6 @@ static inline void cpu_to_le_bytes(uint8_t *p, const T num)
 }
 
 /* Lock unlock helper macros */
-/* Lock unlock helper macros */
 #define REENTRANCE_LOCK()        \
   if (phNxpUciHal_get_monitor()) \
   pthread_mutex_lock(&phNxpUciHal_get_monitor()->reentrance_mutex)
@@ -165,17 +164,5 @@ static inline void cpu_to_le_bytes(uint8_t *p, const T num)
 #define CONCURRENCY_UNLOCK()     \
   if (phNxpUciHal_get_monitor()) \
   pthread_mutex_unlock(&phNxpUciHal_get_monitor()->concurrency_mutex)
-#define STREAM_TO_UINT8(u8, p) \
-  {                            \
-    u8 = (uint8_t)(*(p));      \
-    (p) += 1;                  \
-  }
-
-#define BE_STREAM_TO_UINT32(u32, p)                                    \
-  {                                                                    \
-    u32 = ((uint32_t)(*((p) + 3)) + ((uint32_t)(*((p) + 2)) << 8) +    \
-           ((uint32_t)(*((p) + 1)) << 16) + ((uint32_t)(*(p)) << 24)); \
-    (p) += 4;                                                          \
-  }
 
 #endif /* _PHNXPUCIHAL_UTILS_H_ */
