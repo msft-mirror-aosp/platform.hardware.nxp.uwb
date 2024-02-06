@@ -25,6 +25,7 @@
 /*
 ************************* Include Files ****************************************
 */
+#include <cctype>
 
 #include <phDal4Uwb_messageQueueLib.h>
 #include <phUwbCompId.h>
@@ -81,5 +82,11 @@ typedef struct phOsalUwb_TimerHandle {
   phOsalUwb_DeferredCallInfo_t tDeferredCallInfo;
   /* Variables for Structure Instance and Structure Ptr */
 } phOsalUwb_TimerHandle_t, *pphOsalUwb_TimerHandle_t;
+
+static inline bool is_valid_country_code(const char country_code[2])
+{
+  return std::isalnum(country_code[0]) && std::isalnum(country_code[1]) &&
+    !(country_code[0] == '0' && country_code[1] == '0');
+}
 
 #endif /*  PHOSALUWB_H  */
