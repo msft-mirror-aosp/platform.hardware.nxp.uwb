@@ -50,10 +50,10 @@ uint32_t hwResetTimer;
 static void hal_extns_write_rsp_timeout_cb(uint32_t TimerId, void *pContext);
 static void phNxpUciHal_send_dev_status_ntf();
 static bool phNxpUciHal_is_retry_required(uint8_t uci_octet0);
-static void phNxpUciHal_clear_thermal_runaway_status();
+static void phNxpUciHal_clear_thermal_error_status();
 static void phNxpUciHal_hw_reset_ntf_timeout_cb(uint32_t timerId,
                                                 void *pContext);
-tHAL_UWB_STATUS phNxpUciHal_handle_thermal_runaway_status();
+tHAL_UWB_STATUS phNxpUciHal_handle_thermal_error_status();
 
 /******************************************************************************
  * Function         phNxpUciHal_process_ext_cmd_rsp
@@ -580,7 +580,7 @@ static void phNxpUciHal_hw_reset_ntf_timeout_cb(uint32_t timerId,
 }
 
 /******************************************************************************
- * Function         phNxpUciHal_handle_thermal_runaway_status
+ * Function         phNxpUciHal_handle_thermal_error_status
  *
  * Description     This function handles the core generic error ntf with status
  *                 temperature exceeded(0x54)
@@ -589,7 +589,7 @@ static void phNxpUciHal_hw_reset_ntf_timeout_cb(uint32_t timerId,
  *                  update the acutual state of operation in arg pointer
  *
  ******************************************************************************/
-tHAL_UWB_STATUS phNxpUciHal_handle_thermal_runaway_status() {
+tHAL_UWB_STATUS phNxpUciHal_handle_thermal_error_status() {
 
  tHAL_UWB_STATUS status = UWBSTATUS_FAILED;
  extNxpucihal_ctrl.isThermalRecoveryOngoing = true;
@@ -621,14 +621,14 @@ tHAL_UWB_STATUS phNxpUciHal_handle_thermal_runaway_status() {
 }
 
 /******************************************************************************
- * Function         phNxpUciHal_clear_thermal_runaway_status
+ * Function         phNxpUciHal_clear_thermal_error_status
  *
- * Description     This function is used to clear thermal runaway context.
+ * Description     This function is used to clear thermal error context.
  *
  * Returns          void
  *
  ******************************************************************************/
-static void phNxpUciHal_clear_thermal_runaway_status() {
+static void phNxpUciHal_clear_thermal_error_status() {
  tHAL_UWB_STATUS status = UWBSTATUS_FAILED;
  nxpucihal_ctrl.isSkipPacket = 1;
  NXPLOG_UCIHAL_D("received hw reset ntf");
@@ -776,20 +776,20 @@ void phNxpUciHal_process_response() {
  oid = nxpucihal_ctrl.p_rx_data[1] & UCI_OID_MASK;
  pbf = (nxpucihal_ctrl.p_rx_data[0] & UCI_PBF_MASK) >> UCI_PBF_SHIFT;
 
- if ((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_GENERIC_ERROR_NTF) &&
-     (nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] ==
-      UCI_STATUS_THERMAL_RUNAWAY)) {
-      nxpucihal_ctrl.isSkipPacket = 1;
-      status = phNxpUciHal_handle_thermal_runaway_status();
-      if (status != UCI_STATUS_OK) {
-        NXPLOG_UCIHAL_E("phNxpUciHal_handle_thermal_runaway_status failed");
-      }
+ if (((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_GENERIC_ERROR_NTF)) &&
+   ((nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] == UCI_STATUS_THERMAL_RUNAWAY) ||
+   (nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] == UCI_STATUS_LOW_VBAT))) {
+   nxpucihal_ctrl.isSkipPacket = 1;
+   status = phNxpUciHal_handle_thermal_error_status();
+   if (status != UCI_STATUS_OK) {
+     NXPLOG_UCIHAL_E("phNxpUciHal_handle_thermal_error_status failed");
+   }
  }
 
  if ((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_DEVICE_STATUS_NTF) &&
      (nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] ==
       UCI_STATUS_HW_RESET)) {
-      phNxpUciHal_clear_thermal_runaway_status();
+      phNxpUciHal_clear_thermal_error_status();
  }
 
   // Remember CORE_DEVICE_INFO_RSP
