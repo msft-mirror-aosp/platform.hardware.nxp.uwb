@@ -767,7 +767,7 @@ void CascadeConfig::init(const char *main_config)
             if (version > max_version) {
                 foundCapFile = true;
                 pickedConfig = move(config);
-                strPickedPath = strPath;
+                strPickedPath = move(strPath);
                 max_version = version;
             }
         }
