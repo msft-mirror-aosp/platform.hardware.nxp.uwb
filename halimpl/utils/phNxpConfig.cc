@@ -45,6 +45,7 @@
 static const char default_nxp_config_path[] = "/vendor/etc/libuwb-nxp.conf";
 static const char country_code_config_name[] = "libuwb-countrycode.conf";
 static const char nxp_uci_config_file[] = "libuwb-uci.conf";
+static const char default_uci_config_path[] = "/vendor/etc/";
 
 static const char country_code_specifier[] = "<country>";
 static const char sku_specifier[] = "<sku>";
@@ -706,23 +707,17 @@ void CascadeConfig::init(const char *main_config)
     }
     mMainConfig = move(config);
 
-     {
+    {
         // UCI config file
-        const uwbParam *param = mMainConfig.find(NAME_NXP_UCI_CONFIG_PATH);
-        if (param) {
-            std::string uciConfigFilePath = param->str_value();
-            uciConfigFilePath += nxp_uci_config_file;
+        std::string uciConfigFilePath = default_uci_config_path;
+        uciConfigFilePath += nxp_uci_config_file;
 
-            CUwbNxpConfig config(uciConfigFilePath.c_str());
-            if (!config.isValid()) {
-                ALOGW("Failed to load uci config file:%s",
-                      uciConfigFilePath.c_str());
-            } else {
-                mUciConfig = move(config);
-            }
+        CUwbNxpConfig config(uciConfigFilePath.c_str());
+        if (!config.isValid()) {
+            ALOGW("Failed to load uci config file:%s",
+                    uciConfigFilePath.c_str());
         } else {
-            ALOGI("NAME_NXP_UCI_CONFIG_PATH param not found in %s",
-                  main_config);
+            mUciConfig = move(config);
         }
     }
 

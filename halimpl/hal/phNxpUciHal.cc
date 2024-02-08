@@ -1182,7 +1182,7 @@ void parseAntennaConfig(uint16_t dataLength, const uint8_t *data) {
  * Returns          success/Failure
  *
  ******************************************************************************/
-bool phNxpUciHal_configureLowPowerMode() {
+static bool phNxpUciHal_configureLowPowerMode() {
   uint8_t configValue;
   unsigned long num = 1;
   bool isSendSuccess = false;
