@@ -1201,8 +1201,12 @@ static void extcal_do_tx_base_band(void)
   long retlen = 0;
   tHAL_UWB_STATUS ret;
 
-  NxpConfig_GetNum("cal.ddfs_enable", &ddfs_enable, 1);
-  NxpConfig_GetNum("cal.dc_suppress", &dc_suppress, 1);
+  if (NxpConfig_GetNum("cal.ddfs_enable", &ddfs_enable, 1)) {
+    NXPLOG_UCIHAL_D("Apply TX_BASE_BAND_CONTROL: ddfs_enable=%u", ddfs_enable);
+  }
+  if (NxpConfig_GetNum("cal.dc_suppress", &dc_suppress, 1)) {
+    NXPLOG_UCIHAL_D("Apply TX_BASE_BAND_CONTROL: dc_suppress=%u", dc_suppress);
+  }
 
   // DDFS_TONE_CONFIG
   if (ddfs_enable) {
