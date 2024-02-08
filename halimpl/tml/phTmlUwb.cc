@@ -427,7 +427,7 @@ static void phTmlUwb_CleanUp(void) {
     return;
   }
   if (NULL != gpphTmlUwb_Context->pDevHandle) {
-    (void)phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_SetPower, 0);
+    (void)phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_ControlCode_t::SetPower, 0);
     gpphTmlUwb_Context->bThreadDone = 0;
   }
   sem_destroy(&gpphTmlUwb_Context->rxSemaphore);
@@ -459,7 +459,7 @@ static void phTmlUwb_CleanUp(void) {
 void phTmlUwb_eSE_Reset(void) {
   int status;
   if (NULL != gpphTmlUwb_Context->pDevHandle) {
-    status = phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_EseReset, 0);
+    status = phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_ControlCode_t::EseReset, 0);
     NXPLOG_TML_E("se reset status received %d",status);
   }
 }
@@ -487,7 +487,7 @@ tHAL_UWB_STATUS phTmlUwb_Shutdown(void) {
     /* Reset thread variable to terminate the thread */
     gpphTmlUwb_Context->bThreadDone = 0;
     /* Clear All the resources allocated during initialization */
-    phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_SetPower, ABORT_READ_PENDING);
+    phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_ControlCode_t::SetPower, ABORT_READ_PENDING);
     sem_post(&gpphTmlUwb_Context->rxSemaphore);
     usleep(1000);
     sem_post(&gpphTmlUwb_Context->txSemaphore);
@@ -874,9 +874,9 @@ static int phTmlUwb_ReadAbortInit(void) {
 *******************************************************************************/
 void phTmlUwb_Chip_Reset(void){
   if (NULL != gpphTmlUwb_Context->pDevHandle) {
-    phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_SetPower, 0);
+    phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_ControlCode_t::SetPower, 0);
     usleep(1000);
-    phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_SetPower, 1);
+    phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_ControlCode_t::SetPower, 1);
   }
 }
 
@@ -901,7 +901,7 @@ void phTmlUwb_Spi_Reset(void) {
   absTimeout.tv_sec += 1; /*1 second timeout*/
   pthread_mutex_lock(&gpphTmlUwb_Context->read_abort_lock);
   gpphTmlUwb_Context->is_read_abort = true;
-  phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_SetPower, ABORT_READ_PENDING);
+  phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_ControlCode_t::SetPower, ABORT_READ_PENDING);
   phTmlUwb_Chip_Reset();
   ret = pthread_cond_timedwait(&gpphTmlUwb_Context->read_abort_condition,
                                  &gpphTmlUwb_Context->read_abort_lock,
@@ -914,4 +914,17 @@ void phTmlUwb_Spi_Reset(void) {
   pthread_mutex_unlock(&gpphTmlUwb_Context->read_abort_lock);
   /*Abort the reader thread if client thread shall enable read again in case if valid packet received and notified to upper layer*/
   phTmlUwb_ReadAbort();
+}
+
+void phTmlUwb_Suspend(void)
+{
+  NXPLOG_TML_D("Suspend");
+  phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_ControlCode_t::SetPower, PWR_SUSPEND);
+
+}
+
+void phTmlUwb_Resume(void)
+{
+  NXPLOG_TML_D("Resume");
+  phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_ControlCode_t::SetPower, PWR_RESUME);
 }
