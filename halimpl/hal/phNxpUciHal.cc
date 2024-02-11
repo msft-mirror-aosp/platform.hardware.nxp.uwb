@@ -66,9 +66,6 @@ static void phNxpUciHal_open_complete(tHAL_UWB_STATUS status);
 static void phNxpUciHal_write_complete(void* pContext,
                                        phTmlUwb_TransactInfo_t* pInfo);
 static void phNxpUciHal_close_complete(tHAL_UWB_STATUS status);
-static void phNxpUciHal_kill_client_thread(
-    phNxpUciHal_Control_t* p_nxpucihal_ctrl);
-static void* phNxpUciHal_client_thread(void* arg);
 extern int phNxpUciHal_fw_download();
 static void phNxpUciHal_getVersionInfo();
 
@@ -153,18 +150,17 @@ static void phNxpUciHal_rx_handler_destroy(void)
  * Returns          void
  *
  ******************************************************************************/
-static void* phNxpUciHal_client_thread(void* arg) {
-  phNxpUciHal_Control_t* p_nxpucihal_ctrl = (phNxpUciHal_Control_t*)arg;
-
+static void phNxpUciHal_client_thread(phNxpUciHal_Control_t* p_nxpucihal_ctrl)
+{
   NXPLOG_UCIHAL_D("thread started");
 
-  p_nxpucihal_ctrl->thread_running = 1;
+  bool thread_running = true;
 
-  while (p_nxpucihal_ctrl->thread_running == 1) {
+  while (thread_running) {
     /* Fetch next message from the UWB stack message queue */
     auto msg = p_nxpucihal_ctrl->gDrvCfg.pClientMq->recv();
 
-    if (p_nxpucihal_ctrl->thread_running == 0) {
+    if (!thread_running) {
       break;
     }
 
@@ -196,9 +192,8 @@ static void* phNxpUciHal_client_thread(void* arg) {
           /* Send the event */
           (*nxpucihal_ctrl.p_uwb_stack_cback)(HAL_UWB_CLOSE_CPLT_EVT,
                                               HAL_UWB_STATUS_OK);
-          phNxpUciHal_kill_client_thread(&nxpucihal_ctrl);
-          SEM_POST(&(nxpucihal_ctrl.uwb_close_complete_wait));
         }
+        thread_running = false;
         REENTRANCE_UNLOCK();
         break;
       }
@@ -228,8 +223,6 @@ static void* phNxpUciHal_client_thread(void* arg) {
   }
 
   NXPLOG_UCIHAL_D("NxpUciHal thread stopped");
-  pthread_exit(NULL);
-  return NULL;
 }
 
 bool isCountryCodeMapCreated = false;
@@ -356,25 +349,6 @@ bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data)
   }
   return ret;
 }
-/******************************************************************************
- * Function         phNxpUciHal_kill_client_thread
- *
- * Description      This function safely kill the client thread and clean all
- *                  resources.
- *
- * Returns          void.
- *
- ******************************************************************************/
-static void phNxpUciHal_kill_client_thread(
-    phNxpUciHal_Control_t* p_nxpucihal_ctrl) {
-  NXPLOG_UCIHAL_D("Terminating phNxpUciHal client thread...");
-
-  p_nxpucihal_ctrl->p_uwb_stack_cback = NULL;
-  p_nxpucihal_ctrl->p_uwb_stack_data_cback = NULL;
-  p_nxpucihal_ctrl->thread_running = 0;
-
-  return;
-}
 
 /******************************************************************************
  * Function         phNxpUciHal_open
@@ -394,7 +368,6 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_c
 {
   static const char uwb_dev_node[256] = "/dev/srxxx";
   tHAL_UWB_STATUS wConfigStatus = UWBSTATUS_SUCCESS;
-  pthread_attr_t attr;
 
   if (nxpucihal_ctrl.halStatus == HAL_STATUS_OPEN) {
     NXPLOG_UCIHAL_E("phNxpUciHal_open already open");
@@ -435,30 +408,11 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_c
   }
 
   /* Create the client thread */
-  pthread_attr_init(&attr);
-  pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-  if (pthread_create(&nxpucihal_ctrl.client_thread, &attr,
-                     phNxpUciHal_client_thread, &nxpucihal_ctrl) != 0) {
-    NXPLOG_UCIHAL_E("pthread_create failed");
-    wConfigStatus = phTmlUwb_Shutdown();
-    goto clean_and_return;
-  }
+  nxpucihal_ctrl.client_thread =
+    std::thread{ &phNxpUciHal_client_thread, &nxpucihal_ctrl };
 
   CONCURRENCY_UNLOCK();
 
-#if 0
-  /* call read pending */
-  status = phTmlUwb_Read(
-      nxpucihal_ctrl.p_cmd_data, UCI_MAX_DATA_LEN,
-      (pphTmlUwb_TransactCompletionCb_t)&phNxpUciHal_read_complete, NULL);
-  if (status != UWBSTATUS_PENDING) {
-    NXPLOG_UCIHAL_E("TML Read status error status = %x", status);
-    wConfigStatus = phTmlUwb_Shutdown();
-    wConfigStatus = UWBSTATUS_FAILED;
-    goto clean_and_return;
-  }
-#endif
-  pthread_attr_destroy(&attr);
   /* Call open complete */
   phNxpUciHal_open_complete(wConfigStatus);
   return wConfigStatus;
@@ -473,7 +427,6 @@ clean_and_return:
   nxpucihal_ctrl.p_uwb_stack_data_cback = NULL;
   phNxpUciHal_cleanup_monitor();
   nxpucihal_ctrl.halStatus = HAL_STATUS_CLOSE;
-  pthread_attr_destroy(&attr);
   return wConfigStatus;
 }
 
@@ -952,13 +905,10 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
   nxpucihal_ctrl.halStatus = HAL_STATUS_CLOSE;
 
   if (NULL != gpphTmlUwb_Context->pDevHandle) {
-    if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.uwb_close_complete_wait, NULL) !=
-      UWBSTATUS_SUCCESS) {
-      NXPLOG_UCIHAL_D("Create uwb_close_complete_wait failed");
-      return UWBSTATUS_FAILED;
-    }
-
+    NXPLOG_UCIHAL_D("Terminating phNxpUciHal client thread...");
     phNxpUciHal_close_complete(UWBSTATUS_SUCCESS);
+    nxpucihal_ctrl.client_thread.join();
+
     /* Abort any pending read and write */
     status = phTmlUwb_ReadAbort();
     status = phTmlUwb_WriteAbort();
@@ -967,21 +917,12 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
 
     status = phTmlUwb_Shutdown();
 
-    nxpucihal_ctrl.gDrvCfg.pClientMq->clear();
-
-    phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.uwb_close_complete_wait);
-    if (nxpucihal_ctrl.uwb_close_complete_wait.status != UWBSTATUS_SUCCESS) {
-      NXPLOG_UCIHAL_E("uwb_close_complete_wait semaphore timed out");
-    }
-
     phNxpUciHal_rx_handler_destroy();
 
     NXPLOG_UCIHAL_D("phNxpUciHal_close - phOsalUwb_DeInit completed");
   }
 
   CONCURRENCY_UNLOCK();
-
-  phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.uwb_close_complete_wait);
 
   phNxpUciHal_cleanup_monitor();
 
