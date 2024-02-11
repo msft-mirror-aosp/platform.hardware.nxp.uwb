@@ -797,6 +797,7 @@ void CascadeConfig::deinit()
     mCapsConfig.reset();
     mRegionMap.reset();
     mUciConfig.reset();
+    mCurRegionCode.clear();
 }
 
 bool CascadeConfig::setCountryCode(const char country_code[2])
