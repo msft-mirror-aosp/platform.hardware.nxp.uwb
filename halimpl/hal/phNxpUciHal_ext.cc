@@ -1297,40 +1297,58 @@ extern bool isCountryCodeMapCreated;
  ******************************************************************************/
 void phNxpUciHal_handle_set_country_code(const char country_code[2])
 {
+  //
+  // TODO: stop all active session which are affected by new country code
+  // TODO: delay per-country calibrations when there's active sessions (or juststop them?)
+  //
   NXPLOG_UCIHAL_D("Apply country code %c%c", country_code[0], country_code[1]);
 
-  NxpConfig_SetCountryCode(country_code);
+  phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
 
-  // Load 'COUNTRY_CODE_CAPS' and apply it to 'conf_map'
-  uint8_t cc_caps[UCI_MAX_DATA_LEN];
-  long retlen = 0;
-  if (NxpConfig_GetByteArray(NAME_NXP_UWB_COUNTRY_CODE_CAPS, cc_caps, sizeof(cc_caps), &retlen) && retlen) {
-    NXPLOG_UCIHAL_D("COUNTRY_CODE_CAPS is provided.");
-    isCountryCodeMapCreated = false;
+  if ((country_code[0] == '0') && (country_code[1] == '0')) {
+    NXPLOG_UCIHAL_D("Country code %c%c is Invalid, disable UWB", country_code[0], country_code[1]);
+    rt_set->uwb_enable = false;
+  } else if (NxpConfig_SetCountryCode(country_code)) {
+    // Load 'COUNTRY_CODE_CAPS' and apply it to 'conf_map'
+    uint8_t cc_caps[UCI_MAX_DATA_LEN];
+    long retlen = 0;
+    if (NxpConfig_GetByteArray(NAME_NXP_UWB_COUNTRY_CODE_CAPS, cc_caps, sizeof(cc_caps), &retlen) && retlen) {
+      NXPLOG_UCIHAL_D("COUNTRY_CODE_CAPS is provided.");
+      isCountryCodeMapCreated = false;
 
-    uint32_t cc_caps_len = retlen;
-    uint8_t cc_data[UCI_MAX_DATA_LEN];
-    uint32_t cc_data_len = sizeof(cc_data);
-    phNxpUciHal_applyCountryCaps(country_code, cc_caps, cc_caps_len, cc_data, &cc_data_len);
+      uint32_t cc_caps_len = retlen;
+      uint8_t cc_data[UCI_MAX_DATA_LEN];
+      uint32_t cc_data_len = sizeof(cc_data);
+      phNxpUciHal_applyCountryCaps(country_code, cc_caps, cc_caps_len, cc_data, &cc_data_len);
 
-    if (get_conf_map(cc_data, cc_data_len)) {
-      isCountryCodeMapCreated = true;
-      NXPLOG_UCIHAL_D("Country code caps loaded");
+      if (get_conf_map(cc_data, cc_data_len)) {
+        isCountryCodeMapCreated = true;
+        NXPLOG_UCIHAL_D("Country code caps loaded");
+      }
+    } else {
+      NXPLOG_UCIHAL_D("COUNTRY_CODE_CAPS was not provided.");
     }
+
+    // per-country extra calibrations are only triggered when 'COUNTRY_CODE_CAPS' is not provided
+    if (!isCountryCodeMapCreated) {
+      NXPLOG_UCIHAL_D("Apply per-country extra calibrations");
+      extcal_do_restrictions();
+
+      if (rt_set->uwb_enable) {
+        extcal_do_tx_power();
+        extcal_do_tx_pulse_shape();
+        extcal_do_tx_base_band();
+      }
+    }
+  }
+
+  // send country code response to upper layer
+  nxpucihal_ctrl.rx_data_len = 5;
+  static uint8_t rsp_data[5] = { 0x4c, 0x01, 0x00, 0x01 };
+  if (rt_set->uwb_enable) {
+    rsp_data[4] = UWBSTATUS_SUCCESS;
   } else {
-    NXPLOG_UCIHAL_D("COUNTRY_CODE_CAPS was not provided.");
+    rsp_data[4] = UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF;
   }
-
-  // per-country extra calibrations are only triggered when 'COUNTRY_CODE_CAPS' is not provided
-  if (!isCountryCodeMapCreated) {
-    NXPLOG_UCIHAL_D("Apply per-country extra calibrations");
-    extcal_do_restrictions();
-
-    phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
-    if (rt_set->uwb_enable) {
-      extcal_do_tx_power();
-      extcal_do_tx_pulse_shape();
-      extcal_do_tx_base_band();
-    }
-  }
+  (*nxpucihal_ctrl.p_uwb_stack_data_cback)(nxpucihal_ctrl.rx_data_len, rsp_data);
 }
