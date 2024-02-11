@@ -22,14 +22,9 @@
 
 #include <stdint.h>
 
-#ifdef __cplusplus
-extern "C"
-{
-#endif
-
 void NxpConfig_Init(void);
 void NxpConfig_Deinit(void);
-void NxpConfig_SetCountryCode(const char country_code[2]);
+bool NxpConfig_SetCountryCode(const char country_code[2]);
 
 int NxpConfig_GetStr(const char* name, char* p_value, unsigned long len);
 int NxpConfig_GetNum(const char* name, void* p_value, unsigned long len);
@@ -37,10 +32,6 @@ int NxpConfig_GetByteArray(const char* name, uint8_t* pValue, long bufflen, long
 
 int NxpConfig_GetStrArrayLen(const char* name, unsigned long *pLen);
 int NxpConfig_GetStrArrayVal(const char* name, int index, char* pValue, unsigned long len);
-
-#ifdef __cplusplus
-};
-#endif
 
 /* libuwb-nxp.conf parameters */
 #define NAME_UWB_BOARD_VARIANT_CONFIG "UWB_BOARD_VARIANT_CONFIG"
