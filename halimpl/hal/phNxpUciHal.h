@@ -176,9 +176,6 @@ typedef struct phNxpUciHal_Control {
   uwb_stack_callback_t* p_uwb_stack_cback;
   uwb_stack_data_callback_t* p_uwb_stack_data_cback;
 
-  /* HAL open status */
-  bool_t hal_open_status;
-
   /* HAL extensions */
   uint8_t hal_ext_enabled;
   bool_t hal_parse_enabled;

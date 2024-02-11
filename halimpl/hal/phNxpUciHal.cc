@@ -62,10 +62,8 @@ bool isAntennaRxPairDefined = false;
 int numberOfAntennaPairs = 0;
 
 /**************** local methods used in this file only ************************/
-static void phNxpUciHal_open_complete(tHAL_UWB_STATUS status);
 static void phNxpUciHal_write_complete(void* pContext,
                                        phTmlUwb_TransactInfo_t* pInfo);
-static void phNxpUciHal_close_complete(tHAL_UWB_STATUS status);
 extern int phNxpUciHal_fw_download();
 static void phNxpUciHal_getVersionInfo();
 
@@ -411,11 +409,14 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_c
   nxpucihal_ctrl.client_thread =
     std::thread{ &phNxpUciHal_client_thread, &nxpucihal_ctrl };
 
+  nxpucihal_ctrl.halStatus = HAL_STATUS_OPEN;
+
   CONCURRENCY_UNLOCK();
 
   /* Call open complete */
-  phNxpUciHal_open_complete(wConfigStatus);
-  return wConfigStatus;
+  phTmlUwb_DeferredCall(std::make_shared<phLibUwb_Message>(UCI_HAL_OPEN_CPLT_MSG));
+
+  return UWBSTATUS_SUCCESS;
 
 clean_and_return:
   CONCURRENCY_UNLOCK();
@@ -428,26 +429,6 @@ clean_and_return:
   phNxpUciHal_cleanup_monitor();
   nxpucihal_ctrl.halStatus = HAL_STATUS_CLOSE;
   return wConfigStatus;
-}
-
-/******************************************************************************
- * Function         phNxpUciHal_open_complete
- *
- * Description      This function inform the status of phNxpUciHal_open
- *                  function to libuwb-uci.
- *
- * Returns          void.
- *
- ******************************************************************************/
-static void phNxpUciHal_open_complete(tHAL_UWB_STATUS status) {
-  auto msg = std::make_shared<phLibUwb_Message>(UCI_HAL_ERROR_MSG);
-
-  if (status == UWBSTATUS_SUCCESS) {
-    msg->eMsgType = UCI_HAL_OPEN_CPLT_MSG;
-    nxpucihal_ctrl.hal_open_status = true;
-    nxpucihal_ctrl.halStatus = HAL_STATUS_OPEN;
-  }
-  phTmlUwb_DeferredCall(msg);
 }
 
 /******************************************************************************
@@ -906,7 +887,7 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
 
   if (NULL != gpphTmlUwb_Context->pDevHandle) {
     NXPLOG_UCIHAL_D("Terminating phNxpUciHal client thread...");
-    phNxpUciHal_close_complete(UWBSTATUS_SUCCESS);
+    phTmlUwb_DeferredCall(std::make_shared<phLibUwb_Message>(UCI_HAL_CLOSE_CPLT_MSG));
     nxpucihal_ctrl.client_thread.join();
 
     /* Abort any pending read and write */
@@ -931,37 +912,7 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
   /* Return success always */
   return UWBSTATUS_SUCCESS;
 }
-/******************************************************************************
- * Function         phNxpUciHal_close_complete
- *
- * Description      This function inform libuwb-uci about result of
- *                  phNxpUciHal_close.
- *
- * Returns          void.
- *
- ******************************************************************************/
-void phNxpUciHal_close_complete(tHAL_UWB_STATUS status)
-{
-  auto msg = std::make_shared<phLibUwb_Message>(status == UWBSTATUS_SUCCESS ?
-    UCI_HAL_CLOSE_CPLT_MSG : UCI_HAL_ERROR_MSG);
-  phTmlUwb_DeferredCall(msg);
-}
 
-/******************************************************************************
- * Function         phNxpUciHal_init_complete
- *
- * Description      This function inform libuwb-uci about result of
- *                  phNxpUciHal_coreInitialization.
- *
- * Returns          void.
- *
- ******************************************************************************/
-void phNxpUciHal_init_complete(tHAL_UWB_STATUS status)
-{
-  auto msg = std::make_shared<phLibUwb_Message>(status == UWBSTATUS_SUCCESS ?
-    UCI_HAL_INIT_CPLT_MSG : UCI_HAL_ERROR_MSG);
-  phTmlUwb_DeferredCall(msg);
-}
 
 /******************************************************************************
  * Function         phNxpUciHal_sendGetCoreDeviceInfo
@@ -1530,11 +1481,12 @@ tHAL_UWB_STATUS phNxpUciHal_coreInitialization()
 {
   tHAL_UWB_STATUS status = phNxpUciHal_init_hw();
   if (status != UWBSTATUS_SUCCESS) {
-    phNxpUciHal_init_complete(UWBSTATUS_FAILED);
+    phTmlUwb_DeferredCall(std::make_shared<phLibUwb_Message>(UCI_HAL_ERROR_MSG));
     return status;
   }
 
-  phNxpUciHal_init_complete(UWBSTATUS_SUCCESS);
+  // report to upper-layer
+  phTmlUwb_DeferredCall(std::make_shared<phLibUwb_Message>(UCI_HAL_INIT_CPLT_MSG));
 
   if (nxpucihal_ctrl.p_uwb_stack_data_cback != NULL) {
     uint8_t dev_ready_ntf[] = {0x60, 0x01, 0x00, 0x01, 0x01};
