@@ -37,6 +37,7 @@
 #include "hal_nxpuwb.h"
 #include "phNxpConfig.h"
 #include "phNxpUciHal_utils.h"
+#include "sessionTrack.h"
 
 using namespace std;
 using android::base::StringPrintf;
@@ -263,6 +264,8 @@ bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data)
         }
     } else if ((gid == UCI_GID_SESSION_MANAGE) && (oid == UCI_MSG_SESSION_SET_APP_CONFIG)) {
       return phNxpUciHal_handle_set_app_config(&nxpucihal_ctrl.cmd_len, nxpucihal_ctrl.p_cmd_data);
+    } else if ((gid == UCI_GID_SESSION_MANAGE) && (oid == UCI_MSG_SESSION_STATE_INIT)) {
+      SessionTrack_onSessionInit(nxpucihal_ctrl.cmd_len, nxpucihal_ctrl.p_cmd_data);
     }
   } else if (mt == UCI_MT_RSP) {
     if ((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_GET_CAPS_INFO)) {
@@ -448,6 +451,8 @@ tHAL_UWB_STATUS phNxpUciHal_write(uint16_t data_len, const uint8_t* p_data) {
     return UWBSTATUS_FAILED;
   }
   uint16_t len = 0;
+
+  SessionTrack_keepAlive();
 
   CONCURRENCY_LOCK();
   phNxpUciHal_process_ext_cmd_rsp(data_len, p_data, &len);
@@ -882,6 +887,8 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
   uwb_device_initialized = false;
 
   CONCURRENCY_LOCK();
+
+  SessionTrack_deinit();
 
   nxpucihal_ctrl.halStatus = HAL_STATUS_CLOSE;
 
@@ -1484,6 +1491,8 @@ tHAL_UWB_STATUS phNxpUciHal_coreInitialization()
     phTmlUwb_DeferredCall(std::make_shared<phLibUwb_Message>(UCI_HAL_ERROR_MSG));
     return status;
   }
+
+  SessionTrack_init();
 
   // report to upper-layer
   phTmlUwb_DeferredCall(std::make_shared<phLibUwb_Message>(UCI_HAL_INIT_CPLT_MSG));
