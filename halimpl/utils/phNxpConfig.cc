@@ -657,7 +657,7 @@ public:
 
     void init(const char *main_config);
     void deinit();
-    void setCountryCode(const char country_code[2]);
+    bool setCountryCode(const char country_code[2]);
 
     const uwbParam* find(const char *name)  const;
     bool    getValue(const char* name, char* pValue, size_t len) const;
@@ -678,6 +678,9 @@ private:
 
     // Region Code mapping
     RegionCodeMap mRegionMap;
+
+    // Current region code
+    string mCurRegionCode;
 
     void dump() {
         mMainConfig.dump();
@@ -796,17 +799,25 @@ void CascadeConfig::deinit()
     mUciConfig.reset();
 }
 
-void CascadeConfig::setCountryCode(const char country_code[2])
+bool CascadeConfig::setCountryCode(const char country_code[2])
 {
-    string strCountry = mRegionMap.xlateCountryCode(country_code);
+    string strRegion= mRegionMap.xlateCountryCode(country_code);
 
-    ALOGI("Apply country code %c%c --> %s\n", country_code[0], country_code[1], strCountry.c_str());
+    if (strRegion == mCurRegionCode) {
+        ALOGI("Same region code(%c%c --> %s), per-country configuration not updated.",
+              country_code[0], country_code[1], strRegion.c_str());
+        return false;
+    }
+
+    ALOGI("Apply country code %c%c --> %s\n", country_code[0], country_code[1], strRegion.c_str());
+    mCurRegionCode = strRegion;
     for (auto &x : mExtraConfig) {
         if (x.isCountrySpecific()) {
-            x.setCountry(strCountry);
+            x.setCountry(mCurRegionCode);
             x.dump();
         }
     }
+    return true;
 }
 
 const uwbParam* CascadeConfig::find(const char *name) const
@@ -877,19 +888,21 @@ bool CascadeConfig::getValue(const char* name, unsigned long& rValue) const
 
 static CascadeConfig gConfig;
 
-extern "C" void NxpConfig_Init(void)
+void NxpConfig_Init(void)
 {
     gConfig.init(default_nxp_config_path);
 }
 
-extern "C" void NxpConfig_Deinit(void)
+void NxpConfig_Deinit(void)
 {
     gConfig.deinit();
 }
 
-extern "C" void NxpConfig_SetCountryCode(const char country_code[2])
+// return true if new per-country configuration file was load.
+//        false if it can stay at the current configuration.
+bool NxpConfig_SetCountryCode(const char country_code[2])
 {
-    gConfig.setCountryCode(country_code);
+    return gConfig.setCountryCode(country_code);
 }
 
 /*******************************************************************************
@@ -901,7 +914,7 @@ extern "C" void NxpConfig_SetCountryCode(const char country_code[2])
 ** Returns:     True if found, otherwise False.
 **
 *******************************************************************************/
-extern "C" int NxpConfig_GetStr(const char* name, char* pValue, unsigned long len)
+int NxpConfig_GetStr(const char* name, char* pValue, unsigned long len)
 {
     return gConfig.getValue(name, pValue, len);
 }
@@ -922,7 +935,7 @@ extern "C" int NxpConfig_GetStr(const char* name, char* pValue, unsigned long le
 ** Returns:     TRUE[1] if config param name is found in the config file, else FALSE[0]
 **
 *******************************************************************************/
-extern "C" int NxpConfig_GetByteArray(const char* name, uint8_t* pValue, long bufflen, long *len)
+int NxpConfig_GetByteArray(const char* name, uint8_t* pValue, long bufflen, long *len)
 {
     return gConfig.getValue(name, pValue, bufflen,len);
 }
@@ -936,7 +949,7 @@ extern "C" int NxpConfig_GetByteArray(const char* name, uint8_t* pValue, long bu
 ** Returns:     true, if successful
 **
 *******************************************************************************/
-extern "C" int NxpConfig_GetNum(const char* name, void* pValue, unsigned long len)
+int NxpConfig_GetNum(const char* name, void* pValue, unsigned long len)
 {
     if (pValue == NULL){
         return false;
