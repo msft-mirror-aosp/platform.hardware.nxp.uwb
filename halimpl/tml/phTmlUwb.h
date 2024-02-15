@@ -116,7 +116,7 @@ typedef struct phTmlUwb_Context {
   uintptr_t dwCallbackThreadId; /* Thread ID to which message to be posted */
   uint8_t bEnableCrc;           /*Flag to validate/not CRC for input buffer */
   sem_t rxSemaphore;
-  sem_t txSemaphore;      /* Lock/Aquire txRx Semaphore */
+  sem_t txSemaphore;      /* Lock/Acquire txRx Semaphore */
   sem_t postMsgSemaphore; /* Semaphore to post message atomically by Reader &
                              writer thread */
   pthread_cond_t wait_busy_condition; /*Condition to wait reader thread*/
@@ -152,7 +152,7 @@ typedef struct phTmlUwb_Config {
    *
    * e.g. On Linux based systems this would be /dev/SR100
    */
-  int8_t* pDevName;
+  const char* pDevName;
   /* Callback Thread ID
    *
    * This is the thread ID on which the Reader & Writer thread posts message. */
