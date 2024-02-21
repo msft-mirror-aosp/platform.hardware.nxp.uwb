@@ -22,7 +22,10 @@
 #include <semaphore.h>
 #include <time.h>
 
+#include <cstring>
+#include <bit>
 #include <map>
+#include <type_traits>
 #include <vector>
 
 #include "phUwbStatus.h"
@@ -97,6 +100,37 @@ double phNxpUciHal_byteArrayToDouble(const uint8_t* p_data);
 bool get_input_map(const uint8_t *i_data, uint16_t iData_len,
                    uint8_t startIndex);
 bool get_conf_map(uint8_t *c_data, uint16_t cData_len);
+
+template <typename T>
+static inline T le_bytes_to_cpu(const uint8_t *p)
+{
+  static_assert(std::is_integral_v<T>, "bytes_to_cpu must be used with an integral type");
+  T val = 0;
+  if (std::endian::native == std::endian::little) {
+    std::memcpy(&val, p, sizeof(T));
+  } else {
+    size_t i = sizeof(T);
+    while (i--) {
+      val = (val << 8) | p[i];
+    }
+  }
+  return val;
+}
+
+template <typename T>
+static inline void cpu_to_le_bytes(uint8_t *p, const T num)
+{
+  static_assert(std::is_integral_v<T>, "cpu_to_le_bytes must be used with an integral type");
+  T val = num;
+  if (std::endian::native == std::endian::little) {
+    std::memcpy(p, &val, sizeof(T));
+  } else {
+    for (size_t i = 0; i < sizeof(T); i++) {
+      p[i] = val & 0xff;
+      val = val >> 8;
+    }
+  }
+}
 
 /* Lock unlock helper macros */
 /* Lock unlock helper macros */
