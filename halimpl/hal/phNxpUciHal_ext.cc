@@ -50,10 +50,10 @@ uint32_t hwResetTimer;
 static void hal_extns_write_rsp_timeout_cb(uint32_t TimerId, void *pContext);
 static void phNxpUciHal_send_dev_status_ntf();
 static bool phNxpUciHal_is_retry_required(uint8_t uci_octet0);
-static void phNxpUciHal_clear_thermal_runaway_status();
+static void phNxpUciHal_clear_thermal_error_status();
 static void phNxpUciHal_hw_reset_ntf_timeout_cb(uint32_t timerId,
                                                 void *pContext);
-tHAL_UWB_STATUS phNxpUciHal_handle_thermal_runaway_status();
+tHAL_UWB_STATUS phNxpUciHal_handle_thermal_error_status();
 
 /******************************************************************************
  * Function         phNxpUciHal_process_ext_cmd_rsp
@@ -390,7 +390,7 @@ static void phNxpUciHal_applyCountryCaps(const char country_code[2],
         break;
       case TX_POWER_TAG:
         if (len == 2) {
-          rt_set->tx_power_offset = (short)((cc_resp[idx + 0] << RMS_TX_POWER_SHIFT) | (cc_resp[idx + 1]));
+          rt_set->tx_power_offset = (short)((cc_resp[idx + 0]) | (((cc_resp[idx + 1]) << RMS_TX_POWER_SHIFT) & 0xFF00));
           NXPLOG_UCIHAL_D("CountryCaps tx_power_offset = %d", rt_set->tx_power_offset);
 
           phNxpUciHal_setCalibParamTxPower();
@@ -489,7 +489,7 @@ static void phNxpUciHal_updateTxPower(void)
     uint8_t num_of_antennas = gtx_power[index++];
     while (num_of_antennas--) {
       index += 3; // antenna Id(1) + Peak Tx(2)
-      long tx_power_long = (gtx_power[index] & 0xff) | (gtx_power[index + 1] << RMS_TX_POWER_SHIFT);
+      long tx_power_long = gtx_power[index]  | ((gtx_power[index + 1] << RMS_TX_POWER_SHIFT) & 0xFF00);
       tx_power_long += rt_set->tx_power_offset;
 
       // long to 16bit little endian
@@ -580,7 +580,7 @@ static void phNxpUciHal_hw_reset_ntf_timeout_cb(uint32_t timerId,
 }
 
 /******************************************************************************
- * Function         phNxpUciHal_handle_thermal_runaway_status
+ * Function         phNxpUciHal_handle_thermal_error_status
  *
  * Description     This function handles the core generic error ntf with status
  *                 temperature exceeded(0x54)
@@ -589,7 +589,7 @@ static void phNxpUciHal_hw_reset_ntf_timeout_cb(uint32_t timerId,
  *                  update the acutual state of operation in arg pointer
  *
  ******************************************************************************/
-tHAL_UWB_STATUS phNxpUciHal_handle_thermal_runaway_status() {
+tHAL_UWB_STATUS phNxpUciHal_handle_thermal_error_status() {
 
  tHAL_UWB_STATUS status = UWBSTATUS_FAILED;
  extNxpucihal_ctrl.isThermalRecoveryOngoing = true;
@@ -621,14 +621,14 @@ tHAL_UWB_STATUS phNxpUciHal_handle_thermal_runaway_status() {
 }
 
 /******************************************************************************
- * Function         phNxpUciHal_clear_thermal_runaway_status
+ * Function         phNxpUciHal_clear_thermal_error_status
  *
- * Description     This function is used to clear thermal runaway context.
+ * Description     This function is used to clear thermal error context.
  *
  * Returns          void
  *
  ******************************************************************************/
-static void phNxpUciHal_clear_thermal_runaway_status() {
+static void phNxpUciHal_clear_thermal_error_status() {
  tHAL_UWB_STATUS status = UWBSTATUS_FAILED;
  nxpucihal_ctrl.isSkipPacket = 1;
  NXPLOG_UCIHAL_D("received hw reset ntf");
@@ -776,20 +776,20 @@ void phNxpUciHal_process_response() {
  oid = nxpucihal_ctrl.p_rx_data[1] & UCI_OID_MASK;
  pbf = (nxpucihal_ctrl.p_rx_data[0] & UCI_PBF_MASK) >> UCI_PBF_SHIFT;
 
- if ((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_GENERIC_ERROR_NTF) &&
-     (nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] ==
-      UCI_STATUS_THERMAL_RUNAWAY)) {
-      nxpucihal_ctrl.isSkipPacket = 1;
-      status = phNxpUciHal_handle_thermal_runaway_status();
-      if (status != UCI_STATUS_OK) {
-        NXPLOG_UCIHAL_E("phNxpUciHal_handle_thermal_runaway_status failed");
-      }
+ if (((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_GENERIC_ERROR_NTF)) &&
+   ((nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] == UCI_STATUS_THERMAL_RUNAWAY) ||
+   (nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] == UCI_STATUS_LOW_VBAT))) {
+   nxpucihal_ctrl.isSkipPacket = 1;
+   status = phNxpUciHal_handle_thermal_error_status();
+   if (status != UCI_STATUS_OK) {
+     NXPLOG_UCIHAL_E("phNxpUciHal_handle_thermal_error_status failed");
+   }
  }
 
  if ((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_DEVICE_STATUS_NTF) &&
      (nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] ==
       UCI_STATUS_HW_RESET)) {
-      phNxpUciHal_clear_thermal_runaway_status();
+      phNxpUciHal_clear_thermal_error_status();
  }
 
   // Remember CORE_DEVICE_INFO_RSP
@@ -1201,8 +1201,12 @@ static void extcal_do_tx_base_band(void)
   long retlen = 0;
   tHAL_UWB_STATUS ret;
 
-  NxpConfig_GetNum("cal.ddfs_enable", &ddfs_enable, 1);
-  NxpConfig_GetNum("cal.dc_suppress", &dc_suppress, 1);
+  if (NxpConfig_GetNum("cal.ddfs_enable", &ddfs_enable, 1)) {
+    NXPLOG_UCIHAL_D("Apply TX_BASE_BAND_CONTROL: ddfs_enable=%u", ddfs_enable);
+  }
+  if (NxpConfig_GetNum("cal.dc_suppress", &dc_suppress, 1)) {
+    NXPLOG_UCIHAL_D("Apply TX_BASE_BAND_CONTROL: dc_suppress=%u", dc_suppress);
+  }
 
   // DDFS_TONE_CONFIG
   if (ddfs_enable) {
@@ -1293,40 +1297,58 @@ extern bool isCountryCodeMapCreated;
  ******************************************************************************/
 void phNxpUciHal_handle_set_country_code(const char country_code[2])
 {
+  //
+  // TODO: stop all active session which are affected by new country code
+  // TODO: delay per-country calibrations when there's active sessions (or juststop them?)
+  //
   NXPLOG_UCIHAL_D("Apply country code %c%c", country_code[0], country_code[1]);
 
-  NxpConfig_SetCountryCode(country_code);
+  phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
 
-  // Load 'COUNTRY_CODE_CAPS' and apply it to 'conf_map'
-  uint8_t cc_caps[UCI_MAX_DATA_LEN];
-  long retlen = 0;
-  if (NxpConfig_GetByteArray(NAME_NXP_UWB_COUNTRY_CODE_CAPS, cc_caps, sizeof(cc_caps), &retlen) && retlen) {
-    NXPLOG_UCIHAL_D("COUNTRY_CODE_CAPS is provided.");
-    isCountryCodeMapCreated = false;
+  if ((country_code[0] == '0') && (country_code[1] == '0')) {
+    NXPLOG_UCIHAL_D("Country code %c%c is Invalid, disable UWB", country_code[0], country_code[1]);
+    rt_set->uwb_enable = false;
+  } else if (NxpConfig_SetCountryCode(country_code)) {
+    // Load 'COUNTRY_CODE_CAPS' and apply it to 'conf_map'
+    uint8_t cc_caps[UCI_MAX_DATA_LEN];
+    long retlen = 0;
+    if (NxpConfig_GetByteArray(NAME_NXP_UWB_COUNTRY_CODE_CAPS, cc_caps, sizeof(cc_caps), &retlen) && retlen) {
+      NXPLOG_UCIHAL_D("COUNTRY_CODE_CAPS is provided.");
+      isCountryCodeMapCreated = false;
 
-    uint32_t cc_caps_len = retlen;
-    uint8_t cc_data[UCI_MAX_DATA_LEN];
-    uint32_t cc_data_len = sizeof(cc_data);
-    phNxpUciHal_applyCountryCaps(country_code, cc_caps, cc_caps_len, cc_data, &cc_data_len);
+      uint32_t cc_caps_len = retlen;
+      uint8_t cc_data[UCI_MAX_DATA_LEN];
+      uint32_t cc_data_len = sizeof(cc_data);
+      phNxpUciHal_applyCountryCaps(country_code, cc_caps, cc_caps_len, cc_data, &cc_data_len);
 
-    if (get_conf_map(cc_data, cc_data_len)) {
-      isCountryCodeMapCreated = true;
-      NXPLOG_UCIHAL_D("Country code caps loaded");
+      if (get_conf_map(cc_data, cc_data_len)) {
+        isCountryCodeMapCreated = true;
+        NXPLOG_UCIHAL_D("Country code caps loaded");
+      }
+    } else {
+      NXPLOG_UCIHAL_D("COUNTRY_CODE_CAPS was not provided.");
     }
+
+    // per-country extra calibrations are only triggered when 'COUNTRY_CODE_CAPS' is not provided
+    if (!isCountryCodeMapCreated) {
+      NXPLOG_UCIHAL_D("Apply per-country extra calibrations");
+      extcal_do_restrictions();
+
+      if (rt_set->uwb_enable) {
+        extcal_do_tx_power();
+        extcal_do_tx_pulse_shape();
+        extcal_do_tx_base_band();
+      }
+    }
+  }
+
+  // send country code response to upper layer
+  nxpucihal_ctrl.rx_data_len = 5;
+  static uint8_t rsp_data[5] = { 0x4c, 0x01, 0x00, 0x01 };
+  if (rt_set->uwb_enable) {
+    rsp_data[4] = UWBSTATUS_SUCCESS;
   } else {
-    NXPLOG_UCIHAL_D("COUNTRY_CODE_CAPS was not provided.");
+    rsp_data[4] = UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF;
   }
-
-  // per-country extra calibrations are only triggered when 'COUNTRY_CODE_CAPS' is not provided
-  if (!isCountryCodeMapCreated) {
-    NXPLOG_UCIHAL_D("Apply per-country extra calibrations");
-    extcal_do_restrictions();
-
-    phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
-    if (rt_set->uwb_enable) {
-      extcal_do_tx_power();
-      extcal_do_tx_pulse_shape();
-      extcal_do_tx_base_band();
-    }
-  }
+  (*nxpucihal_ctrl.p_uwb_stack_data_cback)(nxpucihal_ctrl.rx_data_len, rsp_data);
 }

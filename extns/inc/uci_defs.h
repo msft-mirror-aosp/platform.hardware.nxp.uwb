@@ -174,6 +174,7 @@
 #define UCI_STATUS_COMMAND_RETRY 0x0A
 #define UCI_STATUS_UNKNOWN 0x0B
 #define UCI_STATUS_THERMAL_RUNAWAY 0x54
+#define UCI_STATUS_LOW_VBAT 0x59
 #define UCI_STATUS_HW_RESET 0xFE
 
 /* Status code for feature not supported */
