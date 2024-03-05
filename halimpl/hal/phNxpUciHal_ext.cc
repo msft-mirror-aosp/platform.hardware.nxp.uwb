@@ -406,6 +406,13 @@ static void phNxpUciHal_applyCountryCaps(const char country_code[2],
     idx += len;
   }
 
+  // Force UWB disabled even COUNTRY_CODE_CAPS provides it as enabled
+  if (!is_valid_country_code(country_code) && rt_set->uwb_enable) {
+    NXPLOG_UCIHAL_E("UWB is enabled by COUNTRY-CODE_CAPS with invalid country code %c%c,"
+                    " forcing disabled", country_code[0], country_code[1]);
+    rt_set->uwb_enable = false;
+  }
+
   // consist up 'cc_data' TLVs
   uint8_t fira_channels = 0xff;
   if (rt_set->restricted_channel_mask & (1 << 5))
@@ -1240,7 +1247,7 @@ static void extcal_do_tx_base_band(void)
   }
 }
 
-static void extcal_do_restrictions(void)
+static void extcal_do_restrictions(const char country_code[2])
 {
   phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
 
@@ -1256,6 +1263,14 @@ static void extcal_do_restrictions(void)
   if (NxpConfig_GetNum("cal.uwb_disable", &uwb_disable, sizeof(uwb_disable))) {
     NXPLOG_UCIHAL_D("Restriction flag, uwb_disable=%u", uwb_disable);
     rt_set->uwb_enable = !uwb_disable;
+  }
+
+  // Force UWB disabled even ExtCal provides it as enabled
+  if (!is_valid_country_code(country_code)) {
+    NXPLOG_UCIHAL_E("UWB is enabled by ExtCal with invalid country code %c%c,"
+                    " forcing disabled",
+                    country_code[0], country_code[1]);
+    rt_set->uwb_enable = false;
   }
 }
 
@@ -1305,10 +1320,11 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
 
   phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
 
-  if ((country_code[0] == '0') && (country_code[1] == '0')) {
-    NXPLOG_UCIHAL_D("Country code %c%c is Invalid, disable UWB", country_code[0], country_code[1]);
-    rt_set->uwb_enable = false;
-  } else if (NxpConfig_SetCountryCode(country_code)) {
+  if (!is_valid_country_code(country_code)) {
+    NXPLOG_UCIHAL_D("Country code %c%c is invalid, disable UWB", country_code[0], country_code[1]);
+  }
+
+  if (NxpConfig_SetCountryCode(country_code)) {
     // Load 'COUNTRY_CODE_CAPS' and apply it to 'conf_map'
     uint8_t cc_caps[UCI_MAX_DATA_LEN];
     long retlen = 0;
@@ -1332,7 +1348,7 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
     // per-country extra calibrations are only triggered when 'COUNTRY_CODE_CAPS' is not provided
     if (!isCountryCodeMapCreated) {
       NXPLOG_UCIHAL_D("Apply per-country extra calibrations");
-      extcal_do_restrictions();
+      extcal_do_restrictions(country_code);
 
       if (rt_set->uwb_enable) {
         extcal_do_tx_power();
