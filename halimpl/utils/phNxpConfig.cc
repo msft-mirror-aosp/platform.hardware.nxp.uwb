@@ -802,7 +802,7 @@ void CascadeConfig::deinit()
 
 bool CascadeConfig::setCountryCode(const char country_code[2])
 {
-    string strRegion= mRegionMap.xlateCountryCode(country_code);
+    string strRegion = mRegionMap.xlateCountryCode(country_code);
 
     if (strRegion == mCurRegionCode) {
         ALOGI("Same region code(%c%c --> %s), per-country configuration not updated.",
