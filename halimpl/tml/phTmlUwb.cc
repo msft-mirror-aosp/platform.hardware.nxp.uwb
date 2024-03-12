@@ -276,9 +276,6 @@ static void* phTmlUwb_TmlReaderThread(void* pParam) {
           }
           /* Update the actual number of bytes read including header */
           gpphTmlUwb_Context->tReadInfo.wLength = (uint16_t)(dwNoBytesWrRd);
-          phNxpUciHal_print_packet("RECV",
-                                   gpphTmlUwb_Context->tReadInfo.pBuffer,
-                                   gpphTmlUwb_Context->tReadInfo.wLength);
 
           dwNoBytesWrRd = PH_TMLUWB_RESET_VALUE;
 
