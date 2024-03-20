@@ -914,28 +914,6 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
   return UWBSTATUS_SUCCESS;
 }
 
-
-/******************************************************************************
- * Function         phNxpUciHal_sendGetCoreDeviceInfo
- *
- * Description      This function send Core device Info command.
- *
- * Returns          status.
- *
- ******************************************************************************/
-static uint8_t phNxpUciHal_sendGetCoreDeviceInfo(void)
-{
-  if (nxpucihal_ctrl.isDevInfoCached) {
-    return UWBSTATUS_SUCCESS;
-  }
-
-  const uint8_t getCoreDeviceInfoConfig[] = {0x20, 0x02, 0x00, 0x00};
-  uint8_t getCoreDeviceInfoCmdLen = 4;
-
-  tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(getCoreDeviceInfoCmdLen, getCoreDeviceInfoConfig);
-  return status;
-}
-
 /******************************************************************************
  * Function         parseAntennaConfig
  *
@@ -1233,6 +1211,77 @@ static bool phNxpUciHal_getBindingConfig()
   return isBindingLockingAllowed;
 }
 
+static bool cacheDevInfoRsp()
+{
+  auto dev_info_cb = [](size_t packet_len, const uint8_t *packet) mutable {
+    if (packet_len < 5 || packet[UCI_RESPONSE_STATUS_OFFSET] != UWBSTATUS_SUCCESS) {
+      NXPLOG_UCIHAL_E("Failed to get valid CORE_DEVICE_INFO_RSP");
+      return;
+    }
+    if (packet_len > sizeof(nxpucihal_ctrl.dev_info_resp)) {
+      NXPLOG_UCIHAL_E("FIXME: CORE_DEVICE_INFO_RSP buffer overflow!");
+      return;
+    }
+
+    // FIRA UCIv2.0 packet size = 14
+    // [13] = Vendor Specific Info Length
+    constexpr uint8_t firaDevInfoRspSize = 14;
+    constexpr uint8_t firaDevInfoVendorLenOffset = 13;
+
+    if (packet_len < firaDevInfoRspSize) {
+      NXPLOG_UCIHAL_E("DEVICE_INFO_RSP packet size mismatched.");
+      return;
+    }
+
+    const uint8_t vendorSpecificLen = packet[firaDevInfoVendorLenOffset];
+    if (packet_len != (firaDevInfoRspSize + vendorSpecificLen)) {
+      NXPLOG_UCIHAL_E("DEVICE_INFO_RSP packet size mismatched.");
+    }
+
+    for (uint8_t i = firaDevInfoRspSize; (i + 2) <= packet_len; ) {
+      uint8_t paramId = packet[i++];
+      uint8_t length = packet[i++];
+
+      if (i + length > packet_len)
+        break;
+
+      if (paramId == DEVICE_NAME_PARAM_ID && length >= 6) {
+        switch(packet[i + 5]) {
+        case DEVICE_TYPE_SR1xxS:
+          nxpucihal_ctrl.device_type = DEVICE_TYPE_SR1xxS;
+          break;
+        case DEVICE_TYPE_SR1xxT:
+          nxpucihal_ctrl.device_type = DEVICE_TYPE_SR1xxT;
+          break;
+        default:
+          nxpucihal_ctrl.device_type = DEVICE_TYPE_UNKNOWN;
+          break;
+        }
+      } else if (paramId == FW_VERSION_PARAM_ID && length >= 3) {
+        nxpucihal_ctrl.fw_version.major_version = packet[i];
+        nxpucihal_ctrl.fw_version.minor_version = packet[i + 1];
+        nxpucihal_ctrl.fw_version.rc_version = packet[i + 2];
+      } else if (paramId == FW_BOOT_MODE_PARAM_ID && length >= 1) {
+        nxpucihal_ctrl.fw_boot_mode = packet[i];
+      }
+      i += length;
+    }
+    memcpy(nxpucihal_ctrl.dev_info_resp, packet, packet_len);
+    nxpucihal_ctrl.isDevInfoCached = true;
+    NXPLOG_UCIHAL_D("Device Info cached.");
+  };
+
+  nxpucihal_ctrl.isDevInfoCached = false;
+  UciHalRxHandler devInfoRspHandler(UCI_MT_RSP, UCI_GID_CORE, UCI_MSG_CORE_DEVICE_INFO, true, dev_info_cb);
+
+  const uint8_t CoreGetDevInfoCmd[] = {(UCI_MT_CMD << UCI_MT_SHIFT) | UCI_GID_CORE, UCI_MSG_CORE_DEVICE_INFO, 0, 0};
+  tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(sizeof(CoreGetDevInfoCmd), CoreGetDevInfoCmd);
+  if (status != UWBSTATUS_SUCCESS) {
+    return false;
+  }
+  return true;
+}
+
 /******************************************************************************
  * Function         phNxpUciHal_init_hw
  *
@@ -1331,18 +1380,14 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
     return UWBSTATUS_FAILED;
   }
 
-  // CORE_GET_DEVICE_INFO
-  status = phNxpUciHal_sendGetCoreDeviceInfo();
-  NXPLOG_UCIHAL_D("phNxpUciHal_sendGetCoreDeviceInfo status %d ", status);
-  if (status != UWBSTATUS_SUCCESS) {
-    return status;
-  }
+  // Cache CORE_GET_DEVICE_INFO
+  cacheDevInfoRsp();
 
   // Get binding status
   UciHalSemaphore bindingStatusNtfWait;
   auto bindingStatusNtfCb = [&bindingStatusNtfWait](size_t packet_len, const uint8_t *packet) mutable {
     if (packet_len >= 5) {
-     nxpucihal_ctrl.uwb_binding_status =
+      nxpucihal_ctrl.uwb_binding_status =
               nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET];
       bindingStatusNtfWait.post();
     }
