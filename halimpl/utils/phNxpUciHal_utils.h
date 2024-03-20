@@ -125,6 +125,39 @@ static inline int phNxpUciHal_sem_timed_wait(phNxpUciHal_Sem_t* pCallbackData)
 void phNxpUciHal_cleanup_cb_data(phNxpUciHal_Sem_t* pCallbackData);
 void phNxpUciHal_releaseall_cb_data(void);
 
+// helper class for Semaphore
+// phNxpUciHal_init_cb_data(), phNxpUciHal_cleanup_cb_data(),
+// SEM_WAIT(), SEM_POST()
+class UciHalSemaphore {
+public:
+  UciHalSemaphore() {
+    phNxpUciHal_init_cb_data(&sem, NULL);
+  }
+  UciHalSemaphore(void *context) {
+    phNxpUciHal_init_cb_data(&sem, context);
+  }
+  virtual ~UciHalSemaphore() {
+    phNxpUciHal_cleanup_cb_data(&sem);
+  }
+  int wait() {
+    return sem_wait(&sem.sem);
+  }
+  int wait_timeout_msec(long msec) {
+    return phNxpUciHal_sem_timed_wait_msec(&sem, msec);
+  }
+  int post() {
+    return sem_post(&sem.sem);
+  }
+  int post(tHAL_UWB_STATUS status) {
+    sem.status = status;
+    return sem_post(&sem.sem);
+  }
+  tHAL_UWB_STATUS getStatus() {
+    return sem.status;
+  }
+private:
+  phNxpUciHal_Sem_t sem;
+};
 
 /*
  * Print an UWB Packet.
