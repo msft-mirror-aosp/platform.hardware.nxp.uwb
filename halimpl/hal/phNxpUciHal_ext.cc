@@ -763,7 +763,6 @@ static void phNxpUciHal_parseCoreDeviceInfoRsp(const uint8_t *p_rx_data, size_t 
   return;
 }
 
-
 /******************************************************************************
  * Function         phNxpUciHal_process_response
  *
@@ -774,67 +773,78 @@ static void phNxpUciHal_parseCoreDeviceInfoRsp(const uint8_t *p_rx_data, size_t 
  *
  ******************************************************************************/
 void phNxpUciHal_process_response() {
- tHAL_UWB_STATUS status;
+  tHAL_UWB_STATUS status;
 
- uint8_t mt, gid, oid, pbf;
+  uint8_t mt = 0, gid = 0, oid = 0, pbf = 0;
+  mt = (nxpucihal_ctrl.p_rx_data[0]  & UCI_MT_MASK) >> UCI_MT_SHIFT;
+  gid = nxpucihal_ctrl.p_rx_data[0] & UCI_GID_MASK;
+  oid = nxpucihal_ctrl.p_rx_data[1] & UCI_OID_MASK;
+  pbf = (nxpucihal_ctrl.p_rx_data[0] & UCI_PBF_MASK) >> UCI_PBF_SHIFT;
 
- mt = (nxpucihal_ctrl.p_rx_data[0]  & UCI_MT_MASK) >> UCI_MT_SHIFT;
- gid = nxpucihal_ctrl.p_rx_data[0] & UCI_GID_MASK;
- oid = nxpucihal_ctrl.p_rx_data[1] & UCI_OID_MASK;
- pbf = (nxpucihal_ctrl.p_rx_data[0] & UCI_PBF_MASK) >> UCI_PBF_SHIFT;
+  switch (gid) {
+    case UCI_GID_CORE:
+       switch (oid) {
+         case UCI_MSG_CORE_GENERIC_ERROR_NTF:
+           if ((nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] ==
+                UCI_STATUS_THERMAL_RUNAWAY) ||
+               (nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] ==
+                UCI_STATUS_LOW_VBAT)) {
+             nxpucihal_ctrl.isSkipPacket = 1;
+             status = phNxpUciHal_handle_thermal_error_status();
+             if (status != UCI_STATUS_OK) {
+               NXPLOG_UCIHAL_E("phNxpUciHal_handle_thermal_error_status failed");
+             }
+           }
+           break;
+         case UCI_MSG_CORE_DEVICE_STATUS_NTF:
+           if (nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] ==
+               UCI_STATUS_HW_RESET) {
+             phNxpUciHal_clear_thermal_error_status();
+           }
+           break;
+         case UCI_MSG_CORE_DEVICE_INFO:
+           if (mt == UCI_MT_RSP) {
+             if (pbf) {
+               // FIXME: Fix the whole logic if this really happens
+               NXPLOG_UCIHAL_E("FIXME: CORE_DEVICE_INFO_RSP is fragmented!");
+             } else {
+               phNxpUciHal_parseCoreDeviceInfoRsp(nxpucihal_ctrl.p_rx_data,
+                                                  nxpucihal_ctrl.rx_data_len);
+             }
+           }
+           break;
+       }
+       break;
+    case UCI_GID_PROPRIETARY_0X0A:
+       if ((mt == UCI_MT_NTF) && (oid == UCI_MSG_READ_CALIB_DATA)) {
+         // READ_CALIB_DATA_NTF: status(1), length-of-payload(1), payload(N)
+         const uint8_t plen = nxpucihal_ctrl.p_rx_data[3]; // payload-length
+         const uint8_t *p = &nxpucihal_ctrl.p_rx_data[4];  // payload
+         ReadOtpCookie *cookie =
+             (ReadOtpCookie *)nxpucihal_ctrl.calib_data_ntf_wait.pContext;
 
- if (((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_GENERIC_ERROR_NTF)) &&
-   ((nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] == UCI_STATUS_THERMAL_RUNAWAY) ||
-   (nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] == UCI_STATUS_LOW_VBAT))) {
-   nxpucihal_ctrl.isSkipPacket = 1;
-   status = phNxpUciHal_handle_thermal_error_status();
-   if (status != UCI_STATUS_OK) {
-     NXPLOG_UCIHAL_E("phNxpUciHal_handle_thermal_error_status failed");
-   }
- }
-
- if ((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_DEVICE_STATUS_NTF) &&
-     (nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] ==
-      UCI_STATUS_HW_RESET)) {
-      phNxpUciHal_clear_thermal_error_status();
- }
-
-  // Remember CORE_DEVICE_INFO_RSP
-  if (mt == UCI_MT_RSP && (gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_DEVICE_INFO)) {
-    if (pbf) {
-      // FIXME: Fix the whole logic if this really happens
-      NXPLOG_UCIHAL_E("FIXME: CORE_DEVICE_INFO_RSP is fragmented!");
-    } else {
-      phNxpUciHal_parseCoreDeviceInfoRsp(nxpucihal_ctrl.p_rx_data, nxpucihal_ctrl.rx_data_len);
-    }
-  }
-
-  //
-  // Handle NXP_READ_CALIB_DATA_NTF
-  //
-  if ((mt == UCI_MT_NTF) && (gid == UCI_GID_PROPRIETARY_0X0A) && (oid == UCI_MSG_READ_CALIB_DATA)) {
-    // READ_CALIB_DATA_NTF: status(1), length-of-payload(1), payload(N)
-    const uint8_t plen = nxpucihal_ctrl.p_rx_data[3]; // payload-length
-    const uint8_t *p = &nxpucihal_ctrl.p_rx_data[4];  // payload
-    ReadOtpCookie *cookie = (ReadOtpCookie*)nxpucihal_ctrl.calib_data_ntf_wait.pContext;
-
-    if (!cookie) {
-      NXPLOG_UCIHAL_E("Otp read: unexpected OTP read.");
-    } else if (cookie->m_valid) {
-      // cookie is already valid
-      NXPLOG_UCIHAL_E("Otp read: unexpected OTP read, param-id=0x%x", cookie->m_id);
-    } else if (plen < 2) {
-      NXPLOG_UCIHAL_E("Otp read: bad payload length %u", plen);
-    } else if (p[0] != UCI_STATUS_OK) {
-      NXPLOG_UCIHAL_E("Otp read: bad status=0x%x", nxpucihal_ctrl.p_rx_data[4]);
-    } else if (p[1] != cookie->m_len) {
-      NXPLOG_UCIHAL_E("Otp read: size mismatch %u (expected %zu for param 0x%x)",
-        p[1], cookie->m_len, cookie->m_id);
-    } else {
-      memcpy(cookie->m_buffer, &p[2], cookie->m_len);
-      cookie->m_valid = true;
-      SEM_POST(&nxpucihal_ctrl.calib_data_ntf_wait);
-    }
+         if (!cookie) {
+           NXPLOG_UCIHAL_E("Otp read: unexpected OTP read.");
+         } else if (cookie->m_valid) {
+           // cookie is already valid
+           NXPLOG_UCIHAL_E("Otp read: unexpected OTP read, param-id=0x%x",
+                           cookie->m_id);
+         } else if (plen < 2) {
+           NXPLOG_UCIHAL_E("Otp read: bad payload length %u", plen);
+         } else if (p[0] != UCI_STATUS_OK) {
+           NXPLOG_UCIHAL_E("Otp read: bad status=0x%x",
+                           nxpucihal_ctrl.p_rx_data[4]);
+         } else if (p[1] != cookie->m_len) {
+           NXPLOG_UCIHAL_E(
+               "Otp read: size mismatch %u (expected %zu for param 0x%x)", p[1],
+               cookie->m_len, cookie->m_id);
+         } else {
+           memcpy(cookie->m_buffer, &p[2], cookie->m_len);
+           cookie->m_valid = true;
+           SEM_POST(&nxpucihal_ctrl.calib_data_ntf_wait);
+         }
+       }
+       break;
   }
 }
 
