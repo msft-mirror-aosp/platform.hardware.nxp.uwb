@@ -20,7 +20,7 @@ cc_library_shared {
     ],
     proprietary: true,
     srcs: [
-        "halimpl/fwd/sr1xx/*.cc",
+        "halimpl/hal/sr1xx/*.cc",
         "halimpl/inc/common/*.cc",
         "halimpl/hal/*.cc",
         "halimpl/log/*.cc",
@@ -36,10 +36,9 @@ cc_library_shared {
         "libchrome",
         "libutils",
         "libdl",
-        "libhidlbase"
+        "libhidlbase",
     ],
     local_include_dirs: [
-        "halimpl/fwd/sr1xx",
         "halimpl/inc",
         "halimpl/inc/common",
         "halimpl/hal",
