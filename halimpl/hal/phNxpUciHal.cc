@@ -656,7 +656,7 @@ tHAL_UWB_STATUS phNxpUciHal_write_unlocked(uint16_t data_len, const uint8_t* p_d
   }
 
   /* Wait for callback response */
-  if (SEM_WAIT(cb_data)) {
+  if (SEM_WAIT(&cb_data)) {
     NXPLOG_UCIHAL_E("write_unlocked semaphore error");
     data_len = 0;
     goto clean_and_return;
