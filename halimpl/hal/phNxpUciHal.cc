@@ -669,7 +669,7 @@ void phNxpUciHal_parse_get_capsInfo(uint16_t data_len, uint8_t *p_data) {
             }
           }
       }
-      phNxpUciHal_print_packet("RECV", nxpucihal_ctrl.p_rx_data,
+      phNxpUciHal_print_packet(NXP_TML_UCI_RSP_NTF_UWBS_2_AP, nxpucihal_ctrl.p_rx_data,
                                nxpucihal_ctrl.rx_data_len);
     }
   }
@@ -710,13 +710,13 @@ void phNxpUciHal_read_complete(void* pContext,
      length = (length << EXTENDED_MODE_LEN_SHIFT) | pInfo->pBuff[index + EXTENDED_MODE_LEN_OFFSET] ;
     }
     length += UCI_MSG_HDR_SIZE;
-    NXPLOG_UCIHAL_D("read successful length = 0x%x", length);
+    NXPLOG_UCIHAL_D("read successful length = %d", length);
 
     if (pInfo->wStatus == UWBSTATUS_SUCCESS) {
       NXPLOG_UCIHAL_D("read successful status = 0x%x", pInfo->wStatus);
       nxpucihal_ctrl.p_rx_data = &pInfo->pBuff[index];
       nxpucihal_ctrl.rx_data_len = length;
-      phNxpUciHal_print_packet("RECV", nxpucihal_ctrl.p_rx_data, nxpucihal_ctrl.rx_data_len);
+      phNxpUciHal_print_packet(NXP_TML_UCI_RSP_NTF_UWBS_2_AP, nxpucihal_ctrl.p_rx_data, nxpucihal_ctrl.rx_data_len);
 
       mt = ((nxpucihal_ctrl.p_rx_data[0]) & UCI_MT_MASK) >> UCI_MT_SHIFT;
       gid = nxpucihal_ctrl.p_rx_data[0] & UCI_GID_MASK;
