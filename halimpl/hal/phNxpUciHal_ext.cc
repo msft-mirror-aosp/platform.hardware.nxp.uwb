@@ -436,20 +436,21 @@ static bool phNxpUciHal_is_retry_not_required(uint8_t uci_octet0) {
 /******************************************************************************
  * Function         phNxpUciHal_updateTxPower
  *
- * Description      This function updates the tx antenna power
+ * Description      This function updates the tx antenna power,
+ *                  apply runtime_settings to gtx_power[]
  *
- * Returns          true/false
+ * Returns          true if gtx_power has valid packet data.
  *
  ******************************************************************************/
-static void phNxpUciHal_updateTxPower(void)
+static bool phNxpUciHal_updateTxPower(void)
 {
   phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
 
   if (rt_set->tx_power_offset == 0)
-    return;
+    return false;
 
   if (gtx_power.empty())
-    return;
+    return false;
 
   uint8_t index = 2;  // channel + param ID
 
@@ -467,29 +468,31 @@ static void phNxpUciHal_updateTxPower(void)
       gtx_power[index++] = tx_power_u16 & 0xff;
       gtx_power[index++] = tx_power_u16 >> RMS_TX_POWER_SHIFT;
     }
+    return true;
+  } else {
+    return false;
   }
 }
 
 /*******************************************************************************
- * Function      phNxpUciHal_processCalibParamTxPowerPerAntenna
+ * Function     phNxpUciHal_handle_set_calibration
  *
- * Description  Stores Tx power set during calibration
+ * Description  Remembers SET_VENDOR_SET_CALIBRATION_CMD packet
  *
  * Returns      void
  *
  *******************************************************************************/
-void phNxpUciHal_processCalibParamTxPowerPerAntenna(const uint8_t *p_data, uint16_t data_len)
+void phNxpUciHal_handle_set_calibration(const uint8_t *p_data, uint16_t data_len)
 {
   phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
 
   // RMS Tx power -> Octet [4, 5] in calib data
-  NXPLOG_UCIHAL_D("phNxpUciHal_processCalibParamTxPowerPerAntenna %d", rt_set->tx_power_offset);
+  NXPLOG_UCIHAL_D("phNxpUciHal_handle_set_calibration %d", rt_set->tx_power_offset);
 
   gtx_power = std::move(std::vector<uint8_t> {p_data + UCI_MSG_HDR_SIZE, p_data + data_len});
 
-  phNxpUciHal_updateTxPower();
-
-  memcpy(&nxpucihal_ctrl.p_cmd_data[UCI_MSG_HDR_SIZE], gtx_power.data(),  gtx_power.size());
+  if (phNxpUciHal_updateTxPower())
+    memcpy(&nxpucihal_ctrl.p_cmd_data[UCI_MSG_HDR_SIZE], gtx_power.data(),  gtx_power.size());
 }
 
 /******************************************************************************
@@ -502,7 +505,8 @@ void phNxpUciHal_processCalibParamTxPowerPerAntenna(const uint8_t *p_data, uint1
  ******************************************************************************/
 static bool phNxpUciHal_setCalibParamTxPower(void)
 {
-  phNxpUciHal_updateTxPower();
+  if (!phNxpUciHal_updateTxPower())
+    return false;
 
   // GID : 0xF / OID : 0x21
   std::vector<uint8_t> packet{0x2f, 0x21, 0x00, 0x00};

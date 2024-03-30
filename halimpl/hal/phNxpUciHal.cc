@@ -274,7 +274,7 @@ bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data)
     } else if ((gid == UCI_GID_PROPRIETARY_0x0F) && (oid == SET_VENDOR_SET_CALIBRATION)) {
         if (p_data[UCI_MSG_HDR_SIZE + 1] ==
             VENDOR_CALIB_PARAM_TX_POWER_PER_ANTENNA) {
-          phNxpUciHal_processCalibParamTxPowerPerAntenna(p_data, data_len);
+          phNxpUciHal_handle_set_calibration(p_data, data_len);
         }
     } else if ((gid == UCI_GID_SESSION_MANAGE) && (oid == UCI_MSG_SESSION_SET_APP_CONFIG)) {
       return phNxpUciHal_handle_set_app_config(&nxpucihal_ctrl.cmd_len, nxpucihal_ctrl.p_cmd_data);
