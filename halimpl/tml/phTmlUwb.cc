@@ -206,7 +206,7 @@ static void* phTmlUwb_TmlReaderThread(void* pParam) {
   static phLibUwb_DeferredCall_t tDeferredInfo;
   /* Initialize Message structure to post message onto Callback Thread */
   UNUSED(pParam);
-  NXPLOG_TML_D("SRxxx - Tml Reader Thread Started................\n");
+  NXPLOG_TML_D("SRxxx - Tml Reader Thread Started");
 
   /* Writer thread loop shall be running till shutdown is invoked */
   while (gpphTmlUwb_Context->bThreadDone) {
@@ -214,11 +214,11 @@ static void* phTmlUwb_TmlReaderThread(void* pParam) {
     /* Set the variable to success initially */
     wStatus = UWBSTATUS_SUCCESS;
     if(sem_wait(&gpphTmlUwb_Context->rxSemaphore)!=0){
-        NXPLOG_TML_E("Failed to wait semaphore");
+        NXPLOG_TML_E("Failed to wait rxSemaphore");
     }
     /* If Tml read is requested */
     if (1 == gpphTmlUwb_Context->tReadInfo.bEnable) {
-      NXPLOG_TML_D("SRxxx - Read requested.....\n");
+      NXPLOG_TML_D("SRxxx - Read requested");
       /* Set the variable to success initially */
       wStatus = UWBSTATUS_SUCCESS;
 
@@ -227,7 +227,7 @@ static void* phTmlUwb_TmlReaderThread(void* pParam) {
 
       /* Read the data from the file onto the buffer */
       if (NULL != gpphTmlUwb_Context->pDevHandle) {
-        NXPLOG_TML_D("SRxxx - Invoking SPI Read.....\n");
+        NXPLOG_TML_D("SRxxx - Invoking SPI Read");
         dwNoBytesWrRd =
             phTmlUwb_spi_read(gpphTmlUwb_Context->pDevHandle, temp, UCI_MAX_DATA_LEN);
         if(gpphTmlUwb_Context->bThreadDone == 0) {
@@ -235,7 +235,7 @@ static void* phTmlUwb_TmlReaderThread(void* pParam) {
         }
 
         if (-1 == dwNoBytesWrRd) {
-          NXPLOG_TML_E("SRxxx - Error in SPI Read.....\n");
+          NXPLOG_TML_E("SRxxx - Error in SPI Read");
           pthread_mutex_lock(&gpphTmlUwb_Context->read_abort_lock);
           if(gpphTmlUwb_Context->is_read_abort) {
             pthread_cond_signal(&gpphTmlUwb_Context->read_abort_condition);
@@ -246,10 +246,10 @@ static void* phTmlUwb_TmlReaderThread(void* pParam) {
           }
           pthread_mutex_unlock(&gpphTmlUwb_Context->read_abort_lock);
         } else if (dwNoBytesWrRd > UCI_MAX_DATA_LEN) {
-          NXPLOG_TML_E("Numer of bytes read exceeds the limit .....\n");
+          NXPLOG_TML_E("Numer of bytes read exceeds the limit");
           sem_post(&gpphTmlUwb_Context->rxSemaphore);
         } else if(0 == dwNoBytesWrRd) {
-          NXPLOG_TML_E("SRxxx - Empty packet Read, Ignore read and try new read...\n");
+          NXPLOG_TML_E("SRxxx - Empty packet Read, Ignore read and try new read");
           pthread_mutex_lock(&gpphTmlUwb_Context->read_abort_lock);
           if(gpphTmlUwb_Context->is_read_abort) {
             pthread_cond_signal(&gpphTmlUwb_Context->read_abort_condition);
@@ -262,7 +262,7 @@ static void* phTmlUwb_TmlReaderThread(void* pParam) {
         } else {
           memcpy(gpphTmlUwb_Context->tReadInfo.pBuffer, temp, dwNoBytesWrRd);
 
-          NXPLOG_TML_D("SRxxx - SPI Read successful.....\n");
+          NXPLOG_TML_D("SRxxx - SPI Read successful");
           gpphTmlUwb_Context->tReadInfo.bEnable = 0;
           if (gpphTmlUwb_Context->tWriteInfo.bThreadBusy) {
             NXPLOG_TML_D("Delay Read if write thread is busy");
@@ -284,7 +284,7 @@ static void* phTmlUwb_TmlReaderThread(void* pParam) {
           /* Prepare the message to be posted on User thread */
           tDeferredInfo.pCallback = &phTmlUwb_ReadDeferredCb;
           tDeferredInfo.pParameter = &tTransactionInfo;
-          NXPLOG_TML_D("SRxxx - Posting read message.....\n");
+          NXPLOG_TML_D("SRxxx - Posting read message");
           /* TML reader writer callback synchronization mutex lock --- START */
           pthread_mutex_lock(&gpphTmlUwb_Context->wait_busy_lock);
           if ((gpphTmlUwb_Context->gWriterCbflag == false) &&
@@ -329,17 +329,16 @@ static void* phTmlUwb_TmlWriterThread(void* pParam) {
      by the callback thread */
   static phLibUwb_DeferredCall_t tDeferredInfo;
   UNUSED(pParam);
-  NXPLOG_TML_D("SRxxx - Tml Writer Thread Started................\n");
+  NXPLOG_TML_D("SRxxx - Tml Writer Thread Started");
 
   /* Writer thread loop shall be running till shutdown is invoked */
   while (gpphTmlUwb_Context->bThreadDone) {
-    NXPLOG_TML_D("SRxxx - Tml Writer Thread Running................\n");
+    NXPLOG_TML_D("SRxxx - Tml Writer Thread Running");
     if (sem_wait(&gpphTmlUwb_Context->txSemaphore) != 0) {
-      NXPLOG_TML_E("Failed to wait semaphore ");
+      NXPLOG_TML_E("Failed to wait txSemaphore");
     }
     /* If Tml write is requested */
     if (1 == gpphTmlUwb_Context->tWriteInfo.bEnable) {
-      NXPLOG_TML_D("SRxxx - Write requested.....\n");
       /* Set the variable to success initially */
       wStatus = UWBSTATUS_SUCCESS;
       if (NULL != gpphTmlUwb_Context->pDevHandle) {
@@ -347,7 +346,7 @@ static void* phTmlUwb_TmlWriterThread(void* pParam) {
         /* Variable to fetch the actual number of bytes written */
         dwNoBytesWrRd = PH_TMLUWB_RESET_VALUE;
         /* Write the data in the buffer onto the file */
-        NXPLOG_TML_D("SRxxx - Invoking SPI Write.....\n");
+        NXPLOG_TML_D("SRxxx - Invoking SPI Write");
 
         /* TML reader writer callback synchronization mutex lock --- START
          */
@@ -362,15 +361,15 @@ static void* phTmlUwb_TmlWriterThread(void* pParam) {
 
         /* Try SPI Write Five Times, if it fails :*/
         if (-1 == dwNoBytesWrRd) {
-          NXPLOG_TML_E("SRxxx - Error in SPI Write.....\n");
+          NXPLOG_TML_E("SRxxx - Error in SPI Write");
           wStatus = PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_FAILED);
         } else {
-          phNxpUciHal_print_packet("SEND",
+          phNxpUciHal_print_packet(NXP_TML_UCI_CMD_AP_2_UWBS,
                                    gpphTmlUwb_Context->tWriteInfo.pBuffer,
                                    gpphTmlUwb_Context->tWriteInfo.wLength);
         }
         if (UWBSTATUS_SUCCESS == wStatus) {
-          NXPLOG_TML_D("SRxxx - SPI Write successful.....\n");
+          NXPLOG_TML_D("SRxxx - SPI Write successful");
           dwNoBytesWrRd = PH_TMLUWB_VALUE_ONE;
         }
         /* Fill the Transaction info structure to be passed to Callback Function
@@ -386,7 +385,7 @@ static void* phTmlUwb_TmlWriterThread(void* pParam) {
 
         /* Write operation completed successfully. Post a Message onto Callback
          * Thread*/
-        NXPLOG_TML_D("SRxxx - Posting Fresh Write message.....\n");
+        NXPLOG_TML_D("SRxxx - Posting Fresh Write message");
         auto msg = std::make_shared<phLibUwb_Message>(PH_LIBUWB_DEFERREDCALL_MSG, &tDeferredInfo);
         phTmlUwb_DeferredCall(msg);
         if (UWBSTATUS_SUCCESS == wStatus) {
