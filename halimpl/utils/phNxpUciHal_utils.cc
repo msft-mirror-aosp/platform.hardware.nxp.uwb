@@ -469,7 +469,7 @@ void phNxpUciHal_print_packet(const char* pString, const uint8_t* p_data,
   if (0 == memcmp(pString, "SEND", 0x04)) {
     NXPLOG_UCIX_D("len = %3d > %s", len, print_buffer);
   } else if (0 == memcmp(pString, "RECV", 0x04)) {
-    NXPLOG_UCIR_D("len = %3d > %s", len, print_buffer);
+    NXPLOG_UCIR_D("len = %3d < %s", len, print_buffer);
   }
 
   return;
