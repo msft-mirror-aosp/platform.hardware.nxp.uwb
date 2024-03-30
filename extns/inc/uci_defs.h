@@ -50,15 +50,20 @@
 #define UCI_PBF_SHIFT 4
 #define UCI_PBF_ST_CONT 0x10    /* start or continuing fragment */
 
+/* Ocet 3 = Payload Length(L) */
+#define UCI_PAYLOAD_LENGTH_OFFSET 3
+
 /* GID: Group Identifier (byte 0) */
-#define UCI_GID_MASK 0x0F
-#define UCI_GID_CORE 0x00             /* 0000b UCI Core group */
-#define UCI_GID_SESSION_MANAGE 0x01   /* 0001b Session Config commands */
-#define UCI_GID_ANDROID 0x0C          /* 1100b Android vendor group */
-#define UCI_GID_PROPRIETARY_0X0A 0x0A /* 1010b Proprietary Group */
-#define UCI_GID_PROPRIETARY 0x0E      /* 1110b Proprietary Group */
-#define UCI_GID_PROPRIETARY_0X0F 0x0F /* 1111b Proprietary Group */
-#define UCI_GID_INTERNAL 0x0B         /* 1011b Internal Group */
+#define UCI_GID_MASK              0x0F
+#define UCI_GID_CORE              0x00 /* UCI Core group */
+#define UCI_GID_SESSION_MANAGE    0x01 /* Session Config Group */
+#define UCI_GID_SESSION_CONTROL   0x02 /* Session Control Group */
+#define UCI_GID_ANDROID           0x0C /* Android vendor group */
+#define UCI_GID_PROPRIETARY_0X0A  0x0A /* Proprietary Group */
+#define UCI_GID_PROPRIETARY       0x0E /* Proprietary Group */
+#define UCI_GID_PROPRIETARY_0X0F  0x0F /* Proprietary Group */
+#define UCI_GID_INTERNAL          0x0B /* Internal Group */
+
 /* 0100b - 1100b RFU */
 #define UCI_OID_GET_CAPS_INFO 0x03
 
@@ -116,12 +121,41 @@
 #define UCI_MSG_CORE_GENERIC_ERROR_NTF 7
 
 /*********************************************************
- * UCI session config Group-2: Opcodes and size of command
+ * UCI session config Group-1: Opcodes and size of command
  ********************************************************/
 #define UCI_MSG_SESSION_STATUS_NTF 2
-#define UCI_MSG_SESSION_SET_APP_CONFIG 3
-#define UCI_MSG_SESSION_QUERY_DATA_SIZE 0x0B
+#define UCI_MSG_SESSION_STATUS_NTF_HANDLE_OFFSET      4
+#define UCI_MSG_SESSION_STATUS_NTF_STATE_OFFSET       8
+#define UCI_MSG_SESSION_STATUS_NTF_REASON_OFFSET      9
+#define UCI_MSG_SESSION_STATUS_NTF_LENGTH             10
+
+#define UCI_MSG_SESSION_STATE_INIT                    (0x00)
+#define UCI_MSG_SESSION_STATE_INIT_CMD_LEN            (9)
+#define UCI_MSG_SESSION_STATE_INIT_CMD_ID_OFFSET      (4)
+#define UCI_MSG_SESSION_STATE_INIT_CMD_TYPE_OFFSET    (8)
+#define UCI_MSG_SESSION_STATE_INIT_RSP_LEN            (9)
+#define UCI_MSG_SESSION_STATE_INIT_RSP_STATUS_OFFSET  (4)
+#define UCI_MSG_SESSION_STATE_INIT_RSP_HANDLE_OFFSET  (5)
+#define UCI_MSG_SESSION_STATE_DEINIT                  (0x01)
+#define UCI_MSG_SESSION_STATE_ACTIVE                  (0x02)
+#define UCI_MSG_SESSION_STATE_IDLE                    (0x03)
+#define UCI_MSG_SESSION_STATE_UNDEFINED               (0xFF)  // SW defined
+
+#define UCI_MSG_SESSION_SET_APP_CONFIG                3
+#define UCI_MSG_SESSION_SET_APP_CONFIG_HANDLE_OFFSET  4
+
+#define UCI_MSG_SESSION_QUERY_DATA_SIZE               0x0B
 #define UCI_MSG_SESSION_QUERY_DATA_SIZE_STATUS_OFFSET 8
+
+// Session Type field in SESSION_INIT_CMD
+constexpr uint8_t kSessionType_Ranging = 0x00;
+constexpr uint8_t kSessionType_RangingAndData = 0x01;
+constexpr uint8_t kSessionType_CCCRanging = 0xA0;
+
+/*********************************************************
+ * UCI session config Group-2: Opcodes and size of command
+ ********************************************************/
+#define UCI_MSG_SESSION_STOP                          0x01
 
 /**********************************************************
  * UCI Android Vendor Group-C: Opcodes and size of commands
@@ -146,6 +180,7 @@
 /**********************************************
  * UWB Prop Group Opcode-F Opcodes
  **********************************************/
+#define UCI_MSG_URSK_DELETE               0x01
 #define UCI_MSG_SET_DEVICE_CALIBRATION    0x21
 #define UCI_MSG_GET_DEVICE_CALIBRATION    0x22
 
@@ -164,11 +199,18 @@
 #define UCI_PARAM_ID_RANGE_MEASUREMENTS 0xE5
 
 /*************************************************
+ * Device Calibration Parameters IDs
+ ************************************************/
+// XXX: Should this be chip-dependant?
+#define NXP_PARAM_ID_TX_POWER_PER_ANTENNA       0x04
+
+/*************************************************
  * Status codes
  ************************************************/
 /* Generic Status Codes */
 #define UCI_STATUS_OK 0x00
 #define UCI_STATUS_FAILED 0x02
+#define UCI_STATUS_SYNTAX_ERROR  0x03
 #define UCI_STATUS_INVALID_PARAM 0x04
 #define UCI_STATUS_INVALID_MSG_SIZE 0x06
 #define UCI_STATUS_COMMAND_RETRY 0x0A

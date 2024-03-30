@@ -393,31 +393,34 @@ void phNxpUciHal_cleanup_cb_data(phNxpUciHal_Sem_t* pCallbackData) {
   return;
 }
 
-void phNxpUciHal_sem_timed_wait_sec(phNxpUciHal_Sem_t* pCallbackData, time_t sec) {
+int phNxpUciHal_sem_timed_wait_msec(phNxpUciHal_Sem_t* pCallbackData, long msec)
+{
   int ret;
   struct timespec absTimeout;
   if (clock_gettime(CLOCK_MONOTONIC, &absTimeout) == -1) {
     NXPLOG_UCIHAL_E("clock_gettime failed");
-    pCallbackData->status = UWBSTATUS_FAILED;
-    return;
+    return -1;
   }
-  absTimeout.tv_sec += sec;
+
+  if (msec > 1000L) {
+    absTimeout.tv_sec += msec / 1000L;
+    msec = msec % 1000L;
+  }
+  absTimeout.tv_nsec += msec * 1000000L;
+  if (absTimeout.tv_nsec > 1000000000L) {
+    absTimeout.tv_nsec -= 1000000000L;
+    absTimeout.tv_sec += 1;
+  }
+
   while ((ret = sem_timedwait_monotonic_np(&pCallbackData->sem, &absTimeout)) == -1 && errno == EINTR) {
     continue;
   }
   if (ret == -1 && errno == ETIMEDOUT) {
-    NXPLOG_UCIHAL_E("wait semaphore timed out");
     pCallbackData->status = UWBSTATUS_RESPONSE_TIMEOUT;
-    return;
+    NXPLOG_UCIHAL_E("wait semaphore timed out");
+    return -1;
   }
-  pCallbackData->status = UWBSTATUS_SUCCESS;
-  return;
-}
-
-void phNxpUciHal_sem_timed_wait(phNxpUciHal_Sem_t* pCallbackData)
-{
-  /* default 1 second timeout*/
-  phNxpUciHal_sem_timed_wait_sec(pCallbackData, 1);
+  return 0;
 }
 
 /*******************************************************************************
@@ -454,19 +457,49 @@ void phNxpUciHal_releaseall_cb_data(void) {
 ** Returns          None
 **
 *******************************************************************************/
-void phNxpUciHal_print_packet(const char* pString, const uint8_t* p_data,
+void phNxpUciHal_print_packet(enum phNxpUciHal_Pkt_Type what, const uint8_t* p_data,
                               uint16_t len) {
   uint32_t i;
   char print_buffer[len * 3 + 1];
+
+  if ((gLog_level.ucix_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL)) {
+    /* OK to print */
+  }
+  else
+  {
+    /* Nothing to print...
+     * Why prepare buffer without printing?
+     */
+    return;
+  }
 
   memset(print_buffer, 0, sizeof(print_buffer));
   for (i = 0; i < len; i++) {
     snprintf(&print_buffer[i * 2], 3, "%02X", p_data[i]);
   }
-  if (0 == memcmp(pString, "SEND", 0x04)) {
-    NXPLOG_UCIX_D("len = %3d > %s", len, print_buffer);
-  } else if (0 == memcmp(pString, "RECV", 0x04)) {
-    NXPLOG_UCIR_D("len = %3d < %s", len, print_buffer);
+  switch(what) {
+    case NXP_TML_UCI_CMD_AP_2_UWBS:
+    {
+      NXPLOG_UCIX_D("len = %3d > %s", len, print_buffer);
+    }
+    break;
+    case NXP_TML_UCI_RSP_NTF_UWBS_2_AP:
+    {
+      NXPLOG_UCIR_D("len = %3d < %s", len, print_buffer);
+    }
+    break;
+    case NXP_TML_FW_DNLD_CMD_AP_2_UWBS:
+    {
+      // TODO: Should be NXPLOG_FWDNLD_D
+      NXPLOG_UCIX_D("len = %3d > (FW)%s", len, print_buffer);
+    }
+    break;
+    case NXP_TML_FW_DNLD_RSP_UWBS_2_AP:
+    {
+      // TODO: Should be NXPLOG_FWDNLD_D
+      NXPLOG_UCIR_D("len = %3d < (FW)%s", len, print_buffer);
+    }
+    break;
   }
 
   return;
