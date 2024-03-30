@@ -842,68 +842,68 @@ void phNxpUciHal_read_complete(void* pContext,
   int32_t index = 0;
   while (totalLength > index)
   {
-     uint8_t extBitSet = (pInfo->pBuff[index + EXTND_LEN_INDICATOR_OFFSET] & EXTND_LEN_INDICATOR_OFFSET_MASK);
-     length = pInfo->pBuff[index + NORMAL_MODE_LENGTH_OFFSET];
-     if (extBitSet || ((pInfo->pBuff[index] & UCI_MT_MASK) == 0x00)) {
-       length = (length << EXTENDED_MODE_LEN_SHIFT) | pInfo->pBuff[index + EXTENDED_MODE_LEN_OFFSET] ;
-     }
-     length += UCI_MSG_HDR_SIZE;
-     NXPLOG_UCIHAL_D("read successful length = 0x%x", length);
+    uint8_t extBitSet = (pInfo->pBuff[index + EXTND_LEN_INDICATOR_OFFSET] & EXTND_LEN_INDICATOR_OFFSET_MASK);
+    length = pInfo->pBuff[index + NORMAL_MODE_LENGTH_OFFSET];
+    if (extBitSet || ((pInfo->pBuff[index] & UCI_MT_MASK) == 0x00)) {
+     length = (length << EXTENDED_MODE_LEN_SHIFT) | pInfo->pBuff[index + EXTENDED_MODE_LEN_OFFSET] ;
+    }
+    length += UCI_MSG_HDR_SIZE;
+    NXPLOG_UCIHAL_D("read successful length = 0x%x", length);
 
-     if (pInfo->wStatus == UWBSTATUS_SUCCESS) {
-       NXPLOG_UCIHAL_D("read successful status = 0x%x", pInfo->wStatus);
-       nxpucihal_ctrl.p_rx_data = &pInfo->pBuff[index];
-       nxpucihal_ctrl.rx_data_len = length;
-       phNxpUciHal_print_packet("RECV",
-           nxpucihal_ctrl.p_rx_data,
-           nxpucihal_ctrl.rx_data_len);
+    if (pInfo->wStatus == UWBSTATUS_SUCCESS) {
+      NXPLOG_UCIHAL_D("read successful status = 0x%x", pInfo->wStatus);
+      nxpucihal_ctrl.p_rx_data = &pInfo->pBuff[index];
+      nxpucihal_ctrl.rx_data_len = length;
+      phNxpUciHal_print_packet("RECV", nxpucihal_ctrl.p_rx_data, nxpucihal_ctrl.rx_data_len);
 
-       mt = ((nxpucihal_ctrl.p_rx_data[0]) & UCI_MT_MASK) >> UCI_MT_SHIFT;
-       gid = nxpucihal_ctrl.p_rx_data[0] & UCI_GID_MASK;
-       oid = nxpucihal_ctrl.p_rx_data[1] & UCI_OID_MASK;
-       pbf = (nxpucihal_ctrl.p_rx_data[0] & UCI_PBF_MASK) >> UCI_PBF_SHIFT;
+      mt = ((nxpucihal_ctrl.p_rx_data[0]) & UCI_MT_MASK) >> UCI_MT_SHIFT;
+      gid = nxpucihal_ctrl.p_rx_data[0] & UCI_GID_MASK;
+      oid = nxpucihal_ctrl.p_rx_data[1] & UCI_OID_MASK;
+      pbf = (nxpucihal_ctrl.p_rx_data[0] & UCI_PBF_MASK) >> UCI_PBF_SHIFT;
 
-       // mapping device caps according to Fira 2.0
-       if (gid == UCI_GID_CORE && oid == UCI_OID_GET_CAPS_INFO) {
-         phNxpUciHal_parse_get_capsInfo(nxpucihal_ctrl.rx_data_len,
-             nxpucihal_ctrl.p_rx_data);
-       }
-       nxpucihal_ctrl.isSkipPacket = 0;
-       phNxpUciHal_parse(nxpucihal_ctrl.rx_data_len, nxpucihal_ctrl.p_rx_data);
+      // mapping device caps according to Fira 2.0
+      if (gid == UCI_GID_CORE && oid == UCI_OID_GET_CAPS_INFO) {
+        phNxpUciHal_parse_get_capsInfo(nxpucihal_ctrl.rx_data_len,
+         nxpucihal_ctrl.p_rx_data);
+      }
 
-       phNxpUciHal_process_response();
+      nxpucihal_ctrl.isSkipPacket = 0;
+      phNxpUciHal_parse(nxpucihal_ctrl.rx_data_len, nxpucihal_ctrl.p_rx_data);
+      phNxpUciHal_process_response();
 
-       if (!uwb_device_initialized) {
-         if (pbf) {
-           /* XXX: fix the whole logic if this really happens */
-           NXPLOG_UCIHAL_E("FIXME: Fragmented packets received during device-init!");
-         }
-         if((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_DEVICE_STATUS_NTF)) {
-           nxpucihal_ctrl.uwbc_device_state = nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET];
-           if(nxpucihal_ctrl.uwbc_device_state == UWB_DEVICE_INIT || nxpucihal_ctrl.uwbc_device_state == UWB_DEVICE_READY) {
-             nxpucihal_ctrl.isSkipPacket = 1;
-             SEM_POST(&(nxpucihal_ctrl.dev_status_ntf_wait));
-           }
-         }
-         if ((gid == UCI_GID_PROPRIETARY) && (oid == UCI_MSG_BINDING_STATUS_NTF)) {
-           nxpucihal_ctrl.uwb_binding_status =
-            nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET];
-           nxpucihal_ctrl.isSkipPacket = 1;
-           SEM_POST(&(nxpucihal_ctrl.uwb_binding_status_ntf_wait));
-         }
-
-         if ((mt == UCI_MT_NTF) && (gid == UCI_GID_PROPRIETARY_0X0F) &&
-             (oid == UCI_MSG_UWB_ESE_BINDING_NTF)) {
-           nxpucihal_ctrl.uwb_binding_count =
-            nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET + 1];
-           nxpucihal_ctrl.uwb_binding_status =
-               nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET + 2];
-           nxpucihal_ctrl.isSkipPacket = 1;
-           SEM_POST(&(nxpucihal_ctrl.uwb_do_bind_ntf_wait));
-         }
+      if(!uwb_device_initialized) {
+        if (pbf) {
+          /* XXX: fix the whole logic if this really happens */
+          NXPLOG_UCIHAL_E("FIXME: Fragmented packets received during device-init!");
+        }
+        if((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_DEVICE_STATUS_NTF)) {
+          nxpucihal_ctrl.uwbc_device_state = nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET];
+          if(nxpucihal_ctrl.uwbc_device_state == UWB_DEVICE_INIT || nxpucihal_ctrl.uwbc_device_state == UWB_DEVICE_READY) {
+            nxpucihal_ctrl.isSkipPacket = 1;
+            nxpucihal_ctrl.dev_status_ntf_wait.status = UWBSTATUS_SUCCESS;
+            SEM_POST(&(nxpucihal_ctrl.dev_status_ntf_wait));
+          }
+        }
+        if ((gid == UCI_GID_PROPRIETARY) && (oid == UCI_MSG_BINDING_STATUS_NTF)) {
+          nxpucihal_ctrl.uwb_binding_status =
+              nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET];
+          nxpucihal_ctrl.isSkipPacket = 1;
+          nxpucihal_ctrl.uwb_binding_status_ntf_wait.status = UWBSTATUS_SUCCESS;
+          SEM_POST(&(nxpucihal_ctrl.uwb_binding_status_ntf_wait));
+        }
+        if ((mt == UCI_MT_NTF) && (gid == UCI_GID_PROPRIETARY_0X0F) &&
+           (oid == UCI_MSG_UWB_ESE_BINDING_NTF)) {
+         nxpucihal_ctrl.uwb_binding_count =
+          nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET + 1];
+         nxpucihal_ctrl.uwb_binding_status =
+             nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET + 2];
+         nxpucihal_ctrl.isSkipPacket = 1;
+         nxpucihal_ctrl.uwb_do_bind_ntf_wait.status = UWBSTATUS_SUCCESS;
+         SEM_POST(&(nxpucihal_ctrl.uwb_do_bind_ntf_wait));
+        }
 
         if ((mt == UCI_MT_NTF) && (gid == UCI_GID_PROPRIETARY_0X0F) &&
-            (oid == UWB_ESE_BINDING_CHECK_NTF)) {
+          (oid == UWB_ESE_BINDING_CHECK_NTF)) {
           nxpucihal_ctrl.uwb_binding_status =
               nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET];
           nxpucihal_ctrl.p_rx_data[0] = 0x6E;
@@ -912,6 +912,7 @@ void phNxpUciHal_read_complete(void* pContext,
           nxpucihal_ctrl.p_rx_data[3] = 0x01;
           nxpucihal_ctrl.p_rx_data[4] = nxpucihal_ctrl.uwb_binding_status;
           nxpucihal_ctrl.rx_data_len = 5;
+          nxpucihal_ctrl.uwb_get_binding_status_ntf_wait.status = UWBSTATUS_SUCCESS;
           SEM_POST(&(nxpucihal_ctrl.uwb_get_binding_status_ntf_wait));
         }
       }
@@ -919,6 +920,9 @@ void phNxpUciHal_read_complete(void* pContext,
       // phNxpUciHal_process_ext_cmd_rsp() is waiting for the response packet
       // set this true to wake it up for other reasons
       bool bWakeupExtCmd = (mt == UCI_MT_RSP);
+      if (bWakeupExtCmd) {
+        nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_SUCCESS;
+      }
 
       /* DBG packets not yet supported, just ignore them silently */
       if (!nxpucihal_ctrl.isSkipPacket) {
@@ -928,18 +932,19 @@ void phNxpUciHal_read_complete(void* pContext,
         }
       }
 
-      // Handle retransmissions
       if (!nxpucihal_ctrl.isSkipPacket) {
         if (!pbf && mt == UCI_MT_NTF && gid == UCI_GID_CORE && oid == UCI_MSG_CORE_GENERIC_ERROR_NTF) {
           uint8_t status_code = nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET];
 
           if (status_code == UCI_STATUS_COMMAND_RETRY) {
+            // Handle retransmissions
+            // TODO: Do not retransmit it when !nxpucihal_ctrl.hal_ext_enabled,
+            // Upper layer should take care of it.
             nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_COMMAND_RETRANSMIT;
             nxpucihal_ctrl.isSkipPacket = 1;
             bWakeupExtCmd = true;
-          } else  if (status_code == UCI_STATUS_INVALID_MSG_SIZE) {
+          } else  if (status_code == UCI_STATUS_INVALID_MSG_SIZE || status_code == UCI_STATUS_SYNTAX_ERROR) {
             nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_INVALID_COMMAND_LENGTH;
-            nxpucihal_ctrl.isSkipPacket = 1;
             bWakeupExtCmd = true;
           }
         }
@@ -1403,8 +1408,8 @@ static tHAL_UWB_STATUS phNxpUciHal_do_bind() {
     return status;
   }
 
-  phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.uwb_do_bind_ntf_wait);
-  if (nxpucihal_ctrl.uwb_do_bind_ntf_wait.status != UWBSTATUS_SUCCESS) {
+  if (phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.uwb_do_bind_ntf_wait) ||
+      nxpucihal_ctrl.uwb_do_bind_ntf_wait.status != UWBSTATUS_SUCCESS) {
     NXPLOG_UCIHAL_E("uwb_do_bind_ntf_wait semaphore timed out");
     return UWBSTATUS_FAILED;
   }
@@ -1426,8 +1431,8 @@ static tHAL_UWB_STATUS phNxpUciHal_get_binding_status() {
   if (status != UWBSTATUS_SUCCESS) {
     return status;
   }
-  phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.uwb_get_binding_status_ntf_wait);
-  if (nxpucihal_ctrl.uwb_get_binding_status_ntf_wait.status !=
+  if (phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.uwb_get_binding_status_ntf_wait) ||
+      nxpucihal_ctrl.uwb_get_binding_status_ntf_wait.status !=
       UWBSTATUS_SUCCESS) {
     NXPLOG_UCIHAL_E("uwb_get_binding_status_ntf_wait semaphore timed out");
     return UWBSTATUS_FAILED;
@@ -1482,8 +1487,8 @@ static tHAL_UWB_STATUS phNxpUciHal_parse_binding_status_ntf() {
     if (status != UWBSTATUS_SUCCESS) {
       return status;
     }
-    phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.uwb_get_binding_status_ntf_wait);
-    if (nxpucihal_ctrl.uwb_get_binding_status_ntf_wait.status !=
+    if (phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.uwb_get_binding_status_ntf_wait) ||
+        nxpucihal_ctrl.uwb_get_binding_status_ntf_wait.status !=
         UWBSTATUS_SUCCESS) {
       NXPLOG_UCIHAL_E("uwb_get_binding_status_ntf_wait semaphore timed out");
       /* Sending originial binding status notification to upper layer */
@@ -1578,8 +1583,8 @@ fwd_retry:
             NXPLOG_UCIHAL_E("read status error status = %x", status);
             goto failure;
           }
-          phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.dev_status_ntf_wait);
-          if (nxpucihal_ctrl.dev_status_ntf_wait.status != UWBSTATUS_SUCCESS) {
+          if (phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.dev_status_ntf_wait) ||
+              nxpucihal_ctrl.dev_status_ntf_wait.status != UWBSTATUS_SUCCESS) {
             NXPLOG_UCIHAL_E("UWB_DEVICE_INIT dev_status_ntf_wait semaphore timed out");
             goto failure;
           }
@@ -1592,8 +1597,8 @@ fwd_retry:
             NXPLOG_UCIHAL_E("%s: Set Board Config Failed", __func__);
             goto failure;
           }
-          phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.dev_status_ntf_wait);
-          if (nxpucihal_ctrl.dev_status_ntf_wait.status != UWBSTATUS_SUCCESS) {
+          if (phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.dev_status_ntf_wait) ||
+              nxpucihal_ctrl.dev_status_ntf_wait.status != UWBSTATUS_SUCCESS) {
             NXPLOG_UCIHAL_E("UWB_DEVICE_READY dev_status_ntf_wait semaphore timed out");
             goto failure;
           }
@@ -1607,8 +1612,8 @@ fwd_retry:
             NXPLOG_UCIHAL_E("%s: device reset Failed", __func__);
             goto failure;
           }
-          phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.dev_status_ntf_wait);
-          if (nxpucihal_ctrl.dev_status_ntf_wait.status != UWBSTATUS_SUCCESS) {
+          if (phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.dev_status_ntf_wait) ||
+              nxpucihal_ctrl.dev_status_ntf_wait.status != UWBSTATUS_SUCCESS) {
             NXPLOG_UCIHAL_E("UWB_DEVICE_READY dev_status_ntf_wait semaphore timed out");
             goto failure;
           }
@@ -1622,8 +1627,8 @@ fwd_retry:
           if (status != UWBSTATUS_SUCCESS) {
             return status;
           }
-          phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.uwb_binding_status_ntf_wait);
-          if (nxpucihal_ctrl.uwb_binding_status_ntf_wait.status == UWBSTATUS_SUCCESS) {
+          if (phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.uwb_binding_status_ntf_wait) ||
+              nxpucihal_ctrl.uwb_binding_status_ntf_wait.status == UWBSTATUS_SUCCESS) {
               NXPLOG_UCIHAL_D("binding status notification received");
               if (nxpucihal_ctrl.fw_boot_mode == USER_FW_BOOT_MODE) {
                  bool isBindingAllowed = phNxpUciHal_getBindingConfig();
