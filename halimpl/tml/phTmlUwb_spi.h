@@ -27,6 +27,8 @@
 #define PWR_DISABLE               0
 #define PWR_ENABLE                1
 #define ABORT_READ_PENDING        2
+#define PWR_SUSPEND               3
+#define PWR_RESUME                4
 
 #define NORMAL_MODE_HEADER_LEN    4
 #define NORMAL_MODE_LEN_OFFSET    3
