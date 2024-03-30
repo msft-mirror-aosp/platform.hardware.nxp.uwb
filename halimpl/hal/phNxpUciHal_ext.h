@@ -66,8 +66,10 @@ typedef struct {
 tHAL_UWB_STATUS phNxpUciHal_send_ext_cmd(uint16_t cmd_len, const uint8_t* p_cmd);
 tHAL_UWB_STATUS phNxpUciHal_process_ext_rsp(uint16_t cmd_len, uint8_t* p_buff);
 tHAL_UWB_STATUS phNxpUciHal_set_board_config();
-void phNxpUciHal_processCalibParamTxPowerPerAntenna(const uint8_t *p_data, uint16_t data_len);
+void phNxpUciHal_handle_set_calibration(const uint8_t *p_data, uint16_t data_len);
 void phNxpUciHal_extcal_handle_coreinit(void);
 void phNxpUciHal_process_response();
 void phNxpUciHal_handle_set_country_code(const char country_code[2]);
+bool phNxpUciHal_handle_set_app_config(uint16_t *data_len, uint8_t *p_data);
+void apply_per_country_calibrations(void);
 #endif /* _PHNXPNICHAL_EXT_H_ */

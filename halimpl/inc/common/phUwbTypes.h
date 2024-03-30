@@ -24,6 +24,10 @@
 #include <unistd.h>
 #include <stdbool.h>
 
+#include <memory>
+
+#include <phMessageQueue.h>
+
 #ifndef true
 #define true (0x01) /* Logical True Value */
 #endif
@@ -101,6 +105,17 @@ typedef void (*pphLibUwb_DeferredCallback_t)(void*);
 typedef void* pphLibUwb_DeferredParameter_t;
 
 /*
+ * UWB Message structure contains message specific details like
+ * message type, message specific data block details, etc.
+ */
+struct phLibUwb_Message {
+  uint32_t eMsgType; /* Type of the message to be posted*/
+  void* pMsgData;    /* Pointer to message specific data block in case any*/
+  phLibUwb_Message(uint32_t type) : eMsgType(type), pMsgData(NULL) {}
+  phLibUwb_Message(uint32_t type, void *data) : eMsgType(type), pMsgData(data) {}
+};
+
+/*
  * Possible Hardware Configuration exposed to upper layer.
  * Typically this should be at least the communication link (Ex:"COM1","COM2")
  * the controller is connected to.
@@ -109,19 +124,9 @@ typedef struct phLibUwb_sConfig {
   uint8_t* pLogFile; /* Log File Name*/
   /* Hardware communication link to the controller */
   phLibUwb_eConfigLinkType nLinkType;
-  /* The client ID (thread ID or message queue ID) */
-  uintptr_t nClientId;
+  /* message queue on the client thread */
+  std::shared_ptr<MessageQueue<phLibUwb_Message>> pClientMq;
 } phLibUwb_sConfig_t, *pphLibUwb_sConfig_t;
-
-/*
- * UWB Message structure contains message specific details like
- * message type, message specific data block details, etc.
- */
-typedef struct phLibUwb_Message {
-  uint32_t eMsgType; /* Type of the message to be posted*/
-  void* pMsgData;    /* Pointer to message specific data block in case any*/
-  uint32_t Size;     /* Size of the datablock*/
-} phLibUwb_Message_t, *pphLibUwb_Message_t;
 
 /*
  * Deferred message specific info declaration.
