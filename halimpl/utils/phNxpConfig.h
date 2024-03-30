@@ -77,6 +77,11 @@ int NxpConfig_GetStrArrayVal(const char* name, int index, char* pValue, unsigned
 /* libuwb-countrycode.conf parameters */
 #define NAME_NXP_COUNTRY_CODE_VERSION "VERSION"
 
+#define NAME_AUTO_SUSPEND_ENABLE        "AUTO_SUSPEND_ENABLE"
+#define NAME_AUTO_SUSPEND_TIMEOUT_MS    "AUTO_SUSPEND_TIMEOUT_MS"
+
+#define NAME_DELETE_URSK_FOR_CCC_SESSION    "DELETE_URSK_FOR_CCC_SESSION"
+
 /* default configuration */
 #define default_storage_location "/data/vendor/uwb"
 
