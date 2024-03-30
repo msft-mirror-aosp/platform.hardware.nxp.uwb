@@ -38,11 +38,7 @@
 /******************* Global variables *****************************************/
 extern phNxpUciHal_Control_t nxpucihal_ctrl;
 
-extern uint32_t cleanup_timer;
-extern short conf_tx_power;
-
 static std::vector<uint8_t> gtx_power;
-static std::vector<uint8_t> gRMS_tx_power;
 
 phNxpUciHalProp_Control_t extNxpucihal_ctrl;
 uint32_t hwResetTimer;
@@ -519,7 +515,6 @@ static bool phNxpUciHal_setCalibParamTxPower(void)
   }
 
   gtx_power.clear();
-  gRMS_tx_power.clear();
 
   return true;
 }
