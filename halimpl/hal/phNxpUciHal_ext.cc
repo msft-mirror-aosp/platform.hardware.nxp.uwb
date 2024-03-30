@@ -482,6 +482,11 @@ static bool phNxpUciHal_updateTxPower(void)
  *******************************************************************************/
 void phNxpUciHal_handle_set_calibration(const uint8_t *p_data, uint16_t data_len)
 {
+  // Only saves the SET_CALIBRATION_CMD from upper-layer
+  if (nxpucihal_ctrl.hal_ext_enabled) {
+    return;
+  }
+
   phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
 
   // RMS Tx power -> Octet [4, 5] in calib data
