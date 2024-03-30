@@ -393,31 +393,34 @@ void phNxpUciHal_cleanup_cb_data(phNxpUciHal_Sem_t* pCallbackData) {
   return;
 }
 
-void phNxpUciHal_sem_timed_wait_sec(phNxpUciHal_Sem_t* pCallbackData, time_t sec) {
+int phNxpUciHal_sem_timed_wait_msec(phNxpUciHal_Sem_t* pCallbackData, long msec)
+{
   int ret;
   struct timespec absTimeout;
   if (clock_gettime(CLOCK_MONOTONIC, &absTimeout) == -1) {
     NXPLOG_UCIHAL_E("clock_gettime failed");
-    pCallbackData->status = UWBSTATUS_FAILED;
-    return;
+    return -1;
   }
-  absTimeout.tv_sec += sec;
+
+  if (msec > 1000L) {
+    absTimeout.tv_sec += msec / 1000L;
+    msec = msec % 1000L;
+  }
+  absTimeout.tv_nsec += msec * 1000000L;
+  if (absTimeout.tv_nsec > 1000000000L) {
+    absTimeout.tv_nsec -= 1000000000L;
+    absTimeout.tv_sec += 1;
+  }
+
   while ((ret = sem_timedwait_monotonic_np(&pCallbackData->sem, &absTimeout)) == -1 && errno == EINTR) {
     continue;
   }
   if (ret == -1 && errno == ETIMEDOUT) {
-    NXPLOG_UCIHAL_E("wait semaphore timed out");
     pCallbackData->status = UWBSTATUS_RESPONSE_TIMEOUT;
-    return;
+    NXPLOG_UCIHAL_E("wait semaphore timed out");
+    return -1;
   }
-  pCallbackData->status = UWBSTATUS_SUCCESS;
-  return;
-}
-
-void phNxpUciHal_sem_timed_wait(phNxpUciHal_Sem_t* pCallbackData)
-{
-  /* default 1 second timeout*/
-  phNxpUciHal_sem_timed_wait_sec(pCallbackData, 1);
+  return 0;
 }
 
 /*******************************************************************************
