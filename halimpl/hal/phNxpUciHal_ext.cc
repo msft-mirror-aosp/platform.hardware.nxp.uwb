@@ -31,15 +31,14 @@
 
 /* Timeout value to wait for response from DEVICE_TYPE_SR1xx */
 #define MAX_COMMAND_RETRY_COUNT           5
-#define MAX_COMMAND_RETRY_ON_INVALID_LEN  3
-#define HAL_EXTNS_WRITE_RSP_TIMEOUT       100
+#define MAX_COMMAND_RETRY_ON_INVALID_LEN  2
+#define HAL_EXTNS_WRITE_RSP_TIMEOUT_MS    100
 #define HAL_HW_RESET_NTF_TIMEOUT          10000 /* 10 sec wait */
 
 /******************* Global variables *****************************************/
 extern phNxpUciHal_Control_t nxpucihal_ctrl;
 
 extern uint32_t cleanup_timer;
-extern uint32_t timeoutTimerId;
 extern short conf_tx_power;
 
 static std::vector<uint8_t> gtx_power;
@@ -49,7 +48,6 @@ phNxpUciHalProp_Control_t extNxpucihal_ctrl;
 uint32_t hwResetTimer;
 
 /************** HAL extension functions ***************************************/
-static void hal_extns_write_rsp_timeout_cb(uint32_t TimerId, void *pContext);
 static void phNxpUciHal_send_dev_error_status_ntf();
 static bool phNxpUciHal_is_retry_not_required(uint8_t uci_octet0);
 static void phNxpUciHal_clear_thermal_error_status();
@@ -98,7 +96,7 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
   bool exit_loop = false;
 
   while(!exit_loop) {
-    nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_SUCCESS;
+    nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_FAILED;
     nxpucihal_ctrl.ext_cb_waiting = true;
 
     *data_written = phNxpUciHal_write_unlocked(cmd_len, p_cmd);
@@ -114,24 +112,9 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
       goto clean_and_return;
     }
 
-    /* Start timer */
-    status =
-        phOsalUwb_Timer_Start(timeoutTimerId, HAL_EXTNS_WRITE_RSP_TIMEOUT,
-                              &hal_extns_write_rsp_timeout_cb, NULL);
-    if (UWBSTATUS_SUCCESS == status) {
-      NXPLOG_UCIHAL_D("Response timer started");
-    } else {
-      NXPLOG_UCIHAL_E("Response timer not started!!!");
-      status = UWBSTATUS_FAILED;
-      goto clean_and_return;
-    }
+    // Wait for rsp
+    phNxpUciHal_sem_timed_wait_msec(&nxpucihal_ctrl.ext_cb_data, HAL_EXTNS_WRITE_RSP_TIMEOUT_MS);
 
-    /* Wait for rsp */
-    if (SEM_WAIT(&nxpucihal_ctrl.ext_cb_data)) {
-      status = UWBSTATUS_FAILED;
-      NXPLOG_UCIHAL_E("p_hal_ext->ext_cb_data.sem semaphore error");
-      goto clean_and_return;
-    }
     nxpucihal_ctrl.ext_cb_waiting = false;
 
     switch (nxpucihal_ctrl.ext_cb_data.status) {
@@ -139,11 +122,12 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
       nr_timedout++;
       [[fallthrough]];
     case UWBSTATUS_COMMAND_RETRANSMIT:
+      // TODO: Do not retransmit CMD by here when !nxpucihal_ctrl.hal_ext_enabled,
+      // Upper layer should take care of it.
       nr_retries++;
       break;
     case UWBSTATUS_INVALID_COMMAND_LENGTH:
-      // Something went wrong,
-      // XXX: we cannot filter the cases where the packet is actually broken.
+      // Something went wrong, just report this to upper-layer as is.
       nr_unrecognized++;
       break;
     default:
@@ -151,6 +135,7 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
       exit_loop = true;
       break;
     }
+
     if (nr_retries >= MAX_COMMAND_RETRY_COUNT || nr_unrecognized >= MAX_COMMAND_RETRY_ON_INVALID_LEN) {
       NXPLOG_UCIHAL_E("Failed to process cmd/rsp 0x%x", nxpucihal_ctrl.ext_cb_data.status);
       status = UWBSTATUS_FAILED;
@@ -163,26 +148,6 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
     NXPLOG_UCIHAL_E("Warning: CMD/RSP retried %d times (timeout:%d, unrecognized:%d)\n",
                     nr_retries, nr_timedout, nr_unrecognized);
   }
-
-  /* Stop Timer */
-  status = phOsalUwb_Timer_Stop(timeoutTimerId);
-
-  if (UWBSTATUS_SUCCESS == status) {
-    NXPLOG_UCIHAL_D("Response timer stopped");
-  } else {
-    NXPLOG_UCIHAL_E("Response timer stop ERROR!!!");
-    status = UWBSTATUS_FAILED;
-    goto clean_and_return;
-  }
-
-  if (nxpucihal_ctrl.ext_cb_data.status != UWBSTATUS_SUCCESS) {
-    NXPLOG_UCIHAL_E("Response Status = 0x%x",
-                    nxpucihal_ctrl.ext_cb_data.status);
-    status = UWBSTATUS_FAILED;
-    goto clean_and_return;
-  }
-  NXPLOG_UCIHAL_D("Checking response");
-  status = UWBSTATUS_SUCCESS;
 
 clean_and_return:
   phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.ext_cb_data);
@@ -217,25 +182,6 @@ tHAL_UWB_STATUS phNxpUciHal_send_ext_cmd(uint16_t cmd_len, const uint8_t* p_cmd)
   HAL_DISABLE_EXT();
 
   return status;
-}
-
-/******************************************************************************
- * Function         hal_extns_write_rsp_timeout_cb
- *
- * Description      Timer call back function
- *
- * Returns          None
- *
- ******************************************************************************/
-static void hal_extns_write_rsp_timeout_cb(uint32_t timerId, void* pContext) {
-  UNUSED(timerId);
-  UNUSED(pContext);
-  NXPLOG_UCIHAL_E("hal_extns_write_rsp_timeout_cb - write timeout!!!");
-  nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_RESPONSE_TIMEOUT;
-  usleep(1);
-  SEM_POST(&(nxpucihal_ctrl.ext_cb_data));
-
-  return;
 }
 
 /******************************************************************************
@@ -462,7 +408,8 @@ static void phNxpUciHal_applyCountryCaps(const char country_code[2],
 /*******************************************************************************
  * Function      phNxpUciHal_send_dev_error_status_ntf
  *
- * Description   send device status notification
+ * Description   send device status notification. Upper layer might restart
+ *               HAL service.
  *
  * Returns       void
  *
