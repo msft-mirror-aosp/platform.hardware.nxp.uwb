@@ -16,8 +16,11 @@
 #include <sys/stat.h>
 
 #include <array>
+#include <functional>
 #include <string.h>
+#include <list>
 #include <map>
+#include <mutex>
 #include <unordered_set>
 #include <vector>
 
@@ -68,6 +71,78 @@ static void phNxpUciHal_kill_client_thread(
 static void* phNxpUciHal_client_thread(void* arg);
 extern int phNxpUciHal_fw_download();
 static void phNxpUciHal_getVersionInfo();
+
+/*******************************************************************************
+ * RX packet handler
+ ******************************************************************************/
+struct phNxpUciHal_RxHandler {
+  // mt, gid, oid: packet type
+  uint8_t mt;
+  uint8_t gid;
+  uint8_t oid;
+
+  // skip_reporting: not reports the packet to upper layer if it's true
+  bool skip_reporting;
+  bool run_once;
+
+  std::function<void(size_t packet_len, const uint8_t *packet)> callback;
+
+  phNxpUciHal_RxHandler(uint8_t mt, uint8_t gid, uint8_t oid,
+    bool skip_reporting, bool run_once,
+    std::function<void(size_t packet_len, const uint8_t *packet)> callback) :
+      mt(mt), gid(gid), oid(oid),
+      skip_reporting(skip_reporting),
+      run_once(run_once),
+      callback(callback) { }
+};
+
+static std::list<std::shared_ptr<phNxpUciHal_RxHandler>> rx_handlers;
+static std::mutex rx_handlers_lock;
+
+std::shared_ptr<phNxpUciHal_RxHandler> phNxpUciHal_rx_handler_add(
+  uint8_t mt, uint8_t gid, uint8_t oid,
+  bool skip_reporting, bool run_once,
+  std::function<void(size_t packet_len, const uint8_t *packet)> callback)
+{
+  auto handler = std::make_shared<phNxpUciHal_RxHandler>(mt, gid, oid,
+    skip_reporting, run_once, callback);
+  std::lock_guard<std::mutex> guard(rx_handlers_lock);
+  rx_handlers.push_back(handler);
+  return handler;
+}
+
+void phNxpUciHal_rx_handler_del(std::shared_ptr<phNxpUciHal_RxHandler> handler)
+{
+  std::lock_guard<std::mutex> guard(rx_handlers_lock);
+  rx_handlers.remove(handler);
+}
+
+static void phNxpUciHal_rx_handler_check(size_t packet_len, const uint8_t *packet)
+{
+  const uint8_t mt = ((packet[0]) & UCI_MT_MASK) >> UCI_MT_SHIFT;
+  const uint8_t gid = packet[0] & UCI_GID_MASK;
+  const uint8_t oid = packet[1] & UCI_OID_MASK;
+
+  std::lock_guard<std::mutex> guard(rx_handlers_lock);
+
+  for (auto handler : rx_handlers) {
+    if (mt == handler->mt && gid == handler->gid && oid == handler->oid) {
+      handler->callback(packet_len, packet);
+      if (handler->skip_reporting) {
+        nxpucihal_ctrl.isSkipPacket = 1;
+      }
+    }
+  }
+  rx_handlers.remove_if([mt, gid, oid](auto& handler) {
+    return mt == handler->mt && gid == handler->gid && oid == handler->oid && handler->run_once;
+  });
+}
+
+static void phNxpUciHal_rx_handler_destroy(void)
+{
+  std::lock_guard<std::mutex> guard(rx_handlers_lock);
+  rx_handlers.clear();
+}
 
 /******************************************************************************
  * Function         phNxpUciHal_client_thread
@@ -869,20 +944,13 @@ void phNxpUciHal_read_complete(void* pContext,
 
       nxpucihal_ctrl.isSkipPacket = 0;
       phNxpUciHal_parse(nxpucihal_ctrl.rx_data_len, nxpucihal_ctrl.p_rx_data);
+      phNxpUciHal_rx_handler_check(pInfo->wLength, pInfo->pBuff);
       phNxpUciHal_process_response();
 
       if(!uwb_device_initialized) {
         if (pbf) {
           /* XXX: fix the whole logic if this really happens */
           NXPLOG_UCIHAL_E("FIXME: Fragmented packets received during device-init!");
-        }
-        if((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_DEVICE_STATUS_NTF)) {
-          nxpucihal_ctrl.uwbc_device_state = nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET];
-          if(nxpucihal_ctrl.uwbc_device_state == UWB_DEVICE_INIT || nxpucihal_ctrl.uwbc_device_state == UWB_DEVICE_READY) {
-            nxpucihal_ctrl.isSkipPacket = 1;
-            nxpucihal_ctrl.dev_status_ntf_wait.status = UWBSTATUS_SUCCESS;
-            SEM_POST(&(nxpucihal_ctrl.dev_status_ntf_wait));
-          }
         }
         if ((gid == UCI_GID_PROPRIETARY) && (oid == UCI_MSG_BINDING_STATUS_NTF)) {
           nxpucihal_ctrl.uwb_binding_status =
@@ -920,7 +988,7 @@ void phNxpUciHal_read_complete(void* pContext,
       // phNxpUciHal_process_ext_cmd_rsp() is waiting for the response packet
       // set this true to wake it up for other reasons
       bool bWakeupExtCmd = (mt == UCI_MT_RSP);
-      if (bWakeupExtCmd) {
+      if (bWakeupExtCmd && nxpucihal_ctrl.ext_cb_waiting) {
         nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_SUCCESS;
       }
 
@@ -1057,6 +1125,8 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
     if (nxpucihal_ctrl.uwb_close_complete_wait.status != UWBSTATUS_SUCCESS) {
       NXPLOG_UCIHAL_E("uwb_close_complete_wait semaphore timed out");
     }
+
+    phNxpUciHal_rx_handler_destroy();
 
     memset(&nxpucihal_ctrl, 0x00, sizeof(nxpucihal_ctrl));
 
@@ -1543,10 +1613,19 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
     return UWBSTATUS_FAILED;
   }
 
+  // Device Status Notification
+  std::shared_ptr<phNxpUciHal_RxHandler> dev_status_ntf_handler;
+  phNxpUciHal_Sem_t dev_status_ntf_wait;
+  phNxpUciHal_init_cb_data(&dev_status_ntf_wait, NULL);
+  uint8_t dev_status = UWB_DEVICE_ERROR;
+  auto dev_status_ntf_cb = [&dev_status, &dev_status_ntf_wait](size_t packet_len, const uint8_t *packet) mutable {
+    if (packet_len >= 5) {
+      dev_status = packet[UCI_RESPONSE_STATUS_OFFSET];
+      SEM_POST(&dev_status_ntf_wait);
+    }
+  };
+
   /* Create the local semaphore */
-  if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.dev_status_ntf_wait, NULL) != UWBSTATUS_SUCCESS) {
-    return UWBSTATUS_FAILED;
-  }
   if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.uwb_binding_status_ntf_wait, NULL) != UWBSTATUS_SUCCESS) {
     return UWBSTATUS_FAILED;
   }
@@ -1558,7 +1637,6 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
   }
 
   nxpucihal_ctrl.isRecoveryTimerStarted = false;
-  nxpucihal_ctrl.uwbc_device_state = UWB_DEVICE_ERROR;
   nxpucihal_ctrl.uwb_binding_status = UWB_DEVICE_UNKNOWN;
   nxpucihal_ctrl.fw_dwnld_mode = true; /* system in FW download mode*/
   uwb_device_initialized = false;
@@ -1582,60 +1660,57 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
   }
 
   if (status != UWBSTATUS_SUCCESS)
-    goto failure;
+    goto end_phNxpUciHal_init_hw;
 
   NXPLOG_UCIHAL_D("Complete FW download");
+
+  dev_status_ntf_handler =
+    phNxpUciHal_rx_handler_add(UCI_MT_NTF, UCI_GID_CORE, UCI_MSG_CORE_DEVICE_STATUS_NTF,
+                               true, false, dev_status_ntf_cb);
 
   status = phTmlUwb_Read( Rx_data, UCI_MAX_DATA_LEN,
             (pphTmlUwb_TransactCompletionCb_t)&phNxpUciHal_read_complete, NULL);
   if (status != UWBSTATUS_PENDING) {
     NXPLOG_UCIHAL_E("read status error status = %x", status);
-    goto failure;
+    goto end_phNxpUciHal_init_hw;
   }
 
-  phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.dev_status_ntf_wait);
-  if (nxpucihal_ctrl.dev_status_ntf_wait.status != UWBSTATUS_SUCCESS) {
-    NXPLOG_UCIHAL_E("UWB_DEVICE_INIT dev_status_ntf_wait semaphore timed out");
-    goto failure;
-  }
-  if(nxpucihal_ctrl.uwbc_device_state != UWB_DEVICE_INIT) {
-    NXPLOG_UCIHAL_E("UWB_DEVICE_INIT not received uwbc_device_state = %x",nxpucihal_ctrl.uwbc_device_state);
-    goto failure;
+  // wait for the first Device Status Notification
+  phNxpUciHal_sem_timed_wait(&dev_status_ntf_wait);
+  if(dev_status != UWB_DEVICE_INIT) {
+    NXPLOG_UCIHAL_E("UWB_DEVICE_INIT not received uwbc_device_state = %x", dev_status);
+    goto end_phNxpUciHal_init_hw;
   }
 
+  // Set board-config and wait for Device Status Notification
   status = phNxpUciHal_set_board_config();
   if (status != UWBSTATUS_SUCCESS) {
     NXPLOG_UCIHAL_E("%s: Set Board Config Failed", __func__);
-    goto failure;
+    goto end_phNxpUciHal_init_hw;
   }
-  phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.dev_status_ntf_wait);
-  if (nxpucihal_ctrl.dev_status_ntf_wait.status != UWBSTATUS_SUCCESS) {
+  phNxpUciHal_sem_timed_wait(&dev_status_ntf_wait);
+  if (dev_status != UWB_DEVICE_READY) {
     NXPLOG_UCIHAL_E("UWB_DEVICE_READY dev_status_ntf_wait semaphore timed out");
-    goto failure;
+    goto end_phNxpUciHal_init_hw;
   }
-  if(nxpucihal_ctrl.uwbc_device_state != UWB_DEVICE_READY) {
-    NXPLOG_UCIHAL_E("UWB_DEVICE_READY not received uwbc_device_state = %x",nxpucihal_ctrl.uwbc_device_state);
-    goto failure;
-  }
-  NXPLOG_UCIHAL_D("%s: Send device reset", __func__);
+
+  // Send SW reset and wait for Device Status Notification
+  dev_status = UWB_DEVICE_ERROR;
   status = phNxpUciHal_uwb_reset();
   if (status != UWBSTATUS_SUCCESS) {
     NXPLOG_UCIHAL_E("%s: device reset Failed", __func__);
-    goto failure;
+    goto end_phNxpUciHal_init_hw;
   }
-  phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.dev_status_ntf_wait);
-  if (nxpucihal_ctrl.dev_status_ntf_wait.status != UWBSTATUS_SUCCESS) {
-    NXPLOG_UCIHAL_E("UWB_DEVICE_READY dev_status_ntf_wait semaphore timed out");
-    goto failure;
+  phNxpUciHal_sem_timed_wait(&dev_status_ntf_wait);
+  if(dev_status != UWB_DEVICE_READY) {
+    NXPLOG_UCIHAL_E("UWB_DEVICE_READY not received uwbc_device_state = %x", dev_status);
+    goto end_phNxpUciHal_init_hw;
   }
-  if(nxpucihal_ctrl.uwbc_device_state != UWB_DEVICE_READY) {
-    NXPLOG_UCIHAL_E("UWB_DEVICE_READY not received uwbc_device_state = %x",nxpucihal_ctrl.uwbc_device_state);
-    goto failure;
-  }
+
   status = phNxpUciHal_sendGetCoreDeviceInfo();
   NXPLOG_UCIHAL_D("phNxpUciHal_sendGetCoreDeviceInfo status %d ", status);
   if (status != UWBSTATUS_SUCCESS) {
-    return status;
+    goto end_phNxpUciHal_init_hw;
   }
 
   phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.uwb_binding_status_ntf_wait);
@@ -1657,27 +1732,21 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
   status = phNxpUciHal_applyVendorConfig();
   if (status != UWBSTATUS_SUCCESS) {
     NXPLOG_UCIHAL_E("%s: Apply vendor Config Failed", __func__);
-    goto failure;
+    goto end_phNxpUciHal_init_hw;
   }
   phNxpUciHal_extcal_handle_coreinit();
 
   uwb_device_initialized = true;
   phNxpUciHal_getVersionInfo();
 
-  phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.dev_status_ntf_wait);
+end_phNxpUciHal_init_hw:
+  phNxpUciHal_rx_handler_del(dev_status_ntf_handler);
+  phNxpUciHal_cleanup_cb_data(&dev_status_ntf_wait);
   phNxpUciHal_cleanup_cb_data(
       &nxpucihal_ctrl.uwb_get_binding_status_ntf_wait);
   phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.uwb_do_bind_ntf_wait);
   phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.uwb_binding_status_ntf_wait);
   return status;
-
-failure:
-    phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.dev_status_ntf_wait);
-    phNxpUciHal_cleanup_cb_data(
-        &nxpucihal_ctrl.uwb_get_binding_status_ntf_wait);
-    phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.uwb_do_bind_ntf_wait);
-    phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.uwb_binding_status_ntf_wait);
-    return UWBSTATUS_FAILED;
 }
 
 /******************************************************************************

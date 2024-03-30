@@ -189,7 +189,6 @@ typedef struct phNxpUciHal_Control {
   // ext_cb_data is flagged only from the 1st response packet
   bool ext_cb_waiting;
 
-  phNxpUciHal_Sem_t dev_status_ntf_wait;
   phNxpUciHal_Sem_t uwb_binding_status_ntf_wait;
   phNxpUciHal_Sem_t uwb_close_complete_wait;
   phNxpUciHal_Sem_t uwb_get_binding_status_ntf_wait;
@@ -219,7 +218,6 @@ typedef struct phNxpUciHal_Control {
   bool_t fw_dwnld_mode;
   uint8_t uwb_binding_status;
   uint8_t uwb_binding_count;
-  uint8_t  uwbc_device_state;
   uint8_t dev_state_ntf_wait;
 
   // Per-country settings
@@ -230,6 +228,9 @@ typedef struct phNxpUciHal_Control {
   uint8_t cal_rx_antenna_mask;
   uint8_t cal_tx_antenna_mask;
 } phNxpUciHal_Control_t;
+
+// RX packet handler
+struct phNxpUciHal_RxHandler;
 
 /* Internal messages to handle callbacks */
 #define UCI_HAL_OPEN_CPLT_MSG 0x411
@@ -255,5 +256,11 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo);
 tHAL_UWB_STATUS phNxpUciHal_uwb_reset();
 tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig();
 tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len, const uint8_t *p_cmd, uint16_t *data_written);
+
+std::shared_ptr<phNxpUciHal_RxHandler> phNxpUciHal_rx_handler_add(
+  uint8_t mt, uint8_t gid, uint8_t oid,
+  bool skip_reporting, bool run_once,
+  std::function<void(size_t packet_len, const uint8_t *packet)> callback);
+void phNxpUciHal_rx_handler_del(std::shared_ptr<phNxpUciHal_RxHandler> handler);
 
 #endif /* _PHNXPUCIHAL_H_ */
