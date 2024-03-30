@@ -127,7 +127,7 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
     }
 
     /* Wait for rsp */
-    if (SEM_WAIT(nxpucihal_ctrl.ext_cb_data)) {
+    if (SEM_WAIT(&nxpucihal_ctrl.ext_cb_data)) {
       status = UWBSTATUS_FAILED;
       NXPLOG_UCIHAL_E("p_hal_ext->ext_cb_data.sem semaphore error");
       goto clean_and_return;
