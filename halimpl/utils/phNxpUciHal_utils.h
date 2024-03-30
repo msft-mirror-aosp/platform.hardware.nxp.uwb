@@ -28,6 +28,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "phNxpLog.h"
 #include "phUwbStatus.h"
 
 /********************* Definitions and structures *****************************/
@@ -88,8 +89,19 @@ void phNxpUciHal_cleanup_monitor(void);
 phNxpUciHal_Monitor_t* phNxpUciHal_get_monitor(void);
 tHAL_UWB_STATUS phNxpUciHal_init_cb_data(phNxpUciHal_Sem_t* pCallbackData,
                                    void* pContext);
-void phNxpUciHal_sem_timed_wait(phNxpUciHal_Sem_t* pCallbackData);
-void phNxpUciHal_sem_timed_wait_sec(phNxpUciHal_Sem_t* pCallbackData, time_t sec);
+
+int phNxpUciHal_sem_timed_wait_msec(phNxpUciHal_Sem_t* pCallbackData, long msec);
+
+static inline int phNxpUciHal_sem_timed_wait_sec(phNxpUciHal_Sem_t* pCallbackData, time_t sec)
+{
+  return phNxpUciHal_sem_timed_wait_msec(pCallbackData, sec * 1000L);
+}
+
+static inline int phNxpUciHal_sem_timed_wait(phNxpUciHal_Sem_t* pCallbackData)
+{
+  /* default 1 second timeout*/
+  return phNxpUciHal_sem_timed_wait_msec(pCallbackData, 1000L);
+}
 
 void phNxpUciHal_cleanup_cb_data(phNxpUciHal_Sem_t* pCallbackData);
 void phNxpUciHal_releaseall_cb_data(void);
