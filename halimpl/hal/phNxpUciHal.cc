@@ -1517,12 +1517,167 @@ static tHAL_UWB_STATUS phNxpUciHal_parse_binding_status_ntf() {
   return status;
 }
 
-bool phNxpUciHal_getBindingConfig() {
+static bool phNxpUciHal_getBindingConfig()
+{
   uint32_t num = 0;
   bool isBindingLockingAllowed = false;
   NxpConfig_GetNum(NAME_UWB_BINDING_LOCKING_ALLOWED, &num, sizeof(num));
   isBindingLockingAllowed = (bool)num;
   return isBindingLockingAllowed;
+}
+
+/******************************************************************************
+ * Function         phNxpUciHal_init_hw
+ *
+ * Description      Init the chip.
+ *
+ * Returns          status
+ *
+ ******************************************************************************/
+tHAL_UWB_STATUS phNxpUciHal_init_hw()
+{
+  tHAL_UWB_STATUS status;
+
+  if (nxpucihal_ctrl.halStatus != HAL_STATUS_OPEN) {
+    NXPLOG_UCIHAL_E("HAL not initialized");
+    return UWBSTATUS_FAILED;
+  }
+
+  /* Create the local semaphore */
+  if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.dev_status_ntf_wait, NULL) != UWBSTATUS_SUCCESS) {
+    return UWBSTATUS_FAILED;
+  }
+  if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.uwb_binding_status_ntf_wait, NULL) != UWBSTATUS_SUCCESS) {
+    return UWBSTATUS_FAILED;
+  }
+  if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.uwb_get_binding_status_ntf_wait, NULL) != UWBSTATUS_SUCCESS) {
+    return UWBSTATUS_FAILED;
+  }
+  if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.uwb_do_bind_ntf_wait, NULL) != UWBSTATUS_SUCCESS) {
+    return UWBSTATUS_FAILED;
+  }
+
+  nxpucihal_ctrl.isRecoveryTimerStarted = false;
+  nxpucihal_ctrl.uwbc_device_state = UWB_DEVICE_ERROR;
+  nxpucihal_ctrl.uwb_binding_status = UWB_DEVICE_UNKNOWN;
+  nxpucihal_ctrl.fw_dwnld_mode = true; /* system in FW download mode*/
+  uwb_device_initialized = false;
+
+  NXPLOG_UCIHAL_D(" Start FW download");
+
+  int fwd_retry_count = FWD_MAX_RETRY_COUNT;
+  while (fwd_retry_count--) {
+    status = phNxpUciHal_fw_download();
+    if (status == UWBSTATUS_SUCCESS)
+      break;
+
+    if(status == UWBSTATUS_FILE_NOT_FOUND) {
+      NXPLOG_UCIHAL_E("FW download File Not found: status= %x", status);
+      break;
+    }
+
+    NXPLOG_UCIHAL_E("FW download is failed FW download recovery starts: status= %x", status);
+    phTmlUwb_Chip_Reset();
+    usleep(5000);
+  }
+
+  if (status != UWBSTATUS_SUCCESS)
+    goto failure;
+
+  NXPLOG_UCIHAL_D("Complete FW download");
+
+  status = phTmlUwb_Read( Rx_data, UCI_MAX_DATA_LEN,
+            (pphTmlUwb_TransactCompletionCb_t)&phNxpUciHal_read_complete, NULL);
+  if (status != UWBSTATUS_PENDING) {
+    NXPLOG_UCIHAL_E("read status error status = %x", status);
+    goto failure;
+  }
+
+  phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.dev_status_ntf_wait);
+  if (nxpucihal_ctrl.dev_status_ntf_wait.status != UWBSTATUS_SUCCESS) {
+    NXPLOG_UCIHAL_E("UWB_DEVICE_INIT dev_status_ntf_wait semaphore timed out");
+    goto failure;
+  }
+  if(nxpucihal_ctrl.uwbc_device_state != UWB_DEVICE_INIT) {
+    NXPLOG_UCIHAL_E("UWB_DEVICE_INIT not received uwbc_device_state = %x",nxpucihal_ctrl.uwbc_device_state);
+    goto failure;
+  }
+
+  status = phNxpUciHal_set_board_config();
+  if (status != UWBSTATUS_SUCCESS) {
+    NXPLOG_UCIHAL_E("%s: Set Board Config Failed", __func__);
+    goto failure;
+  }
+  phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.dev_status_ntf_wait);
+  if (nxpucihal_ctrl.dev_status_ntf_wait.status != UWBSTATUS_SUCCESS) {
+    NXPLOG_UCIHAL_E("UWB_DEVICE_READY dev_status_ntf_wait semaphore timed out");
+    goto failure;
+  }
+  if(nxpucihal_ctrl.uwbc_device_state != UWB_DEVICE_READY) {
+    NXPLOG_UCIHAL_E("UWB_DEVICE_READY not received uwbc_device_state = %x",nxpucihal_ctrl.uwbc_device_state);
+    goto failure;
+  }
+  NXPLOG_UCIHAL_D("%s: Send device reset", __func__);
+  status = phNxpUciHal_uwb_reset();
+  if (status != UWBSTATUS_SUCCESS) {
+    NXPLOG_UCIHAL_E("%s: device reset Failed", __func__);
+    goto failure;
+  }
+  phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.dev_status_ntf_wait);
+  if (nxpucihal_ctrl.dev_status_ntf_wait.status != UWBSTATUS_SUCCESS) {
+    NXPLOG_UCIHAL_E("UWB_DEVICE_READY dev_status_ntf_wait semaphore timed out");
+    goto failure;
+  }
+  if(nxpucihal_ctrl.uwbc_device_state != UWB_DEVICE_READY) {
+    NXPLOG_UCIHAL_E("UWB_DEVICE_READY not received uwbc_device_state = %x",nxpucihal_ctrl.uwbc_device_state);
+    goto failure;
+  }
+  status = phNxpUciHal_sendGetCoreDeviceInfo();
+  NXPLOG_UCIHAL_D("phNxpUciHal_sendGetCoreDeviceInfo status %d ", status);
+  if (status != UWBSTATUS_SUCCESS) {
+    return status;
+  }
+
+  phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.uwb_binding_status_ntf_wait);
+  if (nxpucihal_ctrl.uwb_binding_status_ntf_wait.status == UWBSTATUS_SUCCESS) {
+    NXPLOG_UCIHAL_D("binding status notification received");
+    if (nxpucihal_ctrl.fw_boot_mode == USER_FW_BOOT_MODE) {
+      bool isBindingAllowed = phNxpUciHal_getBindingConfig();
+      if (isBindingAllowed) {
+        status = phNxpUciHal_parse_binding_status_ntf();
+        if (status != UWBSTATUS_SUCCESS) {
+          NXPLOG_UCIHAL_E("binding failed with status %d", status);
+        }
+      }
+    }
+  } else {
+    NXPLOG_UCIHAL_D("%s:binding status notification timed out", __func__);
+  }
+
+  status = phNxpUciHal_applyVendorConfig();
+  if (status != UWBSTATUS_SUCCESS) {
+    NXPLOG_UCIHAL_E("%s: Apply vendor Config Failed", __func__);
+    goto failure;
+  }
+  phNxpUciHal_extcal_handle_coreinit();
+
+  uwb_device_initialized = true;
+  phNxpUciHal_getVersionInfo();
+
+  phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.dev_status_ntf_wait);
+  phNxpUciHal_cleanup_cb_data(
+      &nxpucihal_ctrl.uwb_get_binding_status_ntf_wait);
+  phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.uwb_do_bind_ntf_wait);
+  phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.uwb_binding_status_ntf_wait);
+  return status;
+
+failure:
+    phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.dev_status_ntf_wait);
+    phNxpUciHal_cleanup_cb_data(
+        &nxpucihal_ctrl.uwb_get_binding_status_ntf_wait);
+    phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.uwb_do_bind_ntf_wait);
+    phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.uwb_binding_status_ntf_wait);
+    return UWBSTATUS_FAILED;
 }
 
 /******************************************************************************
@@ -1533,158 +1688,22 @@ bool phNxpUciHal_getBindingConfig() {
  * Returns          status
  *
  ******************************************************************************/
-tHAL_UWB_STATUS phNxpUciHal_coreInitialization() {
-  tHAL_UWB_STATUS status;
-  uint8_t fwd_retry_count = 0;
-  uint8_t dev_ready_ntf[] = {0x60, 0x01, 0x00, 0x01, 0x01};
-  nxpucihal_ctrl.isRecoveryTimerStarted = false;
-
-  if (nxpucihal_ctrl.halStatus != HAL_STATUS_OPEN) {
-    NXPLOG_UCIHAL_E("HAL not initialized");
-    return UWBSTATUS_FAILED;
+tHAL_UWB_STATUS phNxpUciHal_coreInitialization()
+{
+  tHAL_UWB_STATUS status = phNxpUciHal_init_hw();
+  if (status != UWBSTATUS_SUCCESS) {
+    phNxpUciHal_init_complete(UWBSTATUS_FAILED);
+    return status;
   }
 
-  NXPLOG_UCIHAL_D(" Start FW download");
-  /* Create the local semaphore */
-  if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.dev_status_ntf_wait, NULL) !=
-      UWBSTATUS_SUCCESS) {
-    NXPLOG_UCIHAL_E("Create dev_status_ntf_wait failed");
-    return UWBSTATUS_FAILED;
+  phNxpUciHal_init_complete(UWBSTATUS_SUCCESS);
+
+  if (nxpucihal_ctrl.p_uwb_stack_data_cback != NULL) {
+    uint8_t dev_ready_ntf[] = {0x60, 0x01, 0x00, 0x01, 0x01};
+    (*nxpucihal_ctrl.p_uwb_stack_data_cback)((sizeof(dev_ready_ntf)/sizeof(uint8_t)), dev_ready_ntf);
   }
 
-  if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.uwb_binding_status_ntf_wait, NULL) !=
-      UWBSTATUS_SUCCESS) {
-    NXPLOG_UCIHAL_E("Create uwb_binding_status_ntf_wait failed");
-    return UWBSTATUS_FAILED;
-  }
-
-  if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.uwb_get_binding_status_ntf_wait,
-                               NULL) != UWBSTATUS_SUCCESS) {
-    NXPLOG_UCIHAL_E("Create uwb_get_binding_status_ntf_wait failed");
-    return UWBSTATUS_FAILED;
-  }
-
-  if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.uwb_do_bind_ntf_wait, NULL) !=
-      UWBSTATUS_SUCCESS) {
-    NXPLOG_UCIHAL_E("Create uwb_do_bind_ntf_wait failed");
-    return UWBSTATUS_FAILED;
-  }
-  nxpucihal_ctrl.fw_dwnld_mode = true; /* system in FW download mode*/
-  uwb_device_initialized = false;
-
-fwd_retry:
-      nxpucihal_ctrl.uwbc_device_state = UWB_DEVICE_ERROR;
-      nxpucihal_ctrl.uwb_binding_status = UWB_DEVICE_UNKNOWN;
-      status = phNxpUciHal_fw_download();
-      if(status == UWBSTATUS_SUCCESS) {
-          status = phTmlUwb_Read( Rx_data, UCI_MAX_DATA_LEN,
-                    (pphTmlUwb_TransactCompletionCb_t)&phNxpUciHal_read_complete, NULL);
-          if (status != UWBSTATUS_PENDING) {
-            NXPLOG_UCIHAL_E("read status error status = %x", status);
-            goto failure;
-          }
-          if (phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.dev_status_ntf_wait) ||
-              nxpucihal_ctrl.dev_status_ntf_wait.status != UWBSTATUS_SUCCESS) {
-            NXPLOG_UCIHAL_E("UWB_DEVICE_INIT dev_status_ntf_wait semaphore timed out");
-            goto failure;
-          }
-          if(nxpucihal_ctrl.uwbc_device_state != UWB_DEVICE_INIT) {
-            NXPLOG_UCIHAL_E("UWB_DEVICE_INIT not received uwbc_device_state = %x",nxpucihal_ctrl.uwbc_device_state);
-            goto failure;
-          }
-          status = phNxpUciHal_set_board_config();
-          if (status != UWBSTATUS_SUCCESS) {
-            NXPLOG_UCIHAL_E("%s: Set Board Config Failed", __func__);
-            goto failure;
-          }
-          if (phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.dev_status_ntf_wait) ||
-              nxpucihal_ctrl.dev_status_ntf_wait.status != UWBSTATUS_SUCCESS) {
-            NXPLOG_UCIHAL_E("UWB_DEVICE_READY dev_status_ntf_wait semaphore timed out");
-            goto failure;
-          }
-          if(nxpucihal_ctrl.uwbc_device_state != UWB_DEVICE_READY) {
-            NXPLOG_UCIHAL_E("UWB_DEVICE_READY not received uwbc_device_state = %x",nxpucihal_ctrl.uwbc_device_state);
-            goto failure;
-          }
-          NXPLOG_UCIHAL_D("%s: Send device reset", __func__);
-          status = phNxpUciHal_uwb_reset();
-          if (status != UWBSTATUS_SUCCESS) {
-            NXPLOG_UCIHAL_E("%s: device reset Failed", __func__);
-            goto failure;
-          }
-          if (phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.dev_status_ntf_wait) ||
-              nxpucihal_ctrl.dev_status_ntf_wait.status != UWBSTATUS_SUCCESS) {
-            NXPLOG_UCIHAL_E("UWB_DEVICE_READY dev_status_ntf_wait semaphore timed out");
-            goto failure;
-          }
-          if(nxpucihal_ctrl.uwbc_device_state != UWB_DEVICE_READY) {
-            NXPLOG_UCIHAL_E("UWB_DEVICE_READY not received uwbc_device_state = %x",nxpucihal_ctrl.uwbc_device_state);
-            goto failure;
-          }
-          status = phNxpUciHal_sendGetCoreDeviceInfo();
-          NXPLOG_UCIHAL_D("phNxpUciHal_sendGetCoreDeviceInfo status %d ",
-                          status);
-          if (status != UWBSTATUS_SUCCESS) {
-            return status;
-          }
-          if (phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.uwb_binding_status_ntf_wait) ||
-              nxpucihal_ctrl.uwb_binding_status_ntf_wait.status == UWBSTATUS_SUCCESS) {
-              NXPLOG_UCIHAL_D("binding status notification received");
-              if (nxpucihal_ctrl.fw_boot_mode == USER_FW_BOOT_MODE) {
-                 bool isBindingAllowed = phNxpUciHal_getBindingConfig();
-                 if (isBindingAllowed) {
-                    status = phNxpUciHal_parse_binding_status_ntf();
-                    if (status != UWBSTATUS_SUCCESS) {
-                       NXPLOG_UCIHAL_E("binding failed with status %d", status);
-                    }
-                 }
-              }
-          } else {
-            NXPLOG_UCIHAL_D("%s:binding status notification timed out",
-                            __func__);
-          }
-          status = phNxpUciHal_applyVendorConfig();
-          if (status != UWBSTATUS_SUCCESS) {
-            NXPLOG_UCIHAL_E("%s: Apply vendor Config Failed", __func__);
-            goto failure;
-          }
-          phNxpUciHal_extcal_handle_coreinit();
-
-          uwb_device_initialized = true;
-          phNxpUciHal_getVersionInfo();
-          phNxpUciHal_init_complete(UWBSTATUS_SUCCESS);
-      } else if(status == UWBSTATUS_FILE_NOT_FOUND) {
-        NXPLOG_UCIHAL_E("FW download File Not found: status= %x", status);
-        goto failure;
-      } else {
-        NXPLOG_UCIHAL_E("FW download is failed FW download recovery starts: status= %x", status);
-        fwd_retry_count++;
-          if(fwd_retry_count <= FWD_MAX_RETRY_COUNT) {
-            phTmlUwb_Chip_Reset();
-            usleep(5000);
-            goto fwd_retry;
-          } else {
-            goto failure;
-          }
-      }
-      if (nxpucihal_ctrl.p_uwb_stack_data_cback != NULL) {
-        (*nxpucihal_ctrl.p_uwb_stack_data_cback)((sizeof(dev_ready_ntf)/sizeof(uint8_t)),
-                                                 dev_ready_ntf);
-      }
-      phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.dev_status_ntf_wait);
-      phNxpUciHal_cleanup_cb_data(
-          &nxpucihal_ctrl.uwb_get_binding_status_ntf_wait);
-      phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.uwb_do_bind_ntf_wait);
-      phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.uwb_binding_status_ntf_wait);
-      return status;
-    failure:
-        phNxpUciHal_init_complete(UWBSTATUS_FAILED);
-        phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.dev_status_ntf_wait);
-        phNxpUciHal_cleanup_cb_data(
-            &nxpucihal_ctrl.uwb_get_binding_status_ntf_wait);
-        phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.uwb_do_bind_ntf_wait);
-        phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.uwb_binding_status_ntf_wait);
-        return UWBSTATUS_FAILED;
+  return UWBSTATUS_SUCCESS;
 }
 
 /******************************************************************************
