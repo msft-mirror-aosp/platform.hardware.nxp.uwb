@@ -58,8 +58,15 @@ typedef struct phNxpUciHal_Sem {
 } phNxpUciHal_Sem_t;
 
 /* Semaphore helper macros */
-#define SEM_WAIT(cb_data) sem_wait(&((cb_data).sem))
-#define SEM_POST(p_cb_data) sem_post(&((p_cb_data)->sem))
+static inline int SEM_WAIT(phNxpUciHal_Sem_t* pCallbackData)
+{
+  return sem_wait(&pCallbackData->sem);
+}
+
+static inline int SEM_POST(phNxpUciHal_Sem_t* pCallbackData)
+{
+  return sem_post(&pCallbackData->sem);
+}
 
 /* Semaphore and mutex monitor */
 typedef struct phNxpUciHal_Monitor {
