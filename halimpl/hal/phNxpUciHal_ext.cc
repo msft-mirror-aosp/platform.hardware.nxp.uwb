@@ -1343,3 +1343,120 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
   }
   (*nxpucihal_ctrl.p_uwb_stack_data_cback)(nxpucihal_ctrl.rx_data_len, rsp_data);
 }
+
+// TODO: support fragmented packets
+/*************************************************************************************
+ * Function         phNxpUciHal_handle_set_app_config
+ *
+ * Description      Handle SESSION_SET_APP_CONFIG_CMD packet,
+ *                  remove unsupported parameters
+ *
+ * Returns          true  : SESSION_SET_APP_CONFIG_CMD/RSP was handled by this function
+ *                  false : This packet should go to chip
+ *
+ *************************************************************************************/
+bool phNxpUciHal_handle_set_app_config(uint16_t *data_len, uint8_t *p_data)
+{
+  const phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
+  // Android vendor specific app configs not supported by FW
+  const uint8_t tags_to_del[] = {
+    UCI_PARAM_ID_TX_ADAPTIVE_PAYLOAD_POWER,
+    UCI_PARAM_ID_AOA_AZIMUTH_MEASUREMENTS,
+    UCI_PARAM_ID_AOA_ELEVATION_MEASUREMENTS,
+    UCI_PARAM_ID_RANGE_MEASUREMENTS
+  };
+
+  // check basic validity
+  uint16_t payload_len = (p_data[UCI_CMD_LENGTH_PARAM_BYTE1] & 0xFF) |
+                         ((p_data[UCI_CMD_LENGTH_PARAM_BYTE2] & 0xFF) << 8);
+  if (payload_len != (*data_len - UCI_MSG_HDR_SIZE)) {
+    NXPLOG_UCIHAL_E("SESSION_SET_APP_CONFIG_CMD: payload length mismatch");
+    return false;
+  }
+  if (!p_data[UCI_CMD_NUM_CONFIG_PARAM_BYTE]) {
+    return false;
+  }
+
+  // Create local copy of cmd_data for data manipulation
+  uint8_t uciCmd[UCI_MAX_DATA_LEN];
+  uint16_t packet_len = *data_len;
+  if (sizeof(uciCmd) < packet_len) {
+    NXPLOG_UCIHAL_E("SESSION_SET_APP_CONFIG_CMD packet size %u is too big to handle, skip patching.", packet_len);
+    return false;
+  }
+  // 9 = Header 4 + SessionID 4 + NumOfConfigs 1
+  uint8_t i = 9, j = 9;
+  uint8_t nr_deleted = 0, bytes_deleted = 0;
+  memcpy(uciCmd, p_data, i);
+
+  while (i < packet_len) {
+    if ( (i + 2) >= packet_len) {
+      NXPLOG_UCIHAL_E("SESSION_SET_APP_CONFIG_CMD parse error at %u", i);
+      return false;
+    }
+
+    // All parameters should have 1 byte tag
+    uint8_t tlv_tag = p_data[i + 0];
+    uint8_t tlv_len = p_data[i + 1];
+    uint8_t param_len = 2 + tlv_len;
+    if ((i + param_len) > packet_len) {
+      NXPLOG_UCIHAL_E("SESSION_SET_APP_CONFIG_CMD parse error at %u", i);
+    }
+
+    // check restricted channel
+    if (tlv_tag == UCI_PARAM_ID_CHANNEL_NUMBER && tlv_len == 1) {
+      uint8_t ch = p_data[i + 2];
+
+      if (((ch == CHANNEL_NUM_5) && (rt_set->restricted_channel_mask & (1 << 5))) ||
+          ((ch == CHANNEL_NUM_9) && (rt_set->restricted_channel_mask & (1 << 9)))) {
+        phNxpUciHal_print_packet("SEND", p_data, packet_len);
+        NXPLOG_UCIHAL_D("Country code blocked channel %u", ch);
+
+        // send setAppConfig response with UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF response
+        static uint8_t rsp_data[] = { 0x41, 0x03, 0x04, 0x04,
+          UCI_STATUS_FAILED, 0x01, tlv_tag, UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF
+        };
+        nxpucihal_ctrl.rx_data_len = sizeof(rsp_data);
+        (*nxpucihal_ctrl.p_uwb_stack_data_cback)(nxpucihal_ctrl.rx_data_len, rsp_data);
+        return true;
+      }
+    }
+
+    // remove unsupported parameters
+    if (std::find(std::begin(tags_to_del), std::end(tags_to_del), tlv_tag) == std::end(tags_to_del)) {
+      memcpy(&uciCmd[j], &p_data[i], param_len);
+      j += param_len;
+    } else {
+      NXPLOG_UCIHAL_D("Removed param payload with Tag ID:0x%02x", tlv_tag);
+      nr_deleted++;
+      bytes_deleted += param_len;
+    }
+    i += param_len;
+  }
+  if (nr_deleted) {
+    phNxpUciHal_print_packet("SEND", p_data, packet_len);
+
+    // uci number of config params update
+    if (uciCmd[UCI_CMD_NUM_CONFIG_PARAM_BYTE] < nr_deleted) {
+      NXPLOG_UCIHAL_E("SESSION_SET_APP_CONFIG_CMD cannot parse packet: wrong nr_parameters");
+      return false;
+    }
+    uciCmd[UCI_CMD_NUM_CONFIG_PARAM_BYTE] -= nr_deleted;
+
+    // uci command length update
+    if (packet_len < (UCI_MSG_HDR_SIZE + bytes_deleted)) {
+      NXPLOG_UCIHAL_E("SESSION_SET_APP_CONFIG_CMD cannot parse packet: underflow");
+      return false;
+    }
+    packet_len -= bytes_deleted;
+    payload_len = packet_len - UCI_MSG_HDR_SIZE;
+    uciCmd[UCI_CMD_LENGTH_PARAM_BYTE2] = (payload_len & 0xFF00) >> 8;
+    uciCmd[UCI_CMD_LENGTH_PARAM_BYTE1] = (payload_len & 0xFF);
+
+    // Swap
+    memcpy(p_data, uciCmd, packet_len);
+    *data_len = packet_len;
+  }
+
+  return false;
+}
