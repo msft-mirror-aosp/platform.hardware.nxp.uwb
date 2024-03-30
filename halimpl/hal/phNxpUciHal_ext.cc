@@ -1419,7 +1419,7 @@ bool phNxpUciHal_handle_set_app_config(uint16_t *data_len, uint8_t *p_data)
 
       if (((ch == CHANNEL_NUM_5) && (rt_set->restricted_channel_mask & (1 << 5))) ||
           ((ch == CHANNEL_NUM_9) && (rt_set->restricted_channel_mask & (1 << 9)))) {
-        phNxpUciHal_print_packet("SEND", p_data, packet_len);
+        phNxpUciHal_print_packet(NXP_TML_UCI_CMD_AP_2_UWBS, p_data, packet_len);
         NXPLOG_UCIHAL_D("Country code blocked channel %u", ch);
 
         // send setAppConfig response with UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF response
@@ -1444,7 +1444,7 @@ bool phNxpUciHal_handle_set_app_config(uint16_t *data_len, uint8_t *p_data)
     i += param_len;
   }
   if (nr_deleted) {
-    phNxpUciHal_print_packet("SEND", p_data, packet_len);
+    phNxpUciHal_print_packet(NXP_TML_UCI_CMD_AP_2_UWBS, p_data, packet_len);
 
     // uci number of config params update
     if (uciCmd[UCI_CMD_NUM_CONFIG_PARAM_BYTE] < nr_deleted) {

@@ -457,19 +457,49 @@ void phNxpUciHal_releaseall_cb_data(void) {
 ** Returns          None
 **
 *******************************************************************************/
-void phNxpUciHal_print_packet(const char* pString, const uint8_t* p_data,
+void phNxpUciHal_print_packet(enum phNxpUciHal_Pkt_Type what, const uint8_t* p_data,
                               uint16_t len) {
   uint32_t i;
   char print_buffer[len * 3 + 1];
+
+  if ((gLog_level.ucix_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL)) {
+    /* OK to print */
+  }
+  else
+  {
+    /* Nothing to print...
+     * Why prepare buffer without printing?
+     */
+    return;
+  }
 
   memset(print_buffer, 0, sizeof(print_buffer));
   for (i = 0; i < len; i++) {
     snprintf(&print_buffer[i * 2], 3, "%02X", p_data[i]);
   }
-  if (0 == memcmp(pString, "SEND", 0x04)) {
-    NXPLOG_UCIX_D("len = %3d > %s", len, print_buffer);
-  } else if (0 == memcmp(pString, "RECV", 0x04)) {
-    NXPLOG_UCIR_D("len = %3d < %s", len, print_buffer);
+  switch(what) {
+    case NXP_TML_UCI_CMD_AP_2_UWBS:
+    {
+      NXPLOG_UCIX_D("len = %3d > %s", len, print_buffer);
+    }
+    break;
+    case NXP_TML_UCI_RSP_NTF_UWBS_2_AP:
+    {
+      NXPLOG_UCIR_D("len = %3d < %s", len, print_buffer);
+    }
+    break;
+    case NXP_TML_FW_DNLD_CMD_AP_2_UWBS:
+    {
+      // TODO: Should be NXPLOG_FWDNLD_D
+      NXPLOG_UCIX_D("len = %3d > (FW)%s", len, print_buffer);
+    }
+    break;
+    case NXP_TML_FW_DNLD_RSP_UWBS_2_AP:
+    {
+      // TODO: Should be NXPLOG_FWDNLD_D
+      NXPLOG_UCIR_D("len = %3d < (FW)%s", len, print_buffer);
+    }
+    break;
   }
 
   return;

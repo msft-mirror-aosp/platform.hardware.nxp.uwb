@@ -44,6 +44,18 @@ struct listHead {
   pthread_mutex_t mutex;
 };
 
+/* Which is the direction of UWB Packet.
+ *
+ * Used by the @ref phNxpUciHal_print_packet API.
+ */
+enum phNxpUciHal_Pkt_Type {
+  NXP_TML_UCI_CMD_AP_2_UWBS,
+  NXP_TML_UCI_RSP_NTF_UWBS_2_AP,
+  NXP_TML_FW_DNLD_CMD_AP_2_UWBS,
+  NXP_TML_FW_DNLD_RSP_UWBS_2_AP,
+};
+
+
 /* Semaphore handling structure */
 typedef struct phNxpUciHal_Sem {
   /* Semaphore used to wait for callback */
@@ -112,7 +124,20 @@ static inline int phNxpUciHal_sem_timed_wait(phNxpUciHal_Sem_t* pCallbackData)
 
 void phNxpUciHal_cleanup_cb_data(phNxpUciHal_Sem_t* pCallbackData);
 void phNxpUciHal_releaseall_cb_data(void);
-void phNxpUciHal_print_packet(const char* pString, const uint8_t* p_data,
+
+
+/*
+ * Print an UWB Packet.
+ *
+ * @param what The type and direction of packet
+ *
+ * @param p_data The packet to be printed/logged.
+ *
+ * @param len Tenth of the packet.
+ *
+ */
+
+void phNxpUciHal_print_packet(enum phNxpUciHal_Pkt_Type what, const uint8_t* p_data,
                               uint16_t len);
 void phNxpUciHal_emergency_recovery(void);
 double phNxpUciHal_byteArrayToDouble(const uint8_t* p_data);
