@@ -17,6 +17,8 @@
 #ifndef _PHNXPUCIHAL_H_
 #define _PHNXPUCIHAL_H_
 
+#include <thread>
+
 #include <phNxpUciHal_utils.h>
 #include <phNxpUciHal_Adaptation.h>
 #include <hal_nxpuwb.h>
@@ -163,8 +165,7 @@ typedef struct {
 /* UCI Control structure */
 typedef struct phNxpUciHal_Control {
   phNxpUci_HalStatus halStatus; /* Indicate if hal is open or closed */
-  pthread_t client_thread;      /* Integration thread handle */
-  uint8_t thread_running;       /* Thread running if set to 1, else set to 0 */
+  std::thread client_thread;    /* Integration thread handle */
   phLibUwb_sConfig_t gDrvCfg;   /* Driver config data */
 
   /* Rx data */
@@ -190,7 +191,6 @@ typedef struct phNxpUciHal_Control {
   bool ext_cb_waiting;
 
   phNxpUciHal_Sem_t uwb_binding_status_ntf_wait;
-  phNxpUciHal_Sem_t uwb_close_complete_wait;
   phNxpUciHal_Sem_t uwb_get_binding_status_ntf_wait;
   phNxpUciHal_Sem_t uwb_do_bind_ntf_wait;
   phNxpUciHal_Sem_t calib_data_ntf_wait;
