@@ -164,6 +164,12 @@
 #define UCI_PARAM_ID_RANGE_MEASUREMENTS 0xE5
 
 /*************************************************
+ * Device Calibration Parameters IDs
+ ************************************************/
+// XXX: Should this be chip-dependant?
+#define NXP_PARAM_ID_TX_POWER_PER_ANTENNA       0x04
+
+/*************************************************
  * Status codes
  ************************************************/
 /* Generic Status Codes */

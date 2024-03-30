@@ -487,10 +487,20 @@ void phNxpUciHal_handle_set_calibration(const uint8_t *p_data, uint16_t data_len
     return;
   }
 
+  // SET_DEVICE_CALIBRATION_CMD Packet format: Channel(1) + TLV
+  if (data_len < 6) {
+    return;
+  }
+  const uint8_t channel = p_data[UCI_MSG_HDR_SIZE + 0];
+  const uint8_t tag = p_data[UCI_MSG_HDR_SIZE + 1];
+  if (tag != NXP_PARAM_ID_TX_POWER_PER_ANTENNA) {
+    return;
+  }
+
   phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
 
   // RMS Tx power -> Octet [4, 5] in calib data
-  NXPLOG_UCIHAL_D("phNxpUciHal_handle_set_calibration %d", rt_set->tx_power_offset);
+  NXPLOG_UCIHAL_D("phNxpUciHal_handle_set_calibration channel=%u tx_power_offset=%d", channel, rt_set->tx_power_offset);
 
   gtx_power = std::move(std::vector<uint8_t> {p_data + UCI_MSG_HDR_SIZE, p_data + data_len});
 
