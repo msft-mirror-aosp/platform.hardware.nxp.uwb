@@ -23,10 +23,12 @@
 
 #include "phNxpConfig.h"
 #include "phNxpLog.h"
-#include "phNxpUciHal_ext.h"
 #include "phNxpUciHal.h"
+#include "phNxpUciHal_ext.h"
+#include "phNxpUciHal_utils.h"
 #include "phTmlUwb.h"
 #include "phUwbCommon.h"
+#include "sessionTrack.h"
 
 /* Timeout value to wait for response from DEVICE_TYPE_SR1xx */
 #define MAX_COMMAND_RETRY_COUNT           5
@@ -1219,8 +1221,6 @@ static void extcal_do_tx_base_band(void)
 
   // TX_BASE_BAND_CONTROL
   {
-    NXPLOG_UCIHAL_D("Apply TX_BASE_BAND_CONTROL: ddfs_enable=%u, dc_suppress=%u", ddfs_enable, dc_suppress);
-
     uint8_t flag = 0;
     if (ddfs_enable)
       flag |= 0x01;
@@ -1261,7 +1261,7 @@ void phNxpUciHal_extcal_handle_coreinit(void)
 
 extern bool isCountryCodeMapCreated;
 
-static void apply_per_country_calibrations(void)
+void apply_per_country_calibrations(void)
 {
   // TX-POWER can be provided by
   // 1) COUNTRY_CODE_CAPS with offset values.
@@ -1290,10 +1290,6 @@ static void apply_per_country_calibrations(void)
  ******************************************************************************/
 void phNxpUciHal_handle_set_country_code(const char country_code[2])
 {
-  //
-  // TODO: stop all active session which are affected by new country code
-  // TODO: delay per-country calibrations when there's active sessions (or juststop them?)
-  //
   NXPLOG_UCIHAL_D("Apply country code %c%c", country_code[0], country_code[1]);
 
   phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
@@ -1305,9 +1301,7 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
   }
 
   if (NxpConfig_SetCountryCode(country_code)) {
-    // Load extra calibration files first, so COUNTRY_CODE_CAPS can overrides the settings.
-
-    // per-country extra calibrations are only triggered when 'COUNTRY_CODE_CAPS' is not provided
+    // Load ExtraCal restrictions
     uint16_t mask= 0;
     if (NxpConfig_GetNum("cal.restricted_channels", &mask, sizeof(mask))) {
       NXPLOG_UCIHAL_D("Restriction flag, restricted channel mask=0x%x", mask);
@@ -1326,7 +1320,7 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
                       country_code[0], country_code[1]);
     }
 
-    // Load 'COUNTRY_CODE_CAPS' and apply it to 'conf_map'
+    // Load 'COUNTRY_CODE_CAPS' restrictions (via 'conf_map')
     uint8_t cc_caps[UCI_MAX_DATA_LEN];
     long retlen = 0;
     if (NxpConfig_GetByteArray(NAME_NXP_UWB_COUNTRY_CODE_CAPS, cc_caps, sizeof(cc_caps), &retlen) && retlen) {
@@ -1342,9 +1336,9 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
         NXPLOG_UCIHAL_D("Country code caps loaded");
       }
     }
+    // Apply per-country calibration, it's handled by SessionTrack
+    SessionTrack_onCountryCodeChanged();
   }
-
-  apply_per_country_calibrations();
 
   // send country code response to upper layer
   nxpucihal_ctrl.rx_data_len = 5;
@@ -1390,6 +1384,9 @@ bool phNxpUciHal_handle_set_app_config(uint16_t *data_len, uint8_t *p_data)
     return false;
   }
 
+  uint32_t session_handle = le_bytes_to_cpu<uint32_t>(&p_data[UCI_MSG_SESSION_SET_APP_CONFIG_HANDLE_OFFSET]);
+  uint8_t ch = 0;
+
   // Create local copy of cmd_data for data manipulation
   uint8_t uciCmd[UCI_MAX_DATA_LEN];
   uint16_t packet_len = *data_len;
@@ -1418,7 +1415,7 @@ bool phNxpUciHal_handle_set_app_config(uint16_t *data_len, uint8_t *p_data)
 
     // check restricted channel
     if (tlv_tag == UCI_PARAM_ID_CHANNEL_NUMBER && tlv_len == 1) {
-      uint8_t ch = p_data[i + 2];
+      ch = p_data[i + 2];
 
       if (((ch == CHANNEL_NUM_5) && (rt_set->restricted_channel_mask & (1 << 5))) ||
           ((ch == CHANNEL_NUM_9) && (rt_set->restricted_channel_mask & (1 << 9)))) {
@@ -1470,6 +1467,8 @@ bool phNxpUciHal_handle_set_app_config(uint16_t *data_len, uint8_t *p_data)
     memcpy(p_data, uciCmd, packet_len);
     *data_len = packet_len;
   }
+
+  SessionTrack_onAppConfig(session_handle, ch);
 
   return false;
 }
