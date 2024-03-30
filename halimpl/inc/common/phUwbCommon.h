@@ -25,23 +25,14 @@
 /*
 ************************* Include Files ****************************************
 */
-#include <cctype>
-
-#include <phDal4Uwb_messageQueueLib.h>
-#include <phUwbCompId.h>
-#include <phUwbStatus.h>
-#include <phOsalUwb_Timer.h>
 #include <pthread.h>
 #include <semaphore.h>
 
-/*
- *  information to configure OSAL
- */
-typedef struct phOsalUwb_Config {
-  uint8_t* pLogFile;            /* Log File Name*/
-  uintptr_t dwCallbackThreadId; /* Client ID to which message is posted */
-} phOsalUwb_Config_t, *pphOsalUwb_Config_t /* Pointer to #phOsalUwb_Config_t */;
+#include <cctype>
 
+#include <phOsalUwb_Timer.h>
+#include <phUwbCompId.h>
+#include <phUwbStatus.h>
 /*
  * Deferred call declaration.
  * This type of API is called from ClientApplication (main thread) to notify
@@ -76,8 +67,6 @@ typedef struct phOsalUwb_TimerHandle {
   pphOsalUwb_TimerCallbck_t Application_callback;
   void* pContext; /* Parameter to be passed to the callback function */
   phOsalUwb_TimerStates_t eState; /* Timer states */
-  /* Osal Timer message posted on User Thread */
-  phLibUwb_Message_t tOsalMessage;
   /* Deferred Call structure to Invoke Callback function */
   phOsalUwb_DeferredCallInfo_t tDeferredCallInfo;
   /* Variables for Structure Instance and Structure Ptr */

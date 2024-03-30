@@ -155,7 +155,6 @@ static void phNxpUciHal_rx_handler_destroy(void)
  ******************************************************************************/
 static void* phNxpUciHal_client_thread(void* arg) {
   phNxpUciHal_Control_t* p_nxpucihal_ctrl = (phNxpUciHal_Control_t*)arg;
-  phLibUwb_Message_t msg;
 
   NXPLOG_UCIHAL_D("thread started");
 
@@ -163,20 +162,15 @@ static void* phNxpUciHal_client_thread(void* arg) {
 
   while (p_nxpucihal_ctrl->thread_running == 1) {
     /* Fetch next message from the UWB stack message queue */
-    if (phDal4Uwb_msgrcv(p_nxpucihal_ctrl->gDrvCfg.nClientId, &msg, 0, 0) ==
-        -1) {
-      NXPLOG_UCIHAL_E("UWB client received bad message");
-      continue;
-    }
+    auto msg = p_nxpucihal_ctrl->gDrvCfg.pClientMq->recv();
 
     if (p_nxpucihal_ctrl->thread_running == 0) {
       break;
     }
 
-    switch (msg.eMsgType) {
+    switch (msg->eMsgType) {
       case PH_LIBUWB_DEFERREDCALL_MSG: {
-        phLibUwb_DeferredCall_t* deferCall =
-            (phLibUwb_DeferredCall_t*)(msg.pMsgData);
+        phLibUwb_DeferredCall_t* deferCall = (phLibUwb_DeferredCall_t*)(msg->pMsgData);
 
         REENTRANCE_LOCK();
         deferCall->pCallback(deferCall->pParameter);
@@ -399,8 +393,6 @@ static void phNxpUciHal_kill_client_thread(
 tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_callback_t* p_data_cback)
 {
   static const char uwb_dev_node[256] = "/dev/srxxx";
-  phOsalUwb_Config_t tOsalConfig;
-  phTmlUwb_Config_t tTmlConfig;
   tHAL_UWB_STATUS wConfigStatus = UWBSTATUS_SUCCESS;
   pthread_attr_t attr;
 
@@ -423,9 +415,6 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_c
 
   CONCURRENCY_LOCK();
 
-  memset(&nxpucihal_ctrl, 0x00, sizeof(nxpucihal_ctrl));
-  memset(&tOsalConfig, 0x00, sizeof(tOsalConfig));
-  memset(&tTmlConfig, 0x00, sizeof(tTmlConfig));
   NXPLOG_UCIHAL_E("Assigning the default helios Node: %s", uwb_dev_node);
   /* By default HAL status is HAL_STATUS_OPEN */
   nxpucihal_ctrl.halStatus = HAL_STATUS_OPEN;
@@ -435,15 +424,11 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_c
   nxpucihal_ctrl.fw_dwnld_mode = false;
 
   /* Configure hardware link */
-  nxpucihal_ctrl.gDrvCfg.nClientId = phDal4Uwb_msgget(0, 0600);
+  nxpucihal_ctrl.gDrvCfg.pClientMq = std::make_shared<MessageQueue<phLibUwb_Message>>("Client");
   nxpucihal_ctrl.gDrvCfg.nLinkType = ENUM_LINK_TYPE_SPI;
-  tTmlConfig.pDevName = uwb_dev_node;
-  tOsalConfig.dwCallbackThreadId = (uintptr_t)nxpucihal_ctrl.gDrvCfg.nClientId;
-  tOsalConfig.pLogFile = NULL;
-  tTmlConfig.dwGetMsgThreadId = (uintptr_t)nxpucihal_ctrl.gDrvCfg.nClientId;
 
   /* Initialize TML layer */
-  wConfigStatus = phTmlUwb_Init(&tTmlConfig);
+  wConfigStatus = phTmlUwb_Init(uwb_dev_node, nxpucihal_ctrl.gDrvCfg.pClientMq);
   if (wConfigStatus != UWBSTATUS_SUCCESS) {
     NXPLOG_UCIHAL_E("phTmlUwb_Init Failed");
     goto clean_and_return;
@@ -502,23 +487,14 @@ clean_and_return:
  *
  ******************************************************************************/
 static void phNxpUciHal_open_complete(tHAL_UWB_STATUS status) {
-  static phLibUwb_Message_t msg;
+  auto msg = std::make_shared<phLibUwb_Message>(UCI_HAL_ERROR_MSG);
 
   if (status == UWBSTATUS_SUCCESS) {
-    msg.eMsgType = UCI_HAL_OPEN_CPLT_MSG;
+    msg->eMsgType = UCI_HAL_OPEN_CPLT_MSG;
     nxpucihal_ctrl.hal_open_status = true;
     nxpucihal_ctrl.halStatus = HAL_STATUS_OPEN;
-  } else {
-    msg.eMsgType = UCI_HAL_ERROR_MSG;
   }
-
-  msg.pMsgData = NULL;
-  msg.Size = 0;
-
-  phTmlUwb_DeferredCall(gpphTmlUwb_Context->dwCallbackThreadId,
-                        (phLibUwb_Message_t*)&msg);
-
-  return;
+  phTmlUwb_DeferredCall(msg);
 }
 
 /******************************************************************************
@@ -991,7 +967,7 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
 
     status = phTmlUwb_Shutdown();
 
-    phDal4Uwb_msgrelease(nxpucihal_ctrl.gDrvCfg.nClientId);
+    nxpucihal_ctrl.gDrvCfg.pClientMq->clear();
 
     phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.uwb_close_complete_wait);
     if (nxpucihal_ctrl.uwb_close_complete_wait.status != UWBSTATUS_SUCCESS) {
@@ -999,8 +975,6 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
     }
 
     phNxpUciHal_rx_handler_destroy();
-
-    memset(&nxpucihal_ctrl, 0x00, sizeof(nxpucihal_ctrl));
 
     NXPLOG_UCIHAL_D("phNxpUciHal_close - phOsalUwb_DeInit completed");
   }
@@ -1025,20 +999,11 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
  * Returns          void.
  *
  ******************************************************************************/
-void phNxpUciHal_close_complete(tHAL_UWB_STATUS status) {
-  static phLibUwb_Message_t msg;
-
-  if (status == UWBSTATUS_SUCCESS) {
-    msg.eMsgType = UCI_HAL_CLOSE_CPLT_MSG;
-  } else {
-    msg.eMsgType = UCI_HAL_ERROR_MSG;
-  }
-  msg.pMsgData = NULL;
-  msg.Size = 0;
-
-  phTmlUwb_DeferredCall(gpphTmlUwb_Context->dwCallbackThreadId, &msg);
-
-  return;
+void phNxpUciHal_close_complete(tHAL_UWB_STATUS status)
+{
+  auto msg = std::make_shared<phLibUwb_Message>(status == UWBSTATUS_SUCCESS ?
+    UCI_HAL_CLOSE_CPLT_MSG : UCI_HAL_ERROR_MSG);
+  phTmlUwb_DeferredCall(msg);
 }
 
 /******************************************************************************
@@ -1050,20 +1015,11 @@ void phNxpUciHal_close_complete(tHAL_UWB_STATUS status) {
  * Returns          void.
  *
  ******************************************************************************/
-void phNxpUciHal_init_complete(tHAL_UWB_STATUS status) {
-  static phLibUwb_Message_t msg;
-
-  if (status == UWBSTATUS_SUCCESS) {
-    msg.eMsgType = UCI_HAL_INIT_CPLT_MSG;
-  } else {
-    msg.eMsgType = UCI_HAL_ERROR_MSG;
-  }
-  msg.pMsgData = NULL;
-  msg.Size = 0;
-
-  phTmlUwb_DeferredCall(gpphTmlUwb_Context->dwCallbackThreadId, &msg);
-
-  return;
+void phNxpUciHal_init_complete(tHAL_UWB_STATUS status)
+{
+  auto msg = std::make_shared<phLibUwb_Message>(status == UWBSTATUS_SUCCESS ?
+    UCI_HAL_INIT_CPLT_MSG : UCI_HAL_ERROR_MSG);
+  phTmlUwb_DeferredCall(msg);
 }
 
 /******************************************************************************
