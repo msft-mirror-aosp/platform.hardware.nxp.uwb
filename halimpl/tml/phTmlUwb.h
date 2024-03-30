@@ -126,17 +126,19 @@ typedef struct phTmlUwb_Context {
  *
  * phTmlUwb_Spi_IoCtl
  */
-typedef enum {
-  phTmlUwb_Invalid = 0,
-  phTmlUwb_SetPower,
-  phTmlUwb_EnableFwdMode,
-  phTmlUwb_EnableThroughPut,
-  phTmlUwb_EseReset
-} phTmlUwb_ControlCode_t;     /* Control code for IOCTL call */
+enum class phTmlUwb_ControlCode_t {
+  Invalid = 0,
+  SetPower,
+  EnableFwdMode,
+  EnableThroughPut,
+  EseReset,
+};
 
 /* Function declarations */
 tHAL_UWB_STATUS phTmlUwb_Init(const char* pDevName, std::shared_ptr<MessageQueue<phLibUwb_Message>> pClientMq);
 tHAL_UWB_STATUS phTmlUwb_Shutdown(void);
+void phTmlUwb_Suspend(void);
+void phTmlUwb_Resume(void);
 tHAL_UWB_STATUS phTmlUwb_Write(uint8_t* pBuffer, uint16_t wLength,
                          pphTmlUwb_TransactCompletionCb_t pTmlWriteComplete,
                          void* pContext);
