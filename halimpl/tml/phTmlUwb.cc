@@ -14,7 +14,6 @@
  * limitations under the License.
  */
 
-#include <phDal4Uwb_messageQueueLib.h>
 #include <phNxpLog.h>
 #include <phNxpUciHal_utils.h>
 #include <phOsalUwb_Timer.h>
@@ -77,7 +76,8 @@ static int phTmlUwb_ReadAbortInit(void);
 **                                             been disconnected
 **
 *******************************************************************************/
-tHAL_UWB_STATUS phTmlUwb_Init(pphTmlUwb_Config_t pConfig) {
+tHAL_UWB_STATUS phTmlUwb_Init(const char* pDevName, std::shared_ptr<MessageQueue<phLibUwb_Message>> pClientMq)
+{
   tHAL_UWB_STATUS wInitStatus = UWBSTATUS_SUCCESS;
 
   /* Check if TML layer is already Initialized */
@@ -86,8 +86,7 @@ tHAL_UWB_STATUS phTmlUwb_Init(pphTmlUwb_Config_t pConfig) {
     wInitStatus = PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_ALREADY_INITIALISED);
   }
   /* Validate Input parameters */
-  else if ((NULL == pConfig) ||
-           (PH_TMLUWB_RESET_VALUE == pConfig->dwGetMsgThreadId)) {
+  else if (!pDevName || !pClientMq) {
     /*Parameters passed to TML init are wrong */
     wInitStatus = PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_INVALID_PARAMETER);
   } else {
@@ -105,8 +104,7 @@ tHAL_UWB_STATUS phTmlUwb_Init(pphTmlUwb_Config_t pConfig) {
       gpphTmlUwb_Context->bThreadDone = 1;
 
       /* Open the device file to which data is read/written */
-      wInitStatus = phTmlUwb_spi_open_and_configure(
-          pConfig, &(gpphTmlUwb_Context->pDevHandle));
+      wInitStatus = phTmlUwb_spi_open_and_configure(pDevName, &(gpphTmlUwb_Context->pDevHandle));
 
       if (UWBSTATUS_SUCCESS != wInitStatus) {
         wInitStatus = PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_INVALID_DEVICE);
@@ -116,6 +114,7 @@ tHAL_UWB_STATUS phTmlUwb_Init(pphTmlUwb_Config_t pConfig) {
         gpphTmlUwb_Context->tWriteInfo.bEnable = 0;
         gpphTmlUwb_Context->tReadInfo.bThreadBusy = false;
         gpphTmlUwb_Context->tWriteInfo.bThreadBusy = false;
+        gpphTmlUwb_Context->pClientMq = pClientMq;
 
         setDeviceHandle(gpphTmlUwb_Context->pDevHandle);  // To set device handle for FW download usecase
 
@@ -127,17 +126,12 @@ tHAL_UWB_STATUS phTmlUwb_Init(pphTmlUwb_Config_t pConfig) {
            wInitStatus = UWBSTATUS_FAILED;
         } else if(0 != phTmlUwb_ReadAbortInit()) {
            wInitStatus = UWBSTATUS_FAILED;
-        } else if (0 != sem_init(&gpphTmlUwb_Context->postMsgSemaphore, 0, 0)) {
-          wInitStatus = UWBSTATUS_FAILED;
         } else {
-          sem_post(&gpphTmlUwb_Context->postMsgSemaphore);
           /* Start TML thread (to handle write and read operations) */
           if (UWBSTATUS_SUCCESS != phTmlUwb_StartThread()) {
             wInitStatus = PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_FAILED);
           } else {
             /* Store the Thread Identifier to which Message is to be posted */
-            gpphTmlUwb_Context->dwCallbackThreadId =
-                  pConfig->dwGetMsgThreadId;
             wInitStatus = UWBSTATUS_SUCCESS;
           }
         }
@@ -211,7 +205,6 @@ static void* phTmlUwb_TmlReaderThread(void* pParam) {
      by the callback thread */
   static phLibUwb_DeferredCall_t tDeferredInfo;
   /* Initialize Message structure to post message onto Callback Thread */
-  static phLibUwb_Message_t tMsg;
   UNUSED(pParam);
   NXPLOG_TML_D("SRxxx - Tml Reader Thread Started................\n");
 
@@ -291,9 +284,6 @@ static void* phTmlUwb_TmlReaderThread(void* pParam) {
           /* Prepare the message to be posted on User thread */
           tDeferredInfo.pCallback = &phTmlUwb_ReadDeferredCb;
           tDeferredInfo.pParameter = &tTransactionInfo;
-          tMsg.eMsgType = PH_LIBUWB_DEFERREDCALL_MSG;
-          tMsg.pMsgData = &tDeferredInfo;
-          tMsg.Size = sizeof(tDeferredInfo);
           NXPLOG_TML_D("SRxxx - Posting read message.....\n");
           /* TML reader writer callback synchronization mutex lock --- START */
           pthread_mutex_lock(&gpphTmlUwb_Context->wait_busy_lock);
@@ -303,7 +293,9 @@ static void* phTmlUwb_TmlReaderThread(void* pParam) {
           }
           /* TML reader writer callback synchronization mutex lock --- END */
           pthread_mutex_unlock(&gpphTmlUwb_Context->wait_busy_lock);
-          phTmlUwb_DeferredCall(gpphTmlUwb_Context->dwCallbackThreadId, &tMsg);
+
+          auto msg = std::make_shared<phLibUwb_Message>(PH_LIBUWB_DEFERREDCALL_MSG, &tDeferredInfo);
+          phTmlUwb_DeferredCall(msg);
         }
       } else {
         NXPLOG_TML_D("SRxxx -gpphTmlUwb_Context->pDevHandle is NULL");
@@ -336,8 +328,6 @@ static void* phTmlUwb_TmlWriterThread(void* pParam) {
   /* Structure containing Tml callback function and parameters to be invoked
      by the callback thread */
   static phLibUwb_DeferredCall_t tDeferredInfo;
-  /* Initialize Message structure to post message onto Callback Thread */
-  static phLibUwb_Message_t tMsg;
   UNUSED(pParam);
   NXPLOG_TML_D("SRxxx - Tml Writer Thread Started................\n");
 
@@ -393,15 +383,12 @@ static void* phTmlUwb_TmlWriterThread(void* pParam) {
         /* Prepare the message to be posted on the User thread */
         tDeferredInfo.pCallback = &phTmlUwb_WriteDeferredCb;
         tDeferredInfo.pParameter = &tTransactionInfo;
+
         /* Write operation completed successfully. Post a Message onto Callback
          * Thread*/
-        tMsg.eMsgType = PH_LIBUWB_DEFERREDCALL_MSG;
-        tMsg.pMsgData = &tDeferredInfo;
-        tMsg.Size = sizeof(tDeferredInfo);
-
-
         NXPLOG_TML_D("SRxxx - Posting Fresh Write message.....\n");
-        phTmlUwb_DeferredCall(gpphTmlUwb_Context->dwCallbackThreadId, &tMsg);
+        auto msg = std::make_shared<phLibUwb_Message>(PH_LIBUWB_DEFERREDCALL_MSG, &tDeferredInfo);
+        phTmlUwb_DeferredCall(msg);
         if (UWBSTATUS_SUCCESS == wStatus) {
           /* TML reader writer callback synchronization mutex lock --- START
              */
@@ -445,11 +432,11 @@ static void phTmlUwb_CleanUp(void) {
   }
   sem_destroy(&gpphTmlUwb_Context->rxSemaphore);
   sem_destroy(&gpphTmlUwb_Context->txSemaphore);
-  sem_destroy(&gpphTmlUwb_Context->postMsgSemaphore);
   pthread_mutex_destroy(&gpphTmlUwb_Context->wait_busy_lock);
   pthread_cond_destroy(&gpphTmlUwb_Context->wait_busy_condition);
   phTmlUwb_spi_close(gpphTmlUwb_Context->pDevHandle);
   gpphTmlUwb_Context->pDevHandle = NULL;
+
   /* Clear memory allocated for storing Context variables */
   free((void*)gpphTmlUwb_Context);
   /* Set the pointer to NULL to indicate De-Initialization */
@@ -504,8 +491,6 @@ tHAL_UWB_STATUS phTmlUwb_Shutdown(void) {
     sem_post(&gpphTmlUwb_Context->rxSemaphore);
     usleep(1000);
     sem_post(&gpphTmlUwb_Context->txSemaphore);
-    usleep(1000);
-    sem_post(&gpphTmlUwb_Context->postMsgSemaphore);
     usleep(1000);
     if (0 != pthread_join(gpphTmlUwb_Context->readerThread, (void**)NULL)) {
       NXPLOG_TML_E("Fail to kill reader thread!");
@@ -714,23 +699,14 @@ tHAL_UWB_STATUS phTmlUwb_WriteAbort(void) {
 ** Description      Posts message on upper layer thread
 **                  upon successful read or write operation
 **
-** Parameters       dwThreadId  - id of the thread posting message
-**                  ptWorkerMsg - message to be posted
+** Parameters       msg - message to be posted
 **
 ** Returns          None
 **
 *******************************************************************************/
-void phTmlUwb_DeferredCall(uintptr_t dwThreadId,
-                           phLibUwb_Message_t* ptWorkerMsg) {
-  intptr_t bPostStatus;
-  UNUSED(dwThreadId);
-  /* Post message on the user thread to invoke the callback function */
-  if (sem_wait(&gpphTmlUwb_Context->postMsgSemaphore) != 0) {
-    NXPLOG_TML_E("phTmlUwb_DeferredCall: semaphore error");
-  }
-  bPostStatus =
-      phDal4Uwb_msgsnd(gpphTmlUwb_Context->dwCallbackThreadId, ptWorkerMsg, 0);
-  sem_post(&gpphTmlUwb_Context->postMsgSemaphore);
+void phTmlUwb_DeferredCall(std::shared_ptr<phLibUwb_Message> msg)
+{
+  gpphTmlUwb_Context->pClientMq->send(msg);
 }
 
 /*******************************************************************************

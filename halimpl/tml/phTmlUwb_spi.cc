@@ -37,7 +37,7 @@ extern phNxpUciHal_Control_t nxpucihal_ctrl;
 **
 ** Description      Open and configure SR100
 **
-** Parameters       pConfig     - hardware information
+** Parameters       pDevName    - device node path
 **                  pLinkHandle - device handle
 **
 ** Returns          UWB status:
@@ -45,13 +45,13 @@ extern phNxpUciHal_Control_t nxpucihal_ctrl;
 **                  UWBSTATUS_INVALID_DEVICE - device open operation failure
 **
 *******************************************************************************/
-tHAL_UWB_STATUS phTmlUwb_spi_open_and_configure(pphTmlUwb_Config_t pConfig,
-                                          void** pLinkHandle) {
+tHAL_UWB_STATUS phTmlUwb_spi_open_and_configure(const char* pDevName, void** pLinkHandle)
+{
   int nHandle;
 
-  NXPLOG_TML_D("Opening port=%s\n", pConfig->pDevName);
+  NXPLOG_TML_D("Opening port=%s\n", pDevName);
   /* open port */
-  nHandle = open(pConfig->pDevName, O_RDWR);
+  nHandle = open(pDevName, O_RDWR);
   if (nHandle < 0) {
     NXPLOG_TML_E("_spi_open() Failed: retval %x", nHandle);
     *pLinkHandle = NULL;

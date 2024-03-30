@@ -21,7 +21,6 @@
 
 #include <cutils/properties.h>
 
-#include "phDal4Uwb_messageQueueLib.h"
 #include "phNxpConfig.h"
 #include "phNxpLog.h"
 #include "phNxpUciHal_ext.h"
