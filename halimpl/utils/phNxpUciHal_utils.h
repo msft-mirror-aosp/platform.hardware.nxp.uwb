@@ -28,6 +28,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "phNxpLog.h"
 #include "phUwbStatus.h"
 
 /********************* Definitions and structures *****************************/
@@ -43,6 +44,18 @@ struct listHead {
   pthread_mutex_t mutex;
 };
 
+/* Which is the direction of UWB Packet.
+ *
+ * Used by the @ref phNxpUciHal_print_packet API.
+ */
+enum phNxpUciHal_Pkt_Type {
+  NXP_TML_UCI_CMD_AP_2_UWBS,
+  NXP_TML_UCI_RSP_NTF_UWBS_2_AP,
+  NXP_TML_FW_DNLD_CMD_AP_2_UWBS,
+  NXP_TML_FW_DNLD_RSP_UWBS_2_AP,
+};
+
+
 /* Semaphore handling structure */
 typedef struct phNxpUciHal_Sem {
   /* Semaphore used to wait for callback */
@@ -57,8 +70,15 @@ typedef struct phNxpUciHal_Sem {
 } phNxpUciHal_Sem_t;
 
 /* Semaphore helper macros */
-#define SEM_WAIT(cb_data) sem_wait(&((cb_data).sem))
-#define SEM_POST(p_cb_data) sem_post(&((p_cb_data)->sem))
+static inline int SEM_WAIT(phNxpUciHal_Sem_t* pCallbackData)
+{
+  return sem_wait(&pCallbackData->sem);
+}
+
+static inline int SEM_POST(phNxpUciHal_Sem_t* pCallbackData)
+{
+  return sem_post(&pCallbackData->sem);
+}
 
 /* Semaphore and mutex monitor */
 typedef struct phNxpUciHal_Monitor {
@@ -88,12 +108,36 @@ void phNxpUciHal_cleanup_monitor(void);
 phNxpUciHal_Monitor_t* phNxpUciHal_get_monitor(void);
 tHAL_UWB_STATUS phNxpUciHal_init_cb_data(phNxpUciHal_Sem_t* pCallbackData,
                                    void* pContext);
-void phNxpUciHal_sem_timed_wait(phNxpUciHal_Sem_t* pCallbackData);
-void phNxpUciHal_sem_timed_wait_sec(phNxpUciHal_Sem_t* pCallbackData, time_t sec);
+
+int phNxpUciHal_sem_timed_wait_msec(phNxpUciHal_Sem_t* pCallbackData, long msec);
+
+static inline int phNxpUciHal_sem_timed_wait_sec(phNxpUciHal_Sem_t* pCallbackData, time_t sec)
+{
+  return phNxpUciHal_sem_timed_wait_msec(pCallbackData, sec * 1000L);
+}
+
+static inline int phNxpUciHal_sem_timed_wait(phNxpUciHal_Sem_t* pCallbackData)
+{
+  /* default 1 second timeout*/
+  return phNxpUciHal_sem_timed_wait_msec(pCallbackData, 1000L);
+}
 
 void phNxpUciHal_cleanup_cb_data(phNxpUciHal_Sem_t* pCallbackData);
 void phNxpUciHal_releaseall_cb_data(void);
-void phNxpUciHal_print_packet(const char* pString, const uint8_t* p_data,
+
+
+/*
+ * Print an UWB Packet.
+ *
+ * @param what The type and direction of packet
+ *
+ * @param p_data The packet to be printed/logged.
+ *
+ * @param len Tenth of the packet.
+ *
+ */
+
+void phNxpUciHal_print_packet(enum phNxpUciHal_Pkt_Type what, const uint8_t* p_data,
                               uint16_t len);
 void phNxpUciHal_emergency_recovery(void);
 double phNxpUciHal_byteArrayToDouble(const uint8_t* p_data);
@@ -133,7 +177,6 @@ static inline void cpu_to_le_bytes(uint8_t *p, const T num)
 }
 
 /* Lock unlock helper macros */
-/* Lock unlock helper macros */
 #define REENTRANCE_LOCK()        \
   if (phNxpUciHal_get_monitor()) \
   pthread_mutex_lock(&phNxpUciHal_get_monitor()->reentrance_mutex)
@@ -146,17 +189,5 @@ static inline void cpu_to_le_bytes(uint8_t *p, const T num)
 #define CONCURRENCY_UNLOCK()     \
   if (phNxpUciHal_get_monitor()) \
   pthread_mutex_unlock(&phNxpUciHal_get_monitor()->concurrency_mutex)
-#define STREAM_TO_UINT8(u8, p) \
-  {                            \
-    u8 = (uint8_t)(*(p));      \
-    (p) += 1;                  \
-  }
-
-#define BE_STREAM_TO_UINT32(u32, p)                                    \
-  {                                                                    \
-    u32 = ((uint32_t)(*((p) + 3)) + ((uint32_t)(*((p) + 2)) << 8) +    \
-           ((uint32_t)(*((p) + 1)) << 16) + ((uint32_t)(*(p)) << 24)); \
-    (p) += 4;                                                          \
-  }
 
 #endif /* _PHNXPUCIHAL_UTILS_H_ */

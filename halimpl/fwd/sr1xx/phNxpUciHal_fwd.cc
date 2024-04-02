@@ -726,7 +726,7 @@ phHbci_Status_t phHbci_GetApdu(uint8_t *pApdu, uint16_t sz)
     }
 
     if(is_fw_download_log_enabled == 0x01)
-      phNxpUciHal_print_packet("RECV",pApdu,ret_Read);
+      phNxpUciHal_print_packet(NXP_TML_FW_DNLD_RSP_UWBS_2_AP,pApdu,ret_Read);
 
     switch (gOpts.capture)
     {
@@ -761,7 +761,7 @@ phHbci_Status_t phHbci_PutApdu(uint8_t *pApdu, uint16_t sz)
     int ret;
     int numWrote = 0;
     if(is_fw_download_log_enabled == 0x01)
-      phNxpUciHal_print_packet("SEND",pApdu,sz);
+      phNxpUciHal_print_packet(NXP_TML_FW_DNLD_CMD_AP_2_UWBS,pApdu,sz);
 
     ret = write((intptr_t)tPalConfig.pDevHandle, pApdu,sz);
     if (ret > 0) {
