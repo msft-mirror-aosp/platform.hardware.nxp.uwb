@@ -17,7 +17,10 @@
 #ifndef PHTMLUWB_H
 #define PHTMLUWB_H
 
+#include <memory>
+
 #include <phUwbCommon.h>
+#include <phMessageQueue.h>
 
 /*
  * Message posted by Reader thread uponl
@@ -75,16 +78,6 @@ typedef void (*pphTmlUwb_TransactCompletionCb_t)(
     void* pContext, phTmlUwb_TransactInfo_t* pInfo);
 
 /*
- * TML Deferred callback interface structure invoked by upper layer
- *
- * This could be used for read/write operations
- *
- * dwMsgPostedThread Message source identifier
- * pParams Parameters for the deferred call processing
- */
-typedef void (*pphTmlUwb_DeferFuncPointer_t)(uint32_t dwMsgPostedThread,
-                                             void* pParams);
-/*
  * Structure containing details related to read and write operations
  *
  */
@@ -113,12 +106,11 @@ typedef struct phTmlUwb_Context {
   phTmlUwb_ReadWriteInfo_t tReadInfo;  /*Pointer to Reader Thread Structure */
   phTmlUwb_ReadWriteInfo_t tWriteInfo; /*Pointer to Writer Thread Structure */
   void* pDevHandle;                    /* Pointer to Device Handle */
-  uintptr_t dwCallbackThreadId; /* Thread ID to which message to be posted */
+  std::shared_ptr<MessageQueue<phLibUwb_Message>> pClientMq; /* Pointer to Client thread message queue */
   uint8_t bEnableCrc;           /*Flag to validate/not CRC for input buffer */
   sem_t rxSemaphore;
   sem_t txSemaphore;      /* Lock/Acquire txRx Semaphore */
-  sem_t postMsgSemaphore; /* Semaphore to post message atomically by Reader &
-                             writer thread */
+
   pthread_cond_t wait_busy_condition; /*Condition to wait reader thread*/
   pthread_mutex_t wait_busy_lock;     /*Condition lock to wait reader thread*/
   pthread_mutex_t read_abort_lock;    /*Condition lock to wait read abort*/
@@ -134,56 +126,19 @@ typedef struct phTmlUwb_Context {
  *
  * phTmlUwb_Spi_IoCtl
  */
-typedef enum {
-  phTmlUwb_Invalid = 0,
-  phTmlUwb_SetPower,
-  phTmlUwb_EnableFwdMode,
-  phTmlUwb_EnableThroughPut,
-  phTmlUwb_EseReset
-} phTmlUwb_ControlCode_t;     /* Control code for IOCTL call */
-
-/*
- * TML Configuration exposed to upper layer.
- */
-typedef struct phTmlUwb_Config {
-  /* Port name connected to SR100
-   *
-   * Platform specific canonical device name to which SR100 is connected.
-   *
-   * e.g. On Linux based systems this would be /dev/SR100
-   */
-  const char* pDevName;
-  /* Callback Thread ID
-   *
-   * This is the thread ID on which the Reader & Writer thread posts message. */
-  uintptr_t dwGetMsgThreadId;
-  /* Communication speed between DH and SR100
-   *
-   * This is the baudrate of the bus for communication between DH and SR100 */
-  uint32_t dwBaudRate;
-} phTmlUwb_Config_t, *pphTmlUwb_Config_t; /* pointer to phTmlUwb_Config_t */
-
-/*
- * TML Deferred Callback structure used to invoke Upper layer Callback function.
- */
-typedef struct {
-  /* Deferred callback function to be invoked */
-  pphTmlUwb_DeferFuncPointer_t pDef_call;
-  /* Source identifier
-   *
-   * Identifier of the source which posted the message
-   */
-  uint32_t dwMsgPostedThread;
-  /** Actual Message
-   *
-   * This is passed as a parameter passed to the deferred callback function
-   * pDef_call. */
-  void* pParams;
-} phTmlUwb_DeferMsg_t; /* DeferMsg structure passed to User Thread */
+enum class phTmlUwb_ControlCode_t {
+  Invalid = 0,
+  SetPower,
+  EnableFwdMode,
+  EnableThroughPut,
+  EseReset,
+};
 
 /* Function declarations */
-tHAL_UWB_STATUS phTmlUwb_Init(pphTmlUwb_Config_t pConfig);
+tHAL_UWB_STATUS phTmlUwb_Init(const char* pDevName, std::shared_ptr<MessageQueue<phLibUwb_Message>> pClientMq);
 tHAL_UWB_STATUS phTmlUwb_Shutdown(void);
+void phTmlUwb_Suspend(void);
+void phTmlUwb_Resume(void);
 tHAL_UWB_STATUS phTmlUwb_Write(uint8_t* pBuffer, uint16_t wLength,
                          pphTmlUwb_TransactCompletionCb_t pTmlWriteComplete,
                          void* pContext);
@@ -195,6 +150,5 @@ tHAL_UWB_STATUS phTmlUwb_ReadAbort(void);
 void phTmlUwb_eSE_Reset(void);
 void phTmlUwb_Spi_Reset(void);
 void phTmlUwb_Chip_Reset(void);
-void phTmlUwb_DeferredCall(uintptr_t dwThreadId,
-                           phLibUwb_Message_t* ptWorkerMsg);
+void phTmlUwb_DeferredCall(std::shared_ptr<phLibUwb_Message> msg);
 #endif /*  PHTMLUWB_H  */

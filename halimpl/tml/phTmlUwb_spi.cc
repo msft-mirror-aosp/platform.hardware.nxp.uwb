@@ -37,7 +37,7 @@ extern phNxpUciHal_Control_t nxpucihal_ctrl;
 **
 ** Description      Open and configure SR100
 **
-** Parameters       pConfig     - hardware information
+** Parameters       pDevName    - device node path
 **                  pLinkHandle - device handle
 **
 ** Returns          UWB status:
@@ -45,13 +45,13 @@ extern phNxpUciHal_Control_t nxpucihal_ctrl;
 **                  UWBSTATUS_INVALID_DEVICE - device open operation failure
 **
 *******************************************************************************/
-tHAL_UWB_STATUS phTmlUwb_spi_open_and_configure(pphTmlUwb_Config_t pConfig,
-                                          void** pLinkHandle) {
+tHAL_UWB_STATUS phTmlUwb_spi_open_and_configure(const char* pDevName, void** pLinkHandle)
+{
   int nHandle;
 
-  NXPLOG_TML_D("Opening port=%s\n", pConfig->pDevName);
+  NXPLOG_TML_D("Opening port=%s\n", pDevName);
   /* open port */
-  nHandle = open(pConfig->pDevName, O_RDWR);
+  nHandle = open(pDevName, O_RDWR);
   if (nHandle < 0) {
     NXPLOG_TML_E("_spi_open() Failed: retval %x", nHandle);
     *pLinkHandle = NULL;
@@ -61,9 +61,9 @@ tHAL_UWB_STATUS phTmlUwb_spi_open_and_configure(pphTmlUwb_Config_t pConfig,
   *pLinkHandle = (void*)((intptr_t)nHandle);
 
   /*Reset SR100 */
-  phTmlUwb_Spi_Ioctl((void*)((intptr_t)nHandle), phTmlUwb_SetPower, 0);
+  phTmlUwb_Spi_Ioctl((void*)((intptr_t)nHandle), phTmlUwb_ControlCode_t::SetPower, 0);
   usleep(1000);
-  phTmlUwb_Spi_Ioctl((void*)((intptr_t)nHandle), phTmlUwb_SetPower, 1);
+  phTmlUwb_Spi_Ioctl((void*)((intptr_t)nHandle), phTmlUwb_ControlCode_t::SetPower, 1);
   usleep(10000);
 
   return UWBSTATUS_SUCCESS;
@@ -84,26 +84,29 @@ tHAL_UWB_STATUS phTmlUwb_spi_open_and_configure(pphTmlUwb_Config_t pConfig,
 **                  -1         - write operation failure
 **
 *******************************************************************************/
-int phTmlUwb_spi_write(void* pDevHandle, uint8_t* pBuffer,
-                       int nNbBytesToWrite) {
+int phTmlUwb_spi_write(void* pDevHandle, uint8_t* pBuffer, size_t nNbBytesToWrite)
+{
   int ret;
-  int numWrote = 0;
-  int numByteWrite = 0;
+  ssize_t numWrote;
 
   if (NULL == pDevHandle) {
     NXPLOG_TML_E("_spi_write() device is null");
     return -1;
   }
-  numByteWrite  = NORMAL_MODE_HEADER_LEN;
 
-  ret = write((intptr_t)pDevHandle, pBuffer, nNbBytesToWrite);
-  if (ret > 0) {
-    NXPLOG_TML_D("_spi_write()_1 ret : %x", ret);
-    numWrote = ret;
-  } else {
-    NXPLOG_TML_D("_spi_write()_1 failed : %d", ret);
+  if (nNbBytesToWrite == 0) {
+    NXPLOG_TML_E("_spi_write() with 0 bytes");
     return -1;
   }
+
+  numWrote = write((intptr_t)pDevHandle, pBuffer, nNbBytesToWrite);
+  if (numWrote == -1) {
+    NXPLOG_TML_E("_spi_write() failed: %d", errno);
+    return -1;
+  } else if (numWrote != nNbBytesToWrite) {
+    NXPLOG_TML_E("_spi_write() size mismatch %zd != %zd", nNbBytesToWrite, numWrote);
+  }
+
   return numWrote;
 }
 
@@ -122,27 +125,24 @@ int phTmlUwb_spi_write(void* pDevHandle, uint8_t* pBuffer,
 **                  -1        - read operation failure
 **
 *******************************************************************************/
-int phTmlUwb_spi_read(void* pDevHandle, uint8_t* pBuffer, int nNbBytesToRead) {
-  int ret_Read;
-  uint16_t totalBtyesToRead = 0;
+int phTmlUwb_spi_read(void* pDevHandle, uint8_t* pBuffer, size_t nNbBytesToRead)
+{
+  ssize_t ret_Read;
 
-  UNUSED(nNbBytesToRead);
   if (NULL == pDevHandle) {
     NXPLOG_TML_E("_spi_read() error handle");
     return -1;
   }
-  totalBtyesToRead = NORMAL_MODE_HEADER_LEN;
-  /*Just requested 3 bytes header here but driver will get the header + payload and returns*/
-  ret_Read = read((intptr_t)pDevHandle, pBuffer, totalBtyesToRead);
-  if (ret_Read < 0) {
-     NXPLOG_TML_E("_spi_read() error: %d", ret_Read);
-    return -1;
+
+  ret_Read = read((intptr_t)pDevHandle, pBuffer, nNbBytesToRead);
+  if (ret_Read == -1) {
+     NXPLOG_TML_E("_spi_read() error: %d", errno);
   } else if((nxpucihal_ctrl.fw_dwnld_mode) && ((0xFF == pBuffer[0]) || ((0x00 == pBuffer[0]) && (0x00 == pBuffer[3])))) {
       NXPLOG_TML_E("_spi_read() error: Invalid UCI packet");
       /* To Avoid spurious interrupt after FW download */
-      return 0;
+      ret_Read = 0;
   }
-  //nxpucihal_ctrl.cir_dump_len = ret_Read - NORMAL_MODE_HEADER_LEN;
+
   return ret_Read;
 }
 
@@ -160,22 +160,22 @@ int phTmlUwb_spi_read(void* pDevHandle, uint8_t* pBuffer, int nNbBytesToRead) {
 **
 *******************************************************************************/
 int phTmlUwb_Spi_Ioctl(void* pDevHandle, phTmlUwb_ControlCode_t eControlCode , long arg) {
-  NXPLOG_TML_D("phTmlUwb_Spi_Ioctl(), cmd %d,  arg %ld", eControlCode, arg);
+  NXPLOG_TML_D("phTmlUwb_Spi_Ioctl(), cmd %d,  arg %ld", static_cast<int>(eControlCode), arg);
   int ret = 1;
   if (NULL == pDevHandle) {
     return -1;
   }
   switch(eControlCode){
-    case phTmlUwb_SetPower:
+    case phTmlUwb_ControlCode_t::SetPower:
       ioctl((intptr_t)pDevHandle, SRXXX_SET_PWR, arg);
       break;
-    case phTmlUwb_EnableFwdMode:
+    case phTmlUwb_ControlCode_t::EnableFwdMode:
       ioctl((intptr_t)pDevHandle, SRXXX_SET_FWD, arg);
       break;
-    case phTmlUwb_EnableThroughPut:
+    case phTmlUwb_ControlCode_t::EnableThroughPut:
       //ioctl((intptr_t)pDevHandle, SRXXX_GET_THROUGHPUT, arg);
       break;
-    case phTmlUwb_EseReset:
+    case phTmlUwb_ControlCode_t::EseReset:
       ioctl((intptr_t)pDevHandle, SRXXX_ESE_RESET, arg);
       break;
     default:

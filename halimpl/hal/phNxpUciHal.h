@@ -17,6 +17,8 @@
 #ifndef _PHNXPUCIHAL_H_
 #define _PHNXPUCIHAL_H_
 
+#include <thread>
+
 #include <phNxpUciHal_utils.h>
 #include <phNxpUciHal_Adaptation.h>
 #include <hal_nxpuwb.h>
@@ -45,7 +47,6 @@
 #define CCC_CHANNEL_INFO_BIT_MASK 0x03
 
 #define MAX_RESPONSE_STATUS 0x0C
-#define MAX_COMMAND_RETRY_COUNT 0x05
 
 #define UCI_MT_MASK 0xE0
 #define UCI_PBF_MASK 0x10
@@ -164,8 +165,7 @@ typedef struct {
 /* UCI Control structure */
 typedef struct phNxpUciHal_Control {
   phNxpUci_HalStatus halStatus; /* Indicate if hal is open or closed */
-  pthread_t client_thread;      /* Integration thread handle */
-  uint8_t thread_running;       /* Thread running if set to 1, else set to 0 */
+  std::thread client_thread;    /* Integration thread handle */
   phLibUwb_sConfig_t gDrvCfg;   /* Driver config data */
 
   /* Rx data */
@@ -175,9 +175,6 @@ typedef struct phNxpUciHal_Control {
   /* libuwb-uci callbacks */
   uwb_stack_callback_t* p_uwb_stack_cback;
   uwb_stack_data_callback_t* p_uwb_stack_data_cback;
-
-  /* HAL open status */
-  bool_t hal_open_status;
 
   /* HAL extensions */
   uint8_t hal_ext_enabled;
@@ -190,9 +187,7 @@ typedef struct phNxpUciHal_Control {
   // ext_cb_data is flagged only from the 1st response packet
   bool ext_cb_waiting;
 
-  phNxpUciHal_Sem_t dev_status_ntf_wait;
   phNxpUciHal_Sem_t uwb_binding_status_ntf_wait;
-  phNxpUciHal_Sem_t uwb_close_complete_wait;
   phNxpUciHal_Sem_t uwb_get_binding_status_ntf_wait;
   phNxpUciHal_Sem_t uwb_do_bind_ntf_wait;
   phNxpUciHal_Sem_t calib_data_ntf_wait;
@@ -220,7 +215,6 @@ typedef struct phNxpUciHal_Control {
   bool_t fw_dwnld_mode;
   uint8_t uwb_binding_status;
   uint8_t uwb_binding_count;
-  uint8_t  uwbc_device_state;
   uint8_t dev_state_ntf_wait;
 
   // Per-country settings
@@ -231,6 +225,9 @@ typedef struct phNxpUciHal_Control {
   uint8_t cal_rx_antenna_mask;
   uint8_t cal_tx_antenna_mask;
 } phNxpUciHal_Control_t;
+
+// RX packet handler
+struct phNxpUciHal_RxHandler;
 
 /* Internal messages to handle callbacks */
 #define UCI_HAL_OPEN_CPLT_MSG 0x411
@@ -250,15 +247,17 @@ typedef struct phNxpUciHal_Control {
 #define UWB_NXP_ANDROID_MW_RC_VERSION (0x02)   /* Android MW RC Version */
 #define UWB_NXP_ANDROID_MW_DROP_VERSION (0x07) /* Android MW early drops */
 /******************** UCI HAL exposed functions *******************************/
-
-tHAL_UWB_STATUS phNxpUciHal_write_unlocked(uint16_t data_len,
-                                           const uint8_t *p_data);
-void phNxpUciHal_read_complete(void* pContext,
-                                      phTmlUwb_TransactInfo_t* pInfo);
+tHAL_UWB_STATUS phNxpUciHal_init_hw();
+tHAL_UWB_STATUS phNxpUciHal_write_unlocked(uint16_t data_len, const uint8_t *p_data);
+void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo);
 tHAL_UWB_STATUS phNxpUciHal_uwb_reset();
 tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig();
-tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
-                                                const uint8_t *p_cmd,
-                                                uint16_t *data_written);
+tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len, const uint8_t *p_cmd, uint16_t *data_written);
+
+std::shared_ptr<phNxpUciHal_RxHandler> phNxpUciHal_rx_handler_add(
+  uint8_t mt, uint8_t gid, uint8_t oid,
+  bool skip_reporting, bool run_once,
+  std::function<void(size_t packet_len, const uint8_t *packet)> callback);
+void phNxpUciHal_rx_handler_del(std::shared_ptr<phNxpUciHal_RxHandler> handler);
 
 #endif /* _PHNXPUCIHAL_H_ */
