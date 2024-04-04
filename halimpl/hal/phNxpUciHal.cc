@@ -951,60 +951,43 @@ static uint8_t phNxpUciHal_sendGetCoreDeviceInfo(void)
  * Returns          void
  *
  ******************************************************************************/
-void parseAntennaConfig(uint16_t dataLength, const uint8_t *data) {
-  if (dataLength > 0) {
-    uint8_t index =
-        UCI_MSG_HDR_SIZE + 1; // Excluding the header and number of params
-    uint8_t tagId, subTagId;
-    int length;
-    while (index < dataLength) {
-      tagId = data[index++];
-      subTagId = data[index++];
-      length = data[index++];
-      if ((ANTENNA_RX_PAIR_DEFINE_TAG_ID == tagId) &&
-          (ANTENNA_RX_PAIR_DEFINE_SUB_TAG_ID == subTagId)) {
-        isAntennaRxPairDefined = true;
-        numberOfAntennaPairs = data[index];
-        NXPLOG_UCIHAL_D("numberOfAntennaPairs:%d", numberOfAntennaPairs);
-        break;
-      } else {
-        index = index + length;
-      }
-    };
-  } else {
-    NXPLOG_UCIHAL_E("Reading config file for %s failed!!!",
-                    NAME_UWB_CORE_EXT_DEVICE_DEFAULT_CONFIG);
-  }
-}
-
-/******************************************************************************
- * Function         phNxpUciHal_configureLowPowerMode
- *
- * Description      This function applies low power mode value from config file
- *
- * Returns          success/Failure
- *
- ******************************************************************************/
-static bool phNxpUciHal_configureLowPowerMode() {
-  uint8_t configValue;
-  unsigned long num = 1;
-  bool isSendSuccess = false;
-
-  if (NxpConfig_GetNum(NAME_NXP_UWB_LOW_POWER_MODE, &configValue, num)) {
-    // Core set config packet: GID=0x00 OID=0x04
-    const std::vector<uint8_t> packet(
-        {((UCI_MT_CMD << UCI_MT_SHIFT) | UCI_GID_CORE), UCI_MSG_CORE_SET_CONFIG,
-         0x00, 0x04, 0x01, LOW_POWER_MODE_TAG_ID, LOW_POWER_MODE_LENGTH,
-         configValue});
-
-    if (phNxpUciHal_send_ext_cmd(packet.size(), packet.data()) ==
-        UWBSTATUS_SUCCESS) {
-      isSendSuccess = true;
+static void parseAntennaConfig(const char *configName)
+{
+  std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
+  long retlen = 0;
+  int gotConfig = NxpConfig_GetByteArray(configName, buffer.data(), buffer.size(), &retlen);
+  if (gotConfig) {
+    if (retlen <= UCI_MSG_HDR_SIZE) {
+      NXPLOG_UCIHAL_E("parseAntennaConfig: %s is too short. Aborting.", configName);
+      return;
     }
-  } else {
-    NXPLOG_UCIHAL_E("NAME_NXP_UWB_LOW_POWER_MODE config read failed");
   }
-  return isSendSuccess;
+  else
+  {
+    NXPLOG_UCIHAL_E("parseAntennaConfig: Failed to get '%s'. Aborting.", configName);
+    return;
+  }
+
+  const uint16_t dataLength = retlen;
+  const uint8_t *data = buffer.data();
+
+  uint8_t index = UCI_MSG_HDR_SIZE + 1; // Excluding the header and number of params
+  uint8_t tagId, subTagId;
+  int length;
+  while (index < dataLength) {
+    tagId = data[index++];
+    subTagId = data[index++];
+    length = data[index++];
+    if ((ANTENNA_RX_PAIR_DEFINE_TAG_ID == tagId) &&
+        (ANTENNA_RX_PAIR_DEFINE_SUB_TAG_ID == subTagId)) {
+      isAntennaRxPairDefined = true;
+      numberOfAntennaPairs = data[index];
+      NXPLOG_UCIHAL_D("numberOfAntennaPairs:%d", numberOfAntennaPairs);
+      break;
+    } else {
+      index = index + length;
+    }
+  }
 }
 
 /******************************************************************************
@@ -1015,139 +998,72 @@ static bool phNxpUciHal_configureLowPowerMode() {
  * Returns          status
  *
  ******************************************************************************/
-tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
-  NXPLOG_UCIHAL_D(" phNxpUciHal_applyVendorConfig Enter..");
-  std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
-  uint8_t *vendorConfig = NULL;
-  tHAL_UWB_STATUS status;
-  buffer.fill(0);
-  long retlen = 0;
+tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig()
+{
+  std::vector<const char*> vendorParamNames;
+
+  // Base parameter names
   if (nxpucihal_ctrl.fw_boot_mode == USER_FW_BOOT_MODE) {
-    if (NxpConfig_GetByteArray(NAME_UWB_USER_FW_BOOT_MODE_CONFIG,
-                               buffer.data(), buffer.size(),
-                               &retlen)) {
-      if ((retlen > 0) && (retlen <= UCI_MAX_DATA_LEN)) {
-        vendorConfig = buffer.data();
-        status = phNxpUciHal_send_ext_cmd(retlen, vendorConfig);
-        NXPLOG_UCIHAL_D(
-            " phNxpUciHal_send_ext_cmd :: status value for %s is %d ",
-            NAME_UWB_USER_FW_BOOT_MODE_CONFIG, status);
-        if (status != UWBSTATUS_SUCCESS) {
-          return status;
-        }
-      }
-    }
+    vendorParamNames.push_back(NAME_UWB_USER_FW_BOOT_MODE_CONFIG);
   }
-  if (NxpConfig_GetByteArray(NAME_NXP_UWB_EXTENDED_NTF_CONFIG,
-                                 buffer.data(), buffer.size(),
-                                 &retlen)) {
-    if (retlen > 0) {
-      vendorConfig = buffer.data();
-      status = phNxpUciHal_send_ext_cmd(retlen, vendorConfig);
-      NXPLOG_UCIHAL_D(" phNxpUciHal_send_ext_cmd :: status value for %s is %d ",
-                      NAME_NXP_UWB_EXTENDED_NTF_CONFIG, status);
-      if (status != UWBSTATUS_SUCCESS) {
-        return status;
-      }
-    }
-  }
+  vendorParamNames.push_back(NAME_NXP_UWB_EXTENDED_NTF_CONFIG);
+
+  // Chip parameter names
+  const char *per_chip_param = NAME_UWB_CORE_EXT_DEVICE_DEFAULT_CONFIG;
   if (nxpucihal_ctrl.device_type == DEVICE_TYPE_SR1xxT) {
-    if (NxpConfig_GetByteArray(NAME_UWB_CORE_EXT_DEVICE_SR1XX_T_CONFIG,
-                               buffer.data(), buffer.size(),
-                               &retlen)) {
-      if (retlen > 0) {
-        vendorConfig = buffer.data();
-        status = phNxpUciHal_send_ext_cmd(retlen, vendorConfig);
-        NXPLOG_UCIHAL_D(
-            " phNxpUciHal_send_ext_cmd :: status value for %s is %d ",
-            NAME_UWB_CORE_EXT_DEVICE_SR1XX_T_CONFIG, status);
-
-        // AOA support handling
-        parseAntennaConfig(retlen, vendorConfig);
-
-        if (status != UWBSTATUS_SUCCESS) {
-          return status;
-        }
-      }
-    }
+    per_chip_param = NAME_UWB_CORE_EXT_DEVICE_SR1XX_T_CONFIG;
   } else if (nxpucihal_ctrl.device_type == DEVICE_TYPE_SR1xxS) {
-    if (NxpConfig_GetByteArray(NAME_UWB_CORE_EXT_DEVICE_SR1XX_S_CONFIG,
-                            buffer.data(), buffer.size(),
-                            &retlen)) {
-      if (retlen > 0) {
-        vendorConfig = buffer.data();
-        status = phNxpUciHal_send_ext_cmd(retlen, vendorConfig);
-        NXPLOG_UCIHAL_D(
-            " phNxpUciHal_send_ext_cmd :: status value for %s is %d ",
-            NAME_UWB_CORE_EXT_DEVICE_SR1XX_S_CONFIG, status);
+    per_chip_param = NAME_UWB_CORE_EXT_DEVICE_SR1XX_S_CONFIG;
+  }
+  vendorParamNames.push_back(per_chip_param);
 
-        // AOA support handling
-        parseAntennaConfig(retlen, vendorConfig);
+  // Parse Antenna config from chip-parameter
+  parseAntennaConfig(per_chip_param);
 
+  // Extra parameter names, XTAL, NXP_CORE_CONF_BLK[1..10]
+  vendorParamNames.push_back(NAME_NXP_UWB_XTAL_38MHZ_CONFIG);
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "1");
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "2");
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "3");
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "4");
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "5");
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "6");
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "7");
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "8");
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "9");
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "10");
+
+  // Execute
+  for (const auto paramName : vendorParamNames) {
+    std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
+    long retlen = 0;
+    if (NxpConfig_GetByteArray(paramName, buffer.data(), buffer.size(), &retlen)) {
+      if (retlen > 0 && retlen < UCI_MAX_DATA_LEN) {
+        NXPLOG_UCIHAL_D("VendorConfig: apply %s", paramName);
+        tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(retlen, buffer.data());
         if (status != UWBSTATUS_SUCCESS) {
-          return status;
-        }
-      }
-    }
-  } else {
-    NXPLOG_UCIHAL_D("phNxpUciHal_sendGetCoreDeviceInfo deviceType default");
-    if (NxpConfig_GetByteArray(NAME_UWB_CORE_EXT_DEVICE_DEFAULT_CONFIG,
-                                   buffer.data(), buffer.size(),
-                                   &retlen)) {
-      if (retlen > 0) {
-        vendorConfig = buffer.data();
-        status = phNxpUciHal_send_ext_cmd(retlen, vendorConfig);
-        NXPLOG_UCIHAL_D(
-            " phNxpUciHal_send_ext_cmd :: status value for %s is %d ",
-            NAME_UWB_CORE_EXT_DEVICE_DEFAULT_CONFIG, status);
-
-        // AOA support handling
-        parseAntennaConfig(retlen, vendorConfig);
-
-        if (status != UWBSTATUS_SUCCESS) {
+          NXPLOG_UCIHAL_E("VendorConfig: failed to apply %s", paramName);
           return status;
         }
       }
     }
   }
-  if (NxpConfig_GetByteArray(NAME_NXP_UWB_XTAL_38MHZ_CONFIG,
-                                 buffer.data(), buffer.size(),
-                                 &retlen)) {
-    if (retlen > 0) {
-      vendorConfig = buffer.data();
-      status = phNxpUciHal_send_ext_cmd(retlen, vendorConfig);
-      NXPLOG_UCIHAL_D(" phNxpUciHal_send_ext_cmd :: status value for %s is %d ",
-                      NAME_NXP_UWB_XTAL_38MHZ_CONFIG, status);
-      if (status != UWBSTATUS_SUCCESS) {
-        return status;
-      }
-    }
-  }
-  for(int i = 1;i <= 10;i++) {
-    std::string str = NAME_NXP_CORE_CONF_BLK;
-    std::string value = std::to_string(i);
-    std::string name = str + value;
-    NXPLOG_UCIHAL_D(" phNxpUciHal_applyVendorConfig :: Name of the config block is %s", name.c_str());
-    if (NxpConfig_GetByteArray(name.c_str(), buffer.data(), buffer.size(), &retlen)) {
-      if ((retlen > 0) && (retlen <= UCI_MAX_DATA_LEN)) {
-        vendorConfig = buffer.data();
-        status = phNxpUciHal_send_ext_cmd(retlen,vendorConfig);
-        NXPLOG_UCIHAL_D(" phNxpUciHal_send_ext_cmd :: status value for %s is %d ", name.c_str(),status);
-        if(status != UWBSTATUS_SUCCESS) {
-          return status;
-        }
-      }
-    } else {
-      NXPLOG_UCIHAL_D(
-          " phNxpUciHal_applyVendorConfig::%s not available in the config file",
-          name.c_str());
-    }
-  }
 
-  // low power mode
-  if (!phNxpUciHal_configureLowPowerMode()) {
-    NXPLOG_UCIHAL_E("phNxpUciHal_send_ext_cmd for %s failed",
-                    NAME_NXP_UWB_LOW_POWER_MODE);
+  // Low Power Mode
+  // TODO: remove this out, this can be move to Chip parameter names
+  uint8_t lowPowerMode = 0;
+  if (NxpConfig_GetNum(NAME_NXP_UWB_LOW_POWER_MODE, &lowPowerMode, sizeof(lowPowerMode))) {
+    NXPLOG_UCIHAL_D("VendorConfig: apply %s", NAME_NXP_UWB_LOW_POWER_MODE);
+
+    // Core set config packet: GID=0x00 OID=0x04
+    const std::vector<uint8_t> packet(
+        {((UCI_MT_CMD << UCI_MT_SHIFT) | UCI_GID_CORE), UCI_MSG_CORE_SET_CONFIG,
+         0x00, 0x04, 0x01, LOW_POWER_MODE_TAG_ID, LOW_POWER_MODE_LENGTH,
+         lowPowerMode});
+
+    if (phNxpUciHal_send_ext_cmd(packet.size(), packet.data()) != UWBSTATUS_SUCCESS) {
+      NXPLOG_UCIHAL_E("VendorConfig: failed to apply NAME_NXP_UWB_LOW_POWER_MODE");
+    }
   }
 
   return UWBSTATUS_SUCCESS;
