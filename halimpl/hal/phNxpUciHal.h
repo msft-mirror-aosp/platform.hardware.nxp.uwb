@@ -206,6 +206,9 @@ typedef struct phNxpUciHal_Control {
   // Per-country settings
   phNxpUciHal_Runtime_Settings_t rt_settings;
 
+  // AOA support handling
+  int numberOfAntennaPairs;
+
   // Extra calibration
   // Antenna Definitions for extra calibration, b0=Antenna1, b1=Antenna2, ...
   uint8_t cal_rx_antenna_mask;
