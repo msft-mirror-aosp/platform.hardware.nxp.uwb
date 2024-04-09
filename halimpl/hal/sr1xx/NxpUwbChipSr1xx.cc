@@ -418,6 +418,7 @@ public:
 
   tHAL_UWB_STATUS chip_init();
   tHAL_UWB_STATUS core_init();
+  device_type_t get_device_type(const uint8_t *param, size_t param_len);
   tHAL_UWB_STATUS read_otp(extcal_param_id_t id, uint8_t *data, size_t data_len, size_t *retlen);
   tHAL_UWB_STATUS apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len);
 
@@ -603,6 +604,19 @@ tHAL_UWB_STATUS NxpUwbChipSr1xx::chip_init()
 tHAL_UWB_STATUS NxpUwbChipSr1xx::core_init()
 {
   return check_binding();
+}
+
+device_type_t NxpUwbChipSr1xx::get_device_type(const uint8_t *param, size_t param_len)
+{
+  // 'SR100S' or 'SR1..T'
+  if (param_len >= 6) {
+    const uint8_t marker = param[5];
+    if (marker == 'S')
+      return DEVICE_TYPE_SR1xxS;
+    else if (marker == 'T')
+      return DEVICE_TYPE_SR1xxT;
+  }
+  return DEVICE_TYPE_UNKNOWN;
 }
 
 tHAL_UWB_STATUS NxpUwbChipSr1xx::read_otp(extcal_param_id_t id, uint8_t *data, size_t data_len, size_t *retlen)

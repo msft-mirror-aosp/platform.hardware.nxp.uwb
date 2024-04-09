@@ -8,6 +8,14 @@
 
 #include "phUwbTypes.h"
 
+// Chip type
+typedef enum {
+  DEVICE_TYPE_UNKNOWN,
+  DEVICE_TYPE_SR1xxT,
+  DEVICE_TYPE_SR1xxS,
+  DEVICE_TYPE_SR200,
+} device_type_t;
+
 // SW defined data structures
 typedef enum {
   // 6 bytes
@@ -48,6 +56,9 @@ public:
   // Per-chip device configurations
   // Binding check, life cycle check.
   virtual tHAL_UWB_STATUS core_init() = 0;
+
+  // Determine device_type_t from DEVICE_INFO_RSP::UWB_CHIP_ID
+  virtual device_type_t get_device_type(const uint8_t* param, size_t param_len) = 0;
 
   // Read Calibration parameters storead at OTP
   virtual tHAL_UWB_STATUS read_otp(extcal_param_id_t id,
