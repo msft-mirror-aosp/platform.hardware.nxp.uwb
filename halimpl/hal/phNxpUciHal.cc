@@ -379,6 +379,7 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_c
 
   /* initialize trace level */
   phNxpLog_InitializeLogLevel();
+
   /*Create the timer for extns write response*/
   timeoutTimerId = phOsalUwb_Timer_Create();
 
@@ -415,6 +416,9 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_c
   nxpucihal_ctrl.halStatus = HAL_STATUS_OPEN;
 
   CONCURRENCY_UNLOCK();
+
+  // Per-chip (SR1XX or SR200) implementation
+  nxpucihal_ctrl.uwb_chip = GetUwbChip();
 
   /* Call open complete */
   phTmlUwb_DeferredCall(std::make_shared<phLibUwb_Message>(UCI_HAL_OPEN_CPLT_MSG));
@@ -695,10 +699,6 @@ void phNxpUciHal_read_complete(void* pContext,
   uint8_t gid = 0, oid = 0, pbf = 0, mt = 0;
   UNUSED(pContext);
 
-  if (nxpucihal_ctrl.read_retry_cnt == 1) {
-    nxpucihal_ctrl.read_retry_cnt = 0;
-  }
-
   int32_t totalLength = pInfo->wLength;
   int32_t length = 0;
   int32_t index = 0;
@@ -732,45 +732,6 @@ void phNxpUciHal_read_complete(void* pContext,
       nxpucihal_ctrl.isSkipPacket = 0;
       phNxpUciHal_parse(nxpucihal_ctrl.rx_data_len, nxpucihal_ctrl.p_rx_data);
       phNxpUciHal_rx_handler_check(pInfo->wLength, pInfo->pBuff);
-      phNxpUciHal_process_response();
-
-      if(!uwb_device_initialized) {
-        if (pbf) {
-          /* XXX: fix the whole logic if this really happens */
-          NXPLOG_UCIHAL_E("FIXME: Fragmented packets received during device-init!");
-        }
-        if ((gid == UCI_GID_PROPRIETARY) && (oid == UCI_MSG_BINDING_STATUS_NTF)) {
-          nxpucihal_ctrl.uwb_binding_status =
-              nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET];
-          nxpucihal_ctrl.isSkipPacket = 1;
-          nxpucihal_ctrl.uwb_binding_status_ntf_wait.status = UWBSTATUS_SUCCESS;
-          SEM_POST(&(nxpucihal_ctrl.uwb_binding_status_ntf_wait));
-        }
-        if ((mt == UCI_MT_NTF) && (gid == UCI_GID_PROPRIETARY_0X0F) &&
-           (oid == UCI_MSG_UWB_ESE_BINDING_NTF)) {
-         nxpucihal_ctrl.uwb_binding_count =
-          nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET + 1];
-         nxpucihal_ctrl.uwb_binding_status =
-             nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET + 2];
-         nxpucihal_ctrl.isSkipPacket = 1;
-         nxpucihal_ctrl.uwb_do_bind_ntf_wait.status = UWBSTATUS_SUCCESS;
-         SEM_POST(&(nxpucihal_ctrl.uwb_do_bind_ntf_wait));
-        }
-
-        if ((mt == UCI_MT_NTF) && (gid == UCI_GID_PROPRIETARY_0X0F) &&
-          (oid == UWB_ESE_BINDING_CHECK_NTF)) {
-          nxpucihal_ctrl.uwb_binding_status =
-              nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET];
-          nxpucihal_ctrl.p_rx_data[0] = 0x6E;
-          nxpucihal_ctrl.p_rx_data[1] = 0x06;
-          nxpucihal_ctrl.p_rx_data[2] = 0x00;
-          nxpucihal_ctrl.p_rx_data[3] = 0x01;
-          nxpucihal_ctrl.p_rx_data[4] = nxpucihal_ctrl.uwb_binding_status;
-          nxpucihal_ctrl.rx_data_len = 5;
-          nxpucihal_ctrl.uwb_get_binding_status_ntf_wait.status = UWBSTATUS_SUCCESS;
-          SEM_POST(&(nxpucihal_ctrl.uwb_get_binding_status_ntf_wait));
-        }
-      }
 
       // phNxpUciHal_process_ext_cmd_rsp() is waiting for the response packet
       // set this true to wake it up for other reasons
@@ -912,34 +873,14 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
 
   CONCURRENCY_UNLOCK();
 
+  nxpucihal_ctrl.uwb_chip.reset();
+
   phNxpUciHal_cleanup_monitor();
 
   NxpConfig_Deinit();
 
   /* Return success always */
   return UWBSTATUS_SUCCESS;
-}
-
-
-/******************************************************************************
- * Function         phNxpUciHal_sendGetCoreDeviceInfo
- *
- * Description      This function send Core device Info command.
- *
- * Returns          status.
- *
- ******************************************************************************/
-static uint8_t phNxpUciHal_sendGetCoreDeviceInfo(void)
-{
-  if (nxpucihal_ctrl.isDevInfoCached) {
-    return UWBSTATUS_SUCCESS;
-  }
-
-  const uint8_t getCoreDeviceInfoConfig[] = {0x20, 0x02, 0x00, 0x00};
-  uint8_t getCoreDeviceInfoCmdLen = 4;
-
-  tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(getCoreDeviceInfoCmdLen, getCoreDeviceInfoConfig);
-  return status;
 }
 
 /******************************************************************************
@@ -951,60 +892,43 @@ static uint8_t phNxpUciHal_sendGetCoreDeviceInfo(void)
  * Returns          void
  *
  ******************************************************************************/
-void parseAntennaConfig(uint16_t dataLength, const uint8_t *data) {
-  if (dataLength > 0) {
-    uint8_t index =
-        UCI_MSG_HDR_SIZE + 1; // Excluding the header and number of params
-    uint8_t tagId, subTagId;
-    int length;
-    while (index < dataLength) {
-      tagId = data[index++];
-      subTagId = data[index++];
-      length = data[index++];
-      if ((ANTENNA_RX_PAIR_DEFINE_TAG_ID == tagId) &&
-          (ANTENNA_RX_PAIR_DEFINE_SUB_TAG_ID == subTagId)) {
-        isAntennaRxPairDefined = true;
-        numberOfAntennaPairs = data[index];
-        NXPLOG_UCIHAL_D("numberOfAntennaPairs:%d", numberOfAntennaPairs);
-        break;
-      } else {
-        index = index + length;
-      }
-    };
-  } else {
-    NXPLOG_UCIHAL_E("Reading config file for %s failed!!!",
-                    NAME_UWB_CORE_EXT_DEVICE_DEFAULT_CONFIG);
-  }
-}
-
-/******************************************************************************
- * Function         phNxpUciHal_configureLowPowerMode
- *
- * Description      This function applies low power mode value from config file
- *
- * Returns          success/Failure
- *
- ******************************************************************************/
-static bool phNxpUciHal_configureLowPowerMode() {
-  uint8_t configValue;
-  unsigned long num = 1;
-  bool isSendSuccess = false;
-
-  if (NxpConfig_GetNum(NAME_NXP_UWB_LOW_POWER_MODE, &configValue, num)) {
-    // Core set config packet: GID=0x00 OID=0x04
-    const std::vector<uint8_t> packet(
-        {((UCI_MT_CMD << UCI_MT_SHIFT) | UCI_GID_CORE), UCI_MSG_CORE_SET_CONFIG,
-         0x00, 0x04, 0x01, LOW_POWER_MODE_TAG_ID, LOW_POWER_MODE_LENGTH,
-         configValue});
-
-    if (phNxpUciHal_send_ext_cmd(packet.size(), packet.data()) ==
-        UWBSTATUS_SUCCESS) {
-      isSendSuccess = true;
+static void parseAntennaConfig(const char *configName)
+{
+  std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
+  long retlen = 0;
+  int gotConfig = NxpConfig_GetByteArray(configName, buffer.data(), buffer.size(), &retlen);
+  if (gotConfig) {
+    if (retlen <= UCI_MSG_HDR_SIZE) {
+      NXPLOG_UCIHAL_E("parseAntennaConfig: %s is too short. Aborting.", configName);
+      return;
     }
-  } else {
-    NXPLOG_UCIHAL_E("NAME_NXP_UWB_LOW_POWER_MODE config read failed");
   }
-  return isSendSuccess;
+  else
+  {
+    NXPLOG_UCIHAL_E("parseAntennaConfig: Failed to get '%s'. Aborting.", configName);
+    return;
+  }
+
+  const uint16_t dataLength = retlen;
+  const uint8_t *data = buffer.data();
+
+  uint8_t index = UCI_MSG_HDR_SIZE + 1; // Excluding the header and number of params
+  uint8_t tagId, subTagId;
+  int length;
+  while (index < dataLength) {
+    tagId = data[index++];
+    subTagId = data[index++];
+    length = data[index++];
+    if ((ANTENNA_RX_PAIR_DEFINE_TAG_ID == tagId) &&
+        (ANTENNA_RX_PAIR_DEFINE_SUB_TAG_ID == subTagId)) {
+      isAntennaRxPairDefined = true;
+      numberOfAntennaPairs = data[index];
+      NXPLOG_UCIHAL_D("numberOfAntennaPairs:%d", numberOfAntennaPairs);
+      break;
+    } else {
+      index = index + length;
+    }
+  }
 }
 
 /******************************************************************************
@@ -1015,139 +939,72 @@ static bool phNxpUciHal_configureLowPowerMode() {
  * Returns          status
  *
  ******************************************************************************/
-tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig() {
-  NXPLOG_UCIHAL_D(" phNxpUciHal_applyVendorConfig Enter..");
-  std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
-  uint8_t *vendorConfig = NULL;
-  tHAL_UWB_STATUS status;
-  buffer.fill(0);
-  long retlen = 0;
+tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig()
+{
+  std::vector<const char*> vendorParamNames;
+
+  // Base parameter names
   if (nxpucihal_ctrl.fw_boot_mode == USER_FW_BOOT_MODE) {
-    if (NxpConfig_GetByteArray(NAME_UWB_USER_FW_BOOT_MODE_CONFIG,
-                               buffer.data(), buffer.size(),
-                               &retlen)) {
-      if ((retlen > 0) && (retlen <= UCI_MAX_DATA_LEN)) {
-        vendorConfig = buffer.data();
-        status = phNxpUciHal_send_ext_cmd(retlen, vendorConfig);
-        NXPLOG_UCIHAL_D(
-            " phNxpUciHal_send_ext_cmd :: status value for %s is %d ",
-            NAME_UWB_USER_FW_BOOT_MODE_CONFIG, status);
-        if (status != UWBSTATUS_SUCCESS) {
-          return status;
-        }
-      }
-    }
+    vendorParamNames.push_back(NAME_UWB_USER_FW_BOOT_MODE_CONFIG);
   }
-  if (NxpConfig_GetByteArray(NAME_NXP_UWB_EXTENDED_NTF_CONFIG,
-                                 buffer.data(), buffer.size(),
-                                 &retlen)) {
-    if (retlen > 0) {
-      vendorConfig = buffer.data();
-      status = phNxpUciHal_send_ext_cmd(retlen, vendorConfig);
-      NXPLOG_UCIHAL_D(" phNxpUciHal_send_ext_cmd :: status value for %s is %d ",
-                      NAME_NXP_UWB_EXTENDED_NTF_CONFIG, status);
-      if (status != UWBSTATUS_SUCCESS) {
-        return status;
-      }
-    }
-  }
+  vendorParamNames.push_back(NAME_NXP_UWB_EXTENDED_NTF_CONFIG);
+
+  // Chip parameter names
+  const char *per_chip_param = NAME_UWB_CORE_EXT_DEVICE_DEFAULT_CONFIG;
   if (nxpucihal_ctrl.device_type == DEVICE_TYPE_SR1xxT) {
-    if (NxpConfig_GetByteArray(NAME_UWB_CORE_EXT_DEVICE_SR1XX_T_CONFIG,
-                               buffer.data(), buffer.size(),
-                               &retlen)) {
-      if (retlen > 0) {
-        vendorConfig = buffer.data();
-        status = phNxpUciHal_send_ext_cmd(retlen, vendorConfig);
-        NXPLOG_UCIHAL_D(
-            " phNxpUciHal_send_ext_cmd :: status value for %s is %d ",
-            NAME_UWB_CORE_EXT_DEVICE_SR1XX_T_CONFIG, status);
-
-        // AOA support handling
-        parseAntennaConfig(retlen, vendorConfig);
-
-        if (status != UWBSTATUS_SUCCESS) {
-          return status;
-        }
-      }
-    }
+    per_chip_param = NAME_UWB_CORE_EXT_DEVICE_SR1XX_T_CONFIG;
   } else if (nxpucihal_ctrl.device_type == DEVICE_TYPE_SR1xxS) {
-    if (NxpConfig_GetByteArray(NAME_UWB_CORE_EXT_DEVICE_SR1XX_S_CONFIG,
-                            buffer.data(), buffer.size(),
-                            &retlen)) {
-      if (retlen > 0) {
-        vendorConfig = buffer.data();
-        status = phNxpUciHal_send_ext_cmd(retlen, vendorConfig);
-        NXPLOG_UCIHAL_D(
-            " phNxpUciHal_send_ext_cmd :: status value for %s is %d ",
-            NAME_UWB_CORE_EXT_DEVICE_SR1XX_S_CONFIG, status);
+    per_chip_param = NAME_UWB_CORE_EXT_DEVICE_SR1XX_S_CONFIG;
+  }
+  vendorParamNames.push_back(per_chip_param);
 
-        // AOA support handling
-        parseAntennaConfig(retlen, vendorConfig);
+  // Parse Antenna config from chip-parameter
+  parseAntennaConfig(per_chip_param);
 
+  // Extra parameter names, XTAL, NXP_CORE_CONF_BLK[1..10]
+  vendorParamNames.push_back(NAME_NXP_UWB_XTAL_38MHZ_CONFIG);
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "1");
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "2");
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "3");
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "4");
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "5");
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "6");
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "7");
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "8");
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "9");
+  vendorParamNames.push_back(NAME_NXP_CORE_CONF_BLK "10");
+
+  // Execute
+  for (const auto paramName : vendorParamNames) {
+    std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
+    long retlen = 0;
+    if (NxpConfig_GetByteArray(paramName, buffer.data(), buffer.size(), &retlen)) {
+      if (retlen > 0 && retlen < UCI_MAX_DATA_LEN) {
+        NXPLOG_UCIHAL_D("VendorConfig: apply %s", paramName);
+        tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(retlen, buffer.data());
         if (status != UWBSTATUS_SUCCESS) {
-          return status;
-        }
-      }
-    }
-  } else {
-    NXPLOG_UCIHAL_D("phNxpUciHal_sendGetCoreDeviceInfo deviceType default");
-    if (NxpConfig_GetByteArray(NAME_UWB_CORE_EXT_DEVICE_DEFAULT_CONFIG,
-                                   buffer.data(), buffer.size(),
-                                   &retlen)) {
-      if (retlen > 0) {
-        vendorConfig = buffer.data();
-        status = phNxpUciHal_send_ext_cmd(retlen, vendorConfig);
-        NXPLOG_UCIHAL_D(
-            " phNxpUciHal_send_ext_cmd :: status value for %s is %d ",
-            NAME_UWB_CORE_EXT_DEVICE_DEFAULT_CONFIG, status);
-
-        // AOA support handling
-        parseAntennaConfig(retlen, vendorConfig);
-
-        if (status != UWBSTATUS_SUCCESS) {
+          NXPLOG_UCIHAL_E("VendorConfig: failed to apply %s", paramName);
           return status;
         }
       }
     }
   }
-  if (NxpConfig_GetByteArray(NAME_NXP_UWB_XTAL_38MHZ_CONFIG,
-                                 buffer.data(), buffer.size(),
-                                 &retlen)) {
-    if (retlen > 0) {
-      vendorConfig = buffer.data();
-      status = phNxpUciHal_send_ext_cmd(retlen, vendorConfig);
-      NXPLOG_UCIHAL_D(" phNxpUciHal_send_ext_cmd :: status value for %s is %d ",
-                      NAME_NXP_UWB_XTAL_38MHZ_CONFIG, status);
-      if (status != UWBSTATUS_SUCCESS) {
-        return status;
-      }
-    }
-  }
-  for(int i = 1;i <= 10;i++) {
-    std::string str = NAME_NXP_CORE_CONF_BLK;
-    std::string value = std::to_string(i);
-    std::string name = str + value;
-    NXPLOG_UCIHAL_D(" phNxpUciHal_applyVendorConfig :: Name of the config block is %s", name.c_str());
-    if (NxpConfig_GetByteArray(name.c_str(), buffer.data(), buffer.size(), &retlen)) {
-      if ((retlen > 0) && (retlen <= UCI_MAX_DATA_LEN)) {
-        vendorConfig = buffer.data();
-        status = phNxpUciHal_send_ext_cmd(retlen,vendorConfig);
-        NXPLOG_UCIHAL_D(" phNxpUciHal_send_ext_cmd :: status value for %s is %d ", name.c_str(),status);
-        if(status != UWBSTATUS_SUCCESS) {
-          return status;
-        }
-      }
-    } else {
-      NXPLOG_UCIHAL_D(
-          " phNxpUciHal_applyVendorConfig::%s not available in the config file",
-          name.c_str());
-    }
-  }
 
-  // low power mode
-  if (!phNxpUciHal_configureLowPowerMode()) {
-    NXPLOG_UCIHAL_E("phNxpUciHal_send_ext_cmd for %s failed",
-                    NAME_NXP_UWB_LOW_POWER_MODE);
+  // Low Power Mode
+  // TODO: remove this out, this can be move to Chip parameter names
+  uint8_t lowPowerMode = 0;
+  if (NxpConfig_GetNum(NAME_NXP_UWB_LOW_POWER_MODE, &lowPowerMode, sizeof(lowPowerMode))) {
+    NXPLOG_UCIHAL_D("VendorConfig: apply %s", NAME_NXP_UWB_LOW_POWER_MODE);
+
+    // Core set config packet: GID=0x00 OID=0x04
+    const std::vector<uint8_t> packet(
+        {((UCI_MT_CMD << UCI_MT_SHIFT) | UCI_GID_CORE), UCI_MSG_CORE_SET_CONFIG,
+         0x00, 0x04, 0x01, LOW_POWER_MODE_TAG_ID, LOW_POWER_MODE_LENGTH,
+         lowPowerMode});
+
+    if (phNxpUciHal_send_ext_cmd(packet.size(), packet.data()) != UWBSTATUS_SUCCESS) {
+      NXPLOG_UCIHAL_E("VendorConfig: failed to apply NAME_NXP_UWB_LOW_POWER_MODE");
+    }
   }
 
   return UWBSTATUS_SUCCESS;
@@ -1171,156 +1028,65 @@ tHAL_UWB_STATUS phNxpUciHal_uwb_reset() {
   return UWBSTATUS_SUCCESS;
 }
 
-/******************************************************************************
- * Function         phNxpUciHal_disable_dpd
- *
- * Description      This function sends disable dpd command
- *
- * Returns          status
- *
- ******************************************************************************/
-static tHAL_UWB_STATUS phNxpUciHal_disable_dpd() {
-  tHAL_UWB_STATUS status;
-  uint8_t buffer[] = {0x20, 0x04, 0x00, 0x04, 0x01, 0x01, 0x01, 0x00};
-  status = phNxpUciHal_send_ext_cmd(sizeof(buffer), buffer);
-  if (status != UWBSTATUS_SUCCESS) {
-    return status;
-  }
-  return UWBSTATUS_SUCCESS;
-}
-
-/******************************************************************************
- * Function         phNxpUciHal_do_bind
- *
- * Description      This function sends bind request command
- *
- * Returns          status
- *
- ******************************************************************************/
-static tHAL_UWB_STATUS phNxpUciHal_do_bind() {
-  tHAL_UWB_STATUS status;
-  uint8_t buffer[] = {0x2F, 0x31, 0x00, 0x00};
-  status = phNxpUciHal_send_ext_cmd(sizeof(buffer), buffer);
-  if (status != UWBSTATUS_SUCCESS) {
-    return status;
-  }
-
-  if (phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.uwb_do_bind_ntf_wait) ||
-      nxpucihal_ctrl.uwb_do_bind_ntf_wait.status != UWBSTATUS_SUCCESS) {
-    NXPLOG_UCIHAL_E("uwb_do_bind_ntf_wait semaphore timed out");
-    return UWBSTATUS_FAILED;
-  }
-  return UWBSTATUS_SUCCESS;
-}
-
-/******************************************************************************
- * Function         phNxpUciHal_get_binding_status
- *
- * Description      This function request for ese binding status
- *
- * Returns          status
- *
- ******************************************************************************/
-static tHAL_UWB_STATUS phNxpUciHal_get_binding_status() {
-  tHAL_UWB_STATUS status;
-  uint8_t lock_cmd[] = {0x2F, 0x32, 0x00, 0x00};
-  status = phNxpUciHal_send_ext_cmd(sizeof(lock_cmd), lock_cmd);
-  if (status != UWBSTATUS_SUCCESS) {
-    return status;
-  }
-  if (phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.uwb_get_binding_status_ntf_wait) ||
-      nxpucihal_ctrl.uwb_get_binding_status_ntf_wait.status !=
-      UWBSTATUS_SUCCESS) {
-    NXPLOG_UCIHAL_E("uwb_get_binding_status_ntf_wait semaphore timed out");
-    return UWBSTATUS_FAILED;
-  }
-  return UWBSTATUS_SUCCESS;
-}
-
-/******************************************************************************
- * Function         phNxpUciHal_parse_binding_status_ntf
- *
- * Description      This function parses the binding status notification
- *
- * Returns          status
- *
- ******************************************************************************/
-static tHAL_UWB_STATUS phNxpUciHal_parse_binding_status_ntf() {
-  tHAL_UWB_STATUS status = UWBSTATUS_SUCCESS;
-  uint8_t binding_status = nxpucihal_ctrl.uwb_binding_status;
-  switch (binding_status) {
-  case UWB_DEVICE_NOT_BOUND: {
-    /* disable dpd */
-    status = phNxpUciHal_disable_dpd();
-    if (status != UWBSTATUS_SUCCESS) {
-      return status;
-    }
-
-    /* perform bind using do_bind command */
-    status = phNxpUciHal_do_bind();
-    if (status != UWBSTATUS_SUCCESS) {
-      return status;
-    }
-
-    if (nxpucihal_ctrl.uwb_binding_status == UWB_DEVICE_BOUND_UNLOCKED &&
-        nxpucihal_ctrl.uwb_binding_count < 3) {
-      /* perform lock using get_binding_status command */
-      status = phNxpUciHal_get_binding_status();
-      if (status != UWBSTATUS_SUCCESS) {
-        return status;
-      }
-    }
-  } break;
-
-  case UWB_DEVICE_BOUND_UNLOCKED: {
-    /* disable dpd */
-    uint8_t status = phNxpUciHal_disable_dpd();
-    if (status != UWBSTATUS_SUCCESS) {
-      return status;
-    }
-
-    /* perform lock using get_binding_status command */
-    status = phNxpUciHal_get_binding_status();
-    if (status != UWBSTATUS_SUCCESS) {
-      return status;
-    }
-    if (phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.uwb_get_binding_status_ntf_wait) ||
-        nxpucihal_ctrl.uwb_get_binding_status_ntf_wait.status !=
-        UWBSTATUS_SUCCESS) {
-      NXPLOG_UCIHAL_E("uwb_get_binding_status_ntf_wait semaphore timed out");
-      /* Sending originial binding status notification to upper layer */
-      uint8_t data_len = 5;
-      uint8_t buffer[data_len];
-      buffer[0] = 0x6E;
-      buffer[1] = 0x06;
-      buffer[2] = 0x00;
-      buffer[3] = 0x01;
-      buffer[4] = nxpucihal_ctrl.uwb_binding_status;
-      if (nxpucihal_ctrl.p_uwb_stack_data_cback != NULL) {
-        (*nxpucihal_ctrl.p_uwb_stack_data_cback)(data_len, buffer);
-      }
-    }
-  } break;
-
-  case UWB_DEVICE_BOUND_LOCKED: {
-    // do nothing
-  } break;
-
-  default: {
-    NXPLOG_UCIHAL_E("[%s] unknown binding status:%d", __func__, binding_status);
-  }
-  }
-
-  return status;
-}
-
-static bool phNxpUciHal_getBindingConfig()
+static bool cacheDevInfoRsp()
 {
-  uint32_t num = 0;
-  bool isBindingLockingAllowed = false;
-  NxpConfig_GetNum(NAME_UWB_BINDING_LOCKING_ALLOWED, &num, sizeof(num));
-  isBindingLockingAllowed = (bool)num;
-  return isBindingLockingAllowed;
+  auto dev_info_cb = [](size_t packet_len, const uint8_t *packet) mutable {
+    if (packet_len < 5 || packet[UCI_RESPONSE_STATUS_OFFSET] != UWBSTATUS_SUCCESS) {
+      NXPLOG_UCIHAL_E("Failed to get valid CORE_DEVICE_INFO_RSP");
+      return;
+    }
+    if (packet_len > sizeof(nxpucihal_ctrl.dev_info_resp)) {
+      NXPLOG_UCIHAL_E("FIXME: CORE_DEVICE_INFO_RSP buffer overflow!");
+      return;
+    }
+
+    // FIRA UCIv2.0 packet size = 14
+    // [13] = Vendor Specific Info Length
+    constexpr uint8_t firaDevInfoRspSize = 14;
+    constexpr uint8_t firaDevInfoVendorLenOffset = 13;
+
+    if (packet_len < firaDevInfoRspSize) {
+      NXPLOG_UCIHAL_E("DEVICE_INFO_RSP packet size mismatched.");
+      return;
+    }
+
+    const uint8_t vendorSpecificLen = packet[firaDevInfoVendorLenOffset];
+    if (packet_len != (firaDevInfoRspSize + vendorSpecificLen)) {
+      NXPLOG_UCIHAL_E("DEVICE_INFO_RSP packet size mismatched.");
+    }
+
+    for (uint8_t i = firaDevInfoRspSize; (i + 2) <= packet_len; ) {
+      uint8_t paramId = packet[i++];
+      uint8_t length = packet[i++];
+
+      if (i + length > packet_len)
+        break;
+
+      if (paramId == DEVICE_NAME_PARAM_ID && length >= 6) {
+        nxpucihal_ctrl.device_type = nxpucihal_ctrl.uwb_chip->get_device_type(&packet[i], length);
+      } else if (paramId == FW_VERSION_PARAM_ID && length >= 3) {
+        nxpucihal_ctrl.fw_version.major_version = packet[i];
+        nxpucihal_ctrl.fw_version.minor_version = packet[i + 1];
+        nxpucihal_ctrl.fw_version.rc_version = packet[i + 2];
+      } else if (paramId == FW_BOOT_MODE_PARAM_ID && length >= 1) {
+        nxpucihal_ctrl.fw_boot_mode = packet[i];
+      }
+      i += length;
+    }
+    memcpy(nxpucihal_ctrl.dev_info_resp, packet, packet_len);
+    nxpucihal_ctrl.isDevInfoCached = true;
+    NXPLOG_UCIHAL_D("Device Info cached.");
+  };
+
+  nxpucihal_ctrl.isDevInfoCached = false;
+  UciHalRxHandler devInfoRspHandler(UCI_MT_RSP, UCI_GID_CORE, UCI_MSG_CORE_DEVICE_INFO, true, dev_info_cb);
+
+  const uint8_t CoreGetDevInfoCmd[] = {(UCI_MT_CMD << UCI_MT_SHIFT) | UCI_GID_CORE, UCI_MSG_CORE_DEVICE_INFO, 0, 0};
+  tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(sizeof(CoreGetDevInfoCmd), CoreGetDevInfoCmd);
+  if (status != UWBSTATUS_SUCCESS) {
+    return false;
+  }
+  return true;
 }
 
 /******************************************************************************
@@ -1340,85 +1106,51 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
     return UWBSTATUS_FAILED;
   }
 
-  // Device Status Notification
-  std::shared_ptr<phNxpUciHal_RxHandler> dev_status_ntf_handler;
-  phNxpUciHal_Sem_t dev_status_ntf_wait;
-  phNxpUciHal_init_cb_data(&dev_status_ntf_wait, NULL);
-  uint8_t dev_status = UWB_DEVICE_ERROR;
-  auto dev_status_ntf_cb = [&dev_status, &dev_status_ntf_wait](size_t packet_len, const uint8_t *packet) mutable {
-    if (packet_len >= 5) {
-      dev_status = packet[UCI_RESPONSE_STATUS_OFFSET];
-      SEM_POST(&dev_status_ntf_wait);
-    }
-  };
-
-  /* Create the local semaphore */
-  if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.uwb_binding_status_ntf_wait, NULL) != UWBSTATUS_SUCCESS) {
-    return UWBSTATUS_FAILED;
-  }
-  if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.uwb_get_binding_status_ntf_wait, NULL) != UWBSTATUS_SUCCESS) {
-    return UWBSTATUS_FAILED;
-  }
-  if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.uwb_do_bind_ntf_wait, NULL) != UWBSTATUS_SUCCESS) {
-    return UWBSTATUS_FAILED;
-  }
-
-  nxpucihal_ctrl.isRecoveryTimerStarted = false;
-  nxpucihal_ctrl.uwb_binding_status = UWB_DEVICE_UNKNOWN;
-  nxpucihal_ctrl.fw_dwnld_mode = true; /* system in FW download mode*/
   uwb_device_initialized = false;
 
-  NXPLOG_UCIHAL_D(" Start FW download");
-
-  int fwd_retry_count = FWD_MAX_RETRY_COUNT;
-  while (fwd_retry_count--) {
-    status = phNxpUciHal_fw_download();
-    if (status == UWBSTATUS_SUCCESS)
-      break;
-
-    if(status == UWBSTATUS_FILE_NOT_FOUND) {
-      NXPLOG_UCIHAL_E("FW download File Not found: status= %x", status);
-      break;
-    }
-
-    NXPLOG_UCIHAL_E("FW download is failed FW download recovery starts: status= %x", status);
-    phTmlUwb_Chip_Reset();
-    usleep(5000);
+  // FW download and enter UCI operating mode
+  status = nxpucihal_ctrl.uwb_chip->chip_init();
+  if (status != UWBSTATUS_SUCCESS) {
+    return status;
   }
 
-  if (status != UWBSTATUS_SUCCESS)
-    goto end_phNxpUciHal_init_hw;
+  // Device Status Notification
+  UciHalSemaphore devStatusNtfWait;
+  uint8_t dev_status = UWB_DEVICE_ERROR;
+  auto dev_status_ntf_cb = [&dev_status, &devStatusNtfWait](size_t packet_len, const uint8_t *packet) mutable {
+    if (packet_len >= 5) {
+      dev_status = packet[UCI_RESPONSE_STATUS_OFFSET];
+      devStatusNtfWait.post();
+    }
+  };
+  UciHalRxHandler devStatusNtfHandler(UCI_MT_NTF, UCI_GID_CORE, UCI_MSG_CORE_DEVICE_STATUS_NTF,
+                                      true, dev_status_ntf_cb);
 
-  NXPLOG_UCIHAL_D("Complete FW download");
-
-  dev_status_ntf_handler =
-    phNxpUciHal_rx_handler_add(UCI_MT_NTF, UCI_GID_CORE, UCI_MSG_CORE_DEVICE_STATUS_NTF,
-                               true, false, dev_status_ntf_cb);
-
+  // Initiate UCI packet read
   status = phTmlUwb_Read( Rx_data, UCI_MAX_DATA_LEN,
             (pphTmlUwb_TransactCompletionCb_t)&phNxpUciHal_read_complete, NULL);
   if (status != UWBSTATUS_PENDING) {
     NXPLOG_UCIHAL_E("read status error status = %x", status);
-    goto end_phNxpUciHal_init_hw;
+    return status;
   }
 
-  // wait for the first Device Status Notification
-  phNxpUciHal_sem_timed_wait(&dev_status_ntf_wait);
+  // Wait for the first Device Status Notification
+  devStatusNtfWait.wait();
   if(dev_status != UWB_DEVICE_INIT) {
     NXPLOG_UCIHAL_E("UWB_DEVICE_INIT not received uwbc_device_state = %x", dev_status);
-    goto end_phNxpUciHal_init_hw;
+    return UWBSTATUS_FAILED;
   }
 
   // Set board-config and wait for Device Status Notification
   status = phNxpUciHal_set_board_config();
   if (status != UWBSTATUS_SUCCESS) {
     NXPLOG_UCIHAL_E("%s: Set Board Config Failed", __func__);
-    goto end_phNxpUciHal_init_hw;
+    return status;
   }
-  phNxpUciHal_sem_timed_wait(&dev_status_ntf_wait);
+  devStatusNtfWait.wait();
   if (dev_status != UWB_DEVICE_READY) {
-    NXPLOG_UCIHAL_E("UWB_DEVICE_READY dev_status_ntf_wait semaphore timed out");
-    goto end_phNxpUciHal_init_hw;
+    NXPLOG_UCIHAL_E("Cannot receive UWB_DEVICE_READY");
+    return UWBSTATUS_FAILED;
   }
 
   // Send SW reset and wait for Device Status Notification
@@ -1426,54 +1158,33 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
   status = phNxpUciHal_uwb_reset();
   if (status != UWBSTATUS_SUCCESS) {
     NXPLOG_UCIHAL_E("%s: device reset Failed", __func__);
-    goto end_phNxpUciHal_init_hw;
+    return status;
   }
-  phNxpUciHal_sem_timed_wait(&dev_status_ntf_wait);
+  devStatusNtfWait.wait();
   if(dev_status != UWB_DEVICE_READY) {
     NXPLOG_UCIHAL_E("UWB_DEVICE_READY not received uwbc_device_state = %x", dev_status);
-    goto end_phNxpUciHal_init_hw;
+    return UWBSTATUS_FAILED;
   }
 
-  status = phNxpUciHal_sendGetCoreDeviceInfo();
-  NXPLOG_UCIHAL_D("phNxpUciHal_sendGetCoreDeviceInfo status %d ", status);
+  // Cache CORE_GET_DEVICE_INFO
+  cacheDevInfoRsp();
+
+  status = nxpucihal_ctrl.uwb_chip->core_init();
   if (status != UWBSTATUS_SUCCESS) {
-    goto end_phNxpUciHal_init_hw;
-  }
-
-  phNxpUciHal_sem_timed_wait(&nxpucihal_ctrl.uwb_binding_status_ntf_wait);
-  if (nxpucihal_ctrl.uwb_binding_status_ntf_wait.status == UWBSTATUS_SUCCESS) {
-    NXPLOG_UCIHAL_D("binding status notification received");
-    if (nxpucihal_ctrl.fw_boot_mode == USER_FW_BOOT_MODE) {
-      bool isBindingAllowed = phNxpUciHal_getBindingConfig();
-      if (isBindingAllowed) {
-        status = phNxpUciHal_parse_binding_status_ntf();
-        if (status != UWBSTATUS_SUCCESS) {
-          NXPLOG_UCIHAL_E("binding failed with status %d", status);
-        }
-      }
-    }
-  } else {
-    NXPLOG_UCIHAL_D("%s:binding status notification timed out", __func__);
+    return status;
   }
 
   status = phNxpUciHal_applyVendorConfig();
   if (status != UWBSTATUS_SUCCESS) {
     NXPLOG_UCIHAL_E("%s: Apply vendor Config Failed", __func__);
-    goto end_phNxpUciHal_init_hw;
+    return status;
   }
   phNxpUciHal_extcal_handle_coreinit();
 
   uwb_device_initialized = true;
   phNxpUciHal_getVersionInfo();
 
-end_phNxpUciHal_init_hw:
-  phNxpUciHal_rx_handler_del(dev_status_ntf_handler);
-  phNxpUciHal_cleanup_cb_data(&dev_status_ntf_wait);
-  phNxpUciHal_cleanup_cb_data(
-      &nxpucihal_ctrl.uwb_get_binding_status_ntf_wait);
-  phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.uwb_do_bind_ntf_wait);
-  phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.uwb_binding_status_ntf_wait);
-  return status;
+  return UWBSTATUS_SUCCESS;
 }
 
 /******************************************************************************
@@ -1611,4 +1322,21 @@ void phNxpUciHal_getVersionInfo() {
     ALOGI("FW Version: %02x.%02x", nxpucihal_ctrl.fw_version.major_version,
           nxpucihal_ctrl.fw_version.minor_version);
   }
+}
+
+/*******************************************************************************
+ * Function      phNxpUciHal_send_dev_error_status_ntf
+ *
+ * Description   send device status notification. Upper layer might restart
+ *               HAL service.
+ *
+ * Returns       void
+ *
+ ******************************************* ***********************************/
+void phNxpUciHal_send_dev_error_status_ntf()
+{
+ NXPLOG_UCIHAL_D("phNxpUciHal_send_dev_error_status_ntf ");
+ nxpucihal_ctrl.rx_data_len = 5;
+ static uint8_t rsp_data[5] = {0x60, 0x01, 0x00, 0x01, 0xFF};
+ (*nxpucihal_ctrl.p_uwb_stack_data_cback)(nxpucihal_ctrl.rx_data_len, rsp_data);
 }

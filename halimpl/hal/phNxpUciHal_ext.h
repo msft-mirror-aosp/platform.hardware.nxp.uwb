@@ -34,8 +34,10 @@
 #define UCI_EXT_PARAM_DDFS_TONE_CONFIG         0x27
 #define UCI_EXT_PARAM_TX_PULSE_SHAPE_CONFIG    0x28
 #define UCI_EXT_PARAM_CLK_CONFIG_CTRL          0x30
-#define UCI_EXT_PARAM_DBG_RFRAME_LOG_NTF 0x22
+#define UCI_EXT_PARAM_DBG_RFRAME_LOG_NTF       0x22
+
 #define UCI_PARAM_ID_LOW_POWER_MODE            0x01
+
 /* customer specific calib params */
 #define VENDOR_CALIB_PARAM_TX_POWER_PER_ANTENNA 0x04
 
@@ -54,14 +56,6 @@
 #define UCI_EXT_STATUS_SE_RECOVERY_SUCCESS  0x73
 #define UCI_EXT_STATUS_SE_APDU_CMD_FAIL     0x74
 #define UCI_EXT_STATUS_SE_AUTH_FAIL         0x75
-
-typedef struct {
-  pthread_attr_t attr_thread;
-  pthread_t hal_thread_handling; /* fw crash thread handle */
-  pthread_cond_t mCondVar;
-  pthread_mutex_t lock;
-  bool_t isThermalRecoveryOngoing;
-} phNxpUciHalProp_Control_t;
 
 tHAL_UWB_STATUS phNxpUciHal_send_ext_cmd(uint16_t cmd_len, const uint8_t* p_cmd);
 tHAL_UWB_STATUS phNxpUciHal_process_ext_rsp(uint16_t cmd_len, uint8_t* p_buff);
