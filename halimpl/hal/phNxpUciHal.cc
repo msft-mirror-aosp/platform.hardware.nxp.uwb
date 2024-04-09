@@ -1063,17 +1063,7 @@ static bool cacheDevInfoRsp()
         break;
 
       if (paramId == DEVICE_NAME_PARAM_ID && length >= 6) {
-        switch(packet[i + 5]) {
-        case DEVICE_TYPE_SR1xxS:
-          nxpucihal_ctrl.device_type = DEVICE_TYPE_SR1xxS;
-          break;
-        case DEVICE_TYPE_SR1xxT:
-          nxpucihal_ctrl.device_type = DEVICE_TYPE_SR1xxT;
-          break;
-        default:
-          nxpucihal_ctrl.device_type = DEVICE_TYPE_UNKNOWN;
-          break;
-        }
+        nxpucihal_ctrl.device_type = nxpucihal_ctrl.uwb_chip->get_device_type(&packet[i], length);
       } else if (paramId == FW_VERSION_PARAM_ID && length >= 3) {
         nxpucihal_ctrl.fw_version.major_version = packet[i];
         nxpucihal_ctrl.fw_version.minor_version = packet[i + 1];

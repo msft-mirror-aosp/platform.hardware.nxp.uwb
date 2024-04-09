@@ -83,13 +83,6 @@
 
 #define DEVICE_NAME_PARAM_ID 0x00
 
-typedef enum {
-  DEVICE_TYPE_UNKNOWN = '\0',
-  DEVICE_TYPE_SR1xxT = 'T',
-  DEVICE_TYPE_SR1xxS = 'S',
-  DEVICE_TYPE_SR200 = '2',
-} device_type_t;
-
 /* Mem alloc. with 8 byte alignment */
 #define nxp_malloc(x) malloc(((x - 1) | 7) + 1)
 
