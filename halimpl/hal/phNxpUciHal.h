@@ -260,4 +260,29 @@ std::shared_ptr<phNxpUciHal_RxHandler> phNxpUciHal_rx_handler_add(
   std::function<void(size_t packet_len, const uint8_t *packet)> callback);
 void phNxpUciHal_rx_handler_del(std::shared_ptr<phNxpUciHal_RxHandler> handler);
 
+// Helper class for rx handler with once=false
+// auto-unregistered from destructor
+class UciHalRxHandler {
+public:
+  UciHalRxHandler() {
+  }
+  UciHalRxHandler(uint8_t mt, uint8_t gid, uint8_t oid,
+                 bool skip_reporting,
+                 std::function<void(size_t packet_len, const uint8_t *packet)> callback) {
+    handler_ = phNxpUciHal_rx_handler_add(mt, gid, oid, skip_reporting, false, callback);
+  }
+  UciHalRxHandler& operator=(UciHalRxHandler &&handler) {
+    handler_ = std::move(handler.handler_);
+    return *this;
+  }
+  virtual ~UciHalRxHandler() {
+    if (handler_) {
+      phNxpUciHal_rx_handler_del(handler_);
+      handler_.reset();
+    }
+  }
+private:
+  std::shared_ptr<phNxpUciHal_RxHandler> handler_;
+};
+
 #endif /* _PHNXPUCIHAL_H_ */
