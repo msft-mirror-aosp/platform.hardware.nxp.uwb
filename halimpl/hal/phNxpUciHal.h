@@ -19,11 +19,13 @@
 
 #include <thread>
 
-#include <phNxpUciHal_utils.h>
-#include <phNxpUciHal_Adaptation.h>
-#include <hal_nxpuwb.h>
-#include <phTmlUwb.h>
-#include <uci_defs.h>
+#include "hal_nxpuwb.h"
+#include "NxpUwbChip.h"
+#include "phNxpUciHal_Adaptation.h"
+#include "phNxpUciHal_utils.h"
+#include "phTmlUwb.h"
+#include "uci_defs.h"
+
 /********************* Definitions and structures *****************************/
 #define MAX_RETRY_COUNT 0x05
 #define UCI_MAX_DATA_LEN 4200 // maximum data packet size
@@ -85,6 +87,7 @@ typedef enum {
   DEVICE_TYPE_UNKNOWN = '\0',
   DEVICE_TYPE_SR1xxT = 'T',
   DEVICE_TYPE_SR1xxS = 'S',
+  DEVICE_TYPE_SR200 = '2',
 } device_type_t;
 
 /* Mem alloc. with 8 byte alignment */
@@ -168,6 +171,8 @@ typedef struct phNxpUciHal_Control {
   std::thread client_thread;    /* Integration thread handle */
   phLibUwb_sConfig_t gDrvCfg;   /* Driver config data */
 
+  std::unique_ptr<NxpUwbChip> uwb_chip;
+
   /* Rx data */
   uint8_t* p_rx_data;
   uint16_t rx_data_len;
@@ -187,10 +192,6 @@ typedef struct phNxpUciHal_Control {
   // ext_cb_data is flagged only from the 1st response packet
   bool ext_cb_waiting;
 
-  phNxpUciHal_Sem_t uwb_binding_status_ntf_wait;
-  phNxpUciHal_Sem_t uwb_get_binding_status_ntf_wait;
-  phNxpUciHal_Sem_t uwb_do_bind_ntf_wait;
-  phNxpUciHal_Sem_t calib_data_ntf_wait;
   uint16_t cmd_len;
   uint8_t p_cmd_data[UCI_MAX_DATA_LEN];
   uint16_t rsp_len;
@@ -205,17 +206,9 @@ typedef struct phNxpUciHal_Control {
   device_type_t device_type;
   uint8_t fw_boot_mode;
 
-  /* retry count used to force download */
-  uint8_t read_retry_cnt;
-
-  bool_t isRecoveryTimerStarted;
-
   /* To skip sending packets to upper layer from HAL*/
   uint8_t isSkipPacket;
   bool_t fw_dwnld_mode;
-  uint8_t uwb_binding_status;
-  uint8_t uwb_binding_count;
-  uint8_t dev_state_ntf_wait;
 
   // Per-country settings
   phNxpUciHal_Runtime_Settings_t rt_settings;
@@ -253,6 +246,7 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo);
 tHAL_UWB_STATUS phNxpUciHal_uwb_reset();
 tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig();
 tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len, const uint8_t *p_cmd, uint16_t *data_written);
+void phNxpUciHal_send_dev_error_status_ntf();
 
 std::shared_ptr<phNxpUciHal_RxHandler> phNxpUciHal_rx_handler_add(
   uint8_t mt, uint8_t gid, uint8_t oid,
