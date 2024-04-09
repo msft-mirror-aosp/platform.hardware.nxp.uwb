@@ -165,9 +165,7 @@ constexpr uint8_t kSessionType_CCCRanging = 0xA0;
 /**********************************************
  * UWB Prop Group Opcode-E Opcodes
  **********************************************/
-#define UCI_MSG_UWB_ESE_BINDING_NTF 0x31
 #define UCI_MSG_BINDING_STATUS_NTF 0x06
-#define UWB_ESE_BINDING_CHECK_NTF 0x32
 
 /**********************************************************
  * OTP Calibration
@@ -183,6 +181,8 @@ constexpr uint8_t kSessionType_CCCRanging = 0xA0;
 #define UCI_MSG_URSK_DELETE               0x01
 #define UCI_MSG_SET_DEVICE_CALIBRATION    0x21
 #define UCI_MSG_GET_DEVICE_CALIBRATION    0x22
+#define UCI_MSG_UWB_ESE_BINDING           0x31
+#define UCI_MSG_UWB_ESE_BINDING_CHECK     0x32
 
 /**********************************************
  * UCI Parameter IDs : Device Configurations
