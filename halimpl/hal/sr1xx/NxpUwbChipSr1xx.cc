@@ -566,6 +566,8 @@ tHAL_UWB_STATUS NxpUwbChipSr1xx::chip_init()
   NXPLOG_UCIHAL_D("Start SR1XX FW download");
 
   for (int i = 0; i < 5; i++) {
+    phTmlUwb_Chip_Reset();
+
     status = phNxpUciHal_fw_download();
 
     if (status == UWBSTATUS_SUCCESS) {
@@ -576,8 +578,6 @@ tHAL_UWB_STATUS NxpUwbChipSr1xx::chip_init()
       break;
     } else {
       NXPLOG_UCIHAL_E("FW download failed, status= 0x%x, retry.", status);
-      phTmlUwb_Chip_Reset();
-      usleep(5000);
     }
   }
 
