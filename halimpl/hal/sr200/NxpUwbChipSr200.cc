@@ -153,6 +153,11 @@ NxpUwbChipSr200::apply_calibration(extcal_param_id_t id, const uint8_t ch,
   return UWBSTATUS_NOT_ALLOWED;
 }
 
+int16_t NxpUwbChipSr200::extra_group_delay(void) {
+  // Only for SR100. Not for SR2XX
+  return 0;
+}
+
 std::unique_ptr<NxpUwbChip> GetUwbChip()
 {
   return std::make_unique<NxpUwbChipSr200>();
