@@ -99,6 +99,8 @@ tHAL_UWB_STATUS NxpUwbChipSr200::chip_init()
   NXPLOG_UCIHAL_D("Start SR200 FW download");
 
   for (int i = 0; i < 5; i++) {
+    phTmlUwb_Chip_Reset();
+
     status = hdll_fw_download();
 
     if (status == UWBSTATUS_SUCCESS) {
@@ -109,8 +111,6 @@ tHAL_UWB_STATUS NxpUwbChipSr200::chip_init()
       break;
     } else {
       NXPLOG_UCIHAL_E("FW download failed, status= 0x%x, retry.", status);
-      phTmlUwb_Chip_Reset();
-      usleep(5000);
     }
   }
 
@@ -151,6 +151,11 @@ NxpUwbChipSr200::apply_calibration(extcal_param_id_t id, const uint8_t ch,
                                    const uint8_t *data, size_t data_len)
 {
   return UWBSTATUS_NOT_ALLOWED;
+}
+
+int16_t NxpUwbChipSr200::extra_group_delay(void) {
+  // Only for SR100. Not for SR2XX
+  return 0;
 }
 
 std::unique_ptr<NxpUwbChip> GetUwbChip()
