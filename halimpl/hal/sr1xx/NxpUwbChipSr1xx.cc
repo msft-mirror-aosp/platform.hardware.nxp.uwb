@@ -421,6 +421,7 @@ public:
   device_type_t get_device_type(const uint8_t *param, size_t param_len);
   tHAL_UWB_STATUS read_otp(extcal_param_id_t id, uint8_t *data, size_t data_len, size_t *retlen);
   tHAL_UWB_STATUS apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len);
+  int16_t extra_group_delay(void);
 
 private:
   tHAL_UWB_STATUS check_binding();
@@ -627,6 +628,52 @@ tHAL_UWB_STATUS NxpUwbChipSr1xx::read_otp(extcal_param_id_t id, uint8_t *data, s
 tHAL_UWB_STATUS NxpUwbChipSr1xx::apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len)
 {
   return sr1xx_apply_calibration(id, ch, data, data_len);
+}
+
+int16_t NxpUwbChipSr1xx::extra_group_delay(void) {
+  bool need_7cm_offset = FALSE;
+  // + Compensation for D48/D49 calibration
+  // If calibration was done with D48 / D49
+  char calibrated_with_fw[15] = {0};
+
+  int has_calibrated_with_fw_config = NxpConfig_GetStr(
+    "cal.fw_version", calibrated_with_fw, sizeof(calibrated_with_fw) - 1);
+
+  if ( has_calibrated_with_fw_config ) {
+    // Conf file has entry of `cal.fw_version`
+    if (
+      ( 0 == memcmp("48.", calibrated_with_fw, 3)) ||
+      ( 0 == memcmp("49.", calibrated_with_fw, 3))) {
+      // Calibrated with D48 / D49.
+      if (nxpucihal_ctrl.fw_version.major_version == 0xFF) {
+        // Current FW seems to be Test FW
+        NXPLOG_UCIHAL_W("For Test FW, D49 -> D50+ 7cm Compensation is applied");
+        need_7cm_offset = TRUE;
+      }
+      else if (nxpucihal_ctrl.fw_version.major_version >= 0x50) {
+        // D50 and later fix is needed.
+        need_7cm_offset = TRUE;
+      }
+    }
+    else
+    {
+      // Not calibrated with D48/D49
+    }
+  }
+  else
+  {
+    // Missing Entry cal.fw_version
+    NXPLOG_UCIHAL_W("Could not get cal.fw_version. Assuming D48 used for calibration.");
+    need_7cm_offset = TRUE;
+  }
+  if (need_7cm_offset) {
+    /* Its Q14.2 format, hence << 2 */
+    return (7 << 2);
+  }
+  else
+  {
+    return 0;
+  }
 }
 
 std::unique_ptr<NxpUwbChip> GetUwbChip()
