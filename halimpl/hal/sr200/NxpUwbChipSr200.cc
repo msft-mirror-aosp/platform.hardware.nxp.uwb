@@ -27,10 +27,11 @@ private:
   void on_binding_status_ntf(size_t packet_len, const uint8_t* packet);
 
   tHAL_UWB_STATUS check_binding_done();
+  int16_t extra_group_delay(void);
+
   UciHalRxHandler bindingStatusNtfHandler_;
   UciHalSemaphore bindingStatusNtfWait_;
   uint8_t bindingStatus_;
-
 };
 
 NxpUwbChipSr200::NxpUwbChipSr200() :
