@@ -60,12 +60,6 @@ tHAL_UWB_STATUS phTmlUwb_spi_open_and_configure(const char* pDevName, void** pLi
 
   *pLinkHandle = (void*)((intptr_t)nHandle);
 
-  /*Reset SR100 */
-  phTmlUwb_Spi_Ioctl((void*)((intptr_t)nHandle), phTmlUwb_ControlCode_t::SetPower, 0);
-  usleep(1000);
-  phTmlUwb_Spi_Ioctl((void*)((intptr_t)nHandle), phTmlUwb_ControlCode_t::SetPower, 1);
-  usleep(10000);
-
   return UWBSTATUS_SUCCESS;
 }
 
