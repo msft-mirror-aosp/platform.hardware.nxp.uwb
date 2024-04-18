@@ -32,7 +32,6 @@
 
 /* Timeout value to wait for response from DEVICE_TYPE_SR1xx */
 #define MAX_COMMAND_RETRY_COUNT           5
-#define MAX_COMMAND_RETRY_ON_INVALID_LEN  2
 #define HAL_EXTNS_WRITE_RSP_TIMEOUT_MS    100
 #define HAL_HW_RESET_NTF_TIMEOUT          10000 /* 10 sec wait */
 
@@ -84,7 +83,6 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
   tHAL_UWB_STATUS status = UWBSTATUS_FAILED;
   int nr_retries = 0;
   int nr_timedout = 0;
-  int nr_unrecognized = 0;
   bool exit_loop = false;
 
   while(!exit_loop) {
@@ -118,17 +116,13 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
       // Upper layer should take care of it.
       nr_retries++;
       break;
-    case UWBSTATUS_INVALID_COMMAND_LENGTH:
-      // Something went wrong, just report this to upper-layer as is.
-      nr_unrecognized++;
-      break;
     default:
       status = nxpucihal_ctrl.ext_cb_data.status;
       exit_loop = true;
       break;
     }
 
-    if (nr_retries >= MAX_COMMAND_RETRY_COUNT || nr_unrecognized >= MAX_COMMAND_RETRY_ON_INVALID_LEN) {
+    if (nr_retries >= MAX_COMMAND_RETRY_COUNT) {
       NXPLOG_UCIHAL_E("Failed to process cmd/rsp 0x%x", nxpucihal_ctrl.ext_cb_data.status);
       status = UWBSTATUS_FAILED;
       exit_loop = true;
@@ -136,9 +130,9 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
     }
   }
 
-  if (nr_timedout > 0 || nr_unrecognized > 0) {
-    NXPLOG_UCIHAL_E("Warning: CMD/RSP retried %d times (timeout:%d, unrecognized:%d)\n",
-                    nr_retries, nr_timedout, nr_unrecognized);
+  if (nr_timedout > 0) {
+    NXPLOG_UCIHAL_E("Warning: CMD/RSP retried %d times (timeout:%d)\n",
+                    nr_retries, nr_timedout);
   }
 
 clean_and_return:
