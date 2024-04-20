@@ -4,6 +4,7 @@
 #include "phNxpUciHal_ext.h"
 #include "phUwbStatus.h"
 #include "phUwbTypes.h"
+#include "phNxpUwbCalib.h"
 #include "uci_defs.h"
 
 #define UCI_MSG_UWB_ESE_BINDING_LEN                   11
@@ -151,7 +152,7 @@ tHAL_UWB_STATUS
 NxpUwbChipSr200::apply_calibration(extcal_param_id_t id, const uint8_t ch,
                                    const uint8_t *data, size_t data_len)
 {
-  return UWBSTATUS_NOT_ALLOWED;
+  return phNxpUwbCalib_apply_calibration(id, ch, data, data_len);
 }
 
 int16_t NxpUwbChipSr200::extra_group_delay(void) {
