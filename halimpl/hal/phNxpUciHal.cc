@@ -546,7 +546,7 @@ static void phNxpUciHal_write_complete(void* pContext,
   phNxpUciHal_Sem_t* p_cb_data = (phNxpUciHal_Sem_t*)pContext;
 
   if (pInfo->wStatus == UWBSTATUS_SUCCESS) {
-    NXPLOG_UCIHAL_D("write successful status = 0x%x", pInfo->wStatus);
+    NXPLOG_UCIHAL_V("write successful status = 0x%x", pInfo->wStatus);
   } else {
     NXPLOG_UCIHAL_E("write error status = 0x%x", pInfo->wStatus);
   }
@@ -710,10 +710,10 @@ void phNxpUciHal_read_complete(void* pContext,
      length = (length << EXTENDED_MODE_LEN_SHIFT) | pInfo->pBuff[index + EXTENDED_MODE_LEN_OFFSET] ;
     }
     length += UCI_MSG_HDR_SIZE;
-    NXPLOG_UCIHAL_D("read successful length = %d", length);
+    NXPLOG_UCIHAL_V("read successful length = %d", length);
 
     if (pInfo->wStatus == UWBSTATUS_SUCCESS) {
-      NXPLOG_UCIHAL_D("read successful status = 0x%x", pInfo->wStatus);
+      NXPLOG_UCIHAL_V("read successful status = 0x%x", pInfo->wStatus);
       nxpucihal_ctrl.p_rx_data = &pInfo->pBuff[index];
       nxpucihal_ctrl.rx_data_len = length;
       phNxpUciHal_print_packet(NXP_TML_UCI_RSP_NTF_UWBS_2_AP, nxpucihal_ctrl.p_rx_data, nxpucihal_ctrl.rx_data_len);
