@@ -821,41 +821,6 @@ void phTmlUwb_Chip_Reset(void){
   }
 }
 
-/*******************************************************************************
-**
-** Function         phTmlUwb_Spi_Reset
-**
-** Description      Invoke this API to reset spi
-**
-** Parameters       None
-**
-** Returns          void
-**
-*******************************************************************************/
-void phTmlUwb_Spi_Reset(void) {
-  int ret;
-  struct timespec absTimeout;
-
-  phTmlUwb_StopRead();
-  if (clock_gettime(CLOCK_MONOTONIC, &absTimeout) == -1) {
-    NXPLOG_TML_E("Reader Thread clock_gettime failed");
-  }
-  absTimeout.tv_sec += 1; /*1 second timeout*/
-  pthread_mutex_lock(&gpphTmlUwb_Context->read_abort_lock);
-  gpphTmlUwb_Context->is_read_abort = true;
-  phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_ControlCode_t::SetPower, ABORT_READ_PENDING);
-  phTmlUwb_Chip_Reset();
-  ret = pthread_cond_timedwait(&gpphTmlUwb_Context->read_abort_condition,
-                                 &gpphTmlUwb_Context->read_abort_lock,
-                                 &absTimeout);
-  if ((ret != 0) && (ret != ETIMEDOUT)) {
-    NXPLOG_TML_E("Reader Thread wait failed");
-  }
-  usleep(5000);    //wait for helios bootROM mode
-  gpphTmlUwb_Context->is_read_abort = false;
-  pthread_mutex_unlock(&gpphTmlUwb_Context->read_abort_lock);
-}
-
 void phTmlUwb_Suspend(void)
 {
   NXPLOG_TML_D("Suspend");
