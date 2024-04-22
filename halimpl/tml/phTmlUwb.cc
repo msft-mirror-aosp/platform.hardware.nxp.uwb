@@ -405,24 +405,6 @@ static void phTmlUwb_CleanUp(void) {
 
 /*******************************************************************************
 **
-** Function         phTmlUwb_eSE_Reset
-**
-** Description      Invoke this API to reset Secure Element
-**
-** Parameters       None
-**
-** Returns          void
-**
-*******************************************************************************/
-void phTmlUwb_eSE_Reset(void) {
-  int status;
-  if (NULL != gpphTmlUwb_Context->pDevHandle) {
-    status = phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_ControlCode_t::EseReset, 0);
-    NXPLOG_TML_E("se reset status received %d",status);
-  }
-}
-/*******************************************************************************
-**
 ** Function         phTmlUwb_Shutdown
 **
 ** Description      Uninitializes TML layer and hardware interface
