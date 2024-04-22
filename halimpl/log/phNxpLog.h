@@ -65,6 +65,7 @@ extern uci_log_level_t gLog_level;
 #define NXPLOG_LOG_ERROR_LOGLEVEL 0x01
 #define NXPLOG_LOG_WARN_LOGLEVEL 0x02
 #define NXPLOG_LOG_DEBUG_LOGLEVEL 0x03
+#define NXPLOG_LOG_VERBOSE_LOGLEVEL 0x04
 /* ####################### Set the default logging level for EVERY COMPONENT
  * here ########################## :END: */
 
@@ -130,6 +131,11 @@ extern const char* NXPLOG_ITEM_HCPR; /* Android logging tag for NxpHcpR   */
 
 /* Logging APIs used by NxpUciHal module */
 #if (ENABLE_HAL_TRACES == TRUE)
+#define NXPLOG_UCIHAL_V(...)                                       \
+  {                                                                \
+    if ((gLog_level.hal_log_level >= NXPLOG_LOG_VERBOSE_LOGLEVEL))   \
+      LOG_PRI(ANDROID_LOG_VERBOSE, NXPLOG_ITEM_UCIHAL, __VA_ARGS__); \
+  }
 #define NXPLOG_UCIHAL_D(...)                                       \
   {                                                                \
     if ((gLog_level.hal_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL))   \
@@ -146,6 +152,7 @@ extern const char* NXPLOG_ITEM_HCPR; /* Android logging tag for NxpHcpR   */
       LOG_PRI(ANDROID_LOG_ERROR, NXPLOG_ITEM_UCIHAL, __VA_ARGS__); \
   }
 #else
+#define NXPLOG_UCIHAL_V(...)
 #define NXPLOG_UCIHAL_D(...)
 #define NXPLOG_UCIHAL_W(...)
 #define NXPLOG_UCIHAL_E(...)
