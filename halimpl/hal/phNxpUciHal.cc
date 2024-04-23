@@ -759,9 +759,6 @@ void phNxpUciHal_read_complete(void* pContext,
             nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_COMMAND_RETRANSMIT;
             nxpucihal_ctrl.isSkipPacket = 1;
             bWakeupExtCmd = true;
-          } else  if (status_code == UCI_STATUS_INVALID_MSG_SIZE || status_code == UCI_STATUS_SYNTAX_ERROR) {
-            nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_INVALID_COMMAND_LENGTH;
-            bWakeupExtCmd = true;
           }
         }
       }
