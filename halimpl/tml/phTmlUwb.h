@@ -111,10 +111,7 @@ typedef struct phTmlUwb_Context {
 
   pthread_cond_t wait_busy_condition; /*Condition to wait reader thread*/
   pthread_mutex_t wait_busy_lock;     /*Condition lock to wait reader thread*/
-  pthread_mutex_t read_abort_lock;    /*Condition lock to wait read abort*/
-  pthread_cond_t read_abort_condition;  /*Condition to wait read abort*/
   volatile uint8_t wait_busy_flag;    /*Condition flag to wait reader thread*/
-  volatile uint8_t is_read_abort;    /*Condition flag for read abort*/
   volatile uint8_t gWriterCbflag;    /* flag to indicate write callback message is pushed to
                            queue*/
 } phTmlUwb_Context_t;
