@@ -64,9 +64,6 @@
 #define UCI_GID_PROPRIETARY_0X0F  0x0F /* Proprietary Group */
 #define UCI_GID_INTERNAL          0x0B /* Internal Group */
 
-/* 0100b - 1100b RFU */
-#define UCI_OID_GET_CAPS_INFO 0x03
-
 /* OID: Opcode Identifier (byte 1) */
 #define UCI_OID_MASK 0x3F
 #define UCI_OID_SHIFT 0
