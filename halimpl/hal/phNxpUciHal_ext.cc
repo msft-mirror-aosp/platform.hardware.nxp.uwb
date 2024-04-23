@@ -18,6 +18,8 @@
 
 #include <atomic>
 #include <bitset>
+#include <map>
+#include <vector>
 
 #include <cutils/properties.h>
 
@@ -32,7 +34,6 @@
 
 /* Timeout value to wait for response from DEVICE_TYPE_SR1xx */
 #define MAX_COMMAND_RETRY_COUNT           5
-#define MAX_COMMAND_RETRY_ON_INVALID_LEN  2
 #define HAL_EXTNS_WRITE_RSP_TIMEOUT_MS    100
 #define HAL_HW_RESET_NTF_TIMEOUT          10000 /* 10 sec wait */
 
@@ -84,7 +85,6 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
   tHAL_UWB_STATUS status = UWBSTATUS_FAILED;
   int nr_retries = 0;
   int nr_timedout = 0;
-  int nr_unrecognized = 0;
   bool exit_loop = false;
 
   while(!exit_loop) {
@@ -118,17 +118,13 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
       // Upper layer should take care of it.
       nr_retries++;
       break;
-    case UWBSTATUS_INVALID_COMMAND_LENGTH:
-      // Something went wrong, just report this to upper-layer as is.
-      nr_unrecognized++;
-      break;
     default:
       status = nxpucihal_ctrl.ext_cb_data.status;
       exit_loop = true;
       break;
     }
 
-    if (nr_retries >= MAX_COMMAND_RETRY_COUNT || nr_unrecognized >= MAX_COMMAND_RETRY_ON_INVALID_LEN) {
+    if (nr_retries >= MAX_COMMAND_RETRY_COUNT) {
       NXPLOG_UCIHAL_E("Failed to process cmd/rsp 0x%x", nxpucihal_ctrl.ext_cb_data.status);
       status = UWBSTATUS_FAILED;
       exit_loop = true;
@@ -136,9 +132,9 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
     }
   }
 
-  if (nr_timedout > 0 || nr_unrecognized > 0) {
-    NXPLOG_UCIHAL_E("Warning: CMD/RSP retried %d times (timeout:%d, unrecognized:%d)\n",
-                    nr_retries, nr_timedout, nr_unrecognized);
+  if (nr_timedout > 0) {
+    NXPLOG_UCIHAL_E("Warning: CMD/RSP retried %d times (timeout:%d)\n",
+                    nr_retries, nr_timedout);
   }
 
 clean_and_return:
@@ -283,8 +279,6 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_rsp(uint16_t rsp_len, uint8_t* p_buff){
  return status;
 }
 
-static bool phNxpUciHal_setCalibParamTxPower(void);
-
 /*******************************************************************************
  * Function      phNxpUciHal_resetRuntimeSettings
  *
@@ -297,21 +291,18 @@ static void phNxpUciHal_resetRuntimeSettings(void)
   rt_set->uwb_enable = true;
   rt_set->restricted_channel_mask = 0;
   rt_set->tx_power_offset = 0;
-
 }
 
 /*******************************************************************************
  * Function      phNxpUciHal_applyCountryCaps
  *
- * Description   Creates supported channel's and Tx power TLV format for
- *specific country code  and updates map.
+ * Description   Update runtime settings with given COUNTRY_CODE_CAPS byte array
  *
  * Returns       void
  *
  *******************************************************************************/
 static void phNxpUciHal_applyCountryCaps(const char country_code[2],
-    const uint8_t *cc_resp, uint32_t cc_resp_len,
-    uint8_t *cc_data, uint32_t *cc_data_len)
+    const uint8_t *cc_resp, uint32_t cc_resp_len)
 {
   phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
 
@@ -346,8 +337,6 @@ static void phNxpUciHal_applyCountryCaps(const char country_code[2],
         if (len == 2) {
           rt_set->tx_power_offset = (short)((cc_resp[idx + 0]) | (((cc_resp[idx + 1]) << RMS_TX_POWER_SHIFT) & 0xFF00));
           NXPLOG_UCIHAL_D("CountryCaps tx_power_offset = %d", rt_set->tx_power_offset);
-
-          phNxpUciHal_setCalibParamTxPower();
         }
         break;
       default:
@@ -359,40 +348,6 @@ static void phNxpUciHal_applyCountryCaps(const char country_code[2],
     }
     idx += len;
   }
-
-  // Force UWB disabled even COUNTRY_CODE_CAPS provides it as enabled
-  if (!is_valid_country_code(country_code) && rt_set->uwb_enable) {
-    NXPLOG_UCIHAL_E("UWB is enabled by COUNTRY-CODE_CAPS with invalid country code %c%c,"
-                    " forcing disabled", country_code[0], country_code[1]);
-    rt_set->uwb_enable = false;
-  }
-
-  // consist up 'cc_data' TLVs
-  uint8_t fira_channels = 0xff;
-  if (rt_set->restricted_channel_mask & (1 << 5))
-    fira_channels &= CHANNEL_5_MASK;
-  if (rt_set->restricted_channel_mask & (1 << 9))
-    fira_channels &= CHANNEL_9_MASK;
-
-  uint8_t ccc_channels = 0;
-  if (!(rt_set->restricted_channel_mask & (1 << 5)))
-    ccc_channels |= 0x01;
-  if (!(rt_set->restricted_channel_mask & (1 << 9)))
-    ccc_channels |= 0x02;
-
-  uint8_t index = 0;
-  if ((index + 3) <= *cc_data_len) {
-    cc_data[index++] = UWB_CHANNELS;
-    cc_data[index++] = 0x01;
-    cc_data[index++] = fira_channels;
-  }
-
-  if ((index + 3) <= *cc_data_len) {
-    cc_data[index++] = CCC_UWB_CHANNELS;
-    cc_data[index++] = 0x01;
-    cc_data[index++] = ccc_channels;
-  }
-  *cc_data_len = index;
 }
 
 /*******************************************************************************
@@ -412,15 +367,15 @@ static bool phNxpUciHal_is_retry_not_required(uint8_t uci_octet0) {
 }
 
 /******************************************************************************
- * Function         phNxpUciHal_updateTxPower
+ * Function         CountryCodeCapsGenTxPowerPacket
  *
- * Description      This function updates the tx antenna power,
- *                  apply runtime_settings to gtx_power[]
+ * Description      This function makes tx antenna power calibration command
+ *                  with gtx_power[] + tx_power_offset
  *
- * Returns          true if gtx_power has valid packet data.
+ * Returns          true if packet has been updated
  *
  ******************************************************************************/
-static bool phNxpUciHal_updateTxPower(void)
+static bool CountryCodeCapsGenTxPowerPacket(uint8_t *packet, size_t packet_len, uint16_t *out_len)
 {
   phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
 
@@ -430,26 +385,52 @@ static bool phNxpUciHal_updateTxPower(void)
   if (gtx_power.empty())
     return false;
 
-  uint8_t index = 2;  // channel + param ID
+  if (gtx_power.size() > packet_len)
+    return false;
 
-  if (gtx_power[index++]) { // number of entries
-    uint8_t num_of_antennas = gtx_power[index++];
-    while (num_of_antennas--) {
-      index += 3; // antenna Id(1) + Peak Tx(2)
-      long tx_power_long = gtx_power[index]  | ((gtx_power[index + 1] << RMS_TX_POWER_SHIFT) & 0xFF00);
-      tx_power_long += rt_set->tx_power_offset;
+  uint16_t gtx_power_len = gtx_power.size();
+  memcpy(packet, gtx_power.data(), gtx_power_len);
+  uint8_t index = UCI_MSG_HDR_SIZE + 2;  // channel + Tag
 
-      // long to 16bit little endian
-      if (tx_power_long < 0)
-        tx_power_long = 0;
-      uint16_t tx_power_u16 = (uint16_t)tx_power_long;
-      gtx_power[index++] = tx_power_u16 & 0xff;
-      gtx_power[index++] = tx_power_u16 >> RMS_TX_POWER_SHIFT;
-    }
-    return true;
-  } else {
+  // Length
+  if (index > gtx_power_len) {
+    NXPLOG_UCIHAL_E("Upper-layer calibration command for tx_power is invalid.");
     return false;
   }
+  if (!packet[index] || (packet[index] + index) > gtx_power_len) {
+    NXPLOG_UCIHAL_E("Upper-layer calibration command for tx_power is invalid.");
+    return false;
+  }
+  index++;
+
+  // Value[0] = Number of antennas
+  uint8_t num_of_antennas = packet[index++];
+
+  while (num_of_antennas--) {
+    // each entry = { antenna-id(1) + peak_tx(2) + id_rms(2) }
+    if ((index + 5) < gtx_power_len) {
+      NXPLOG_UCIHAL_E("Upper-layer calibration command for tx_power is invalid.");
+      return false;
+    }
+
+    index += 3; // antenna Id(1) + Peak Tx(2)
+
+    // Adjust id_rms part
+    long tx_power_long = packet[index]  | ((packet[index + 1] << RMS_TX_POWER_SHIFT) & 0xFF00);
+    tx_power_long += rt_set->tx_power_offset;
+
+    if (tx_power_long < 0)
+      tx_power_long = 0;
+
+    uint16_t tx_power_u16 = (uint16_t)tx_power_long;
+    packet[index++] = tx_power_u16 & 0xff;
+    packet[index++] = tx_power_u16 >> RMS_TX_POWER_SHIFT;
+  }
+
+  if (out_len)
+    *out_len = gtx_power_len;
+
+  return true;
 }
 
 /*******************************************************************************
@@ -482,31 +463,34 @@ void phNxpUciHal_handle_set_calibration(const uint8_t *p_data, uint16_t data_len
   // RMS Tx power -> Octet [4, 5] in calib data
   NXPLOG_UCIHAL_D("phNxpUciHal_handle_set_calibration channel=%u tx_power_offset=%d", channel, rt_set->tx_power_offset);
 
-  gtx_power = std::move(std::vector<uint8_t> {p_data + UCI_MSG_HDR_SIZE, p_data + data_len});
+  // Backup the packet to gtx_power[]
+  gtx_power = std::move(std::vector<uint8_t> {p_data, p_data + data_len});
 
-  if (phNxpUciHal_updateTxPower())
-    memcpy(&nxpucihal_ctrl.p_cmd_data[UCI_MSG_HDR_SIZE], gtx_power.data(),  gtx_power.size());
+  // Patch SET_CALIBRATION_CMD per gtx_power + tx_power_offset
+  CountryCodeCapsGenTxPowerPacket(nxpucihal_ctrl.p_cmd_data, sizeof(nxpucihal_ctrl.p_cmd_data), &nxpucihal_ctrl.cmd_len);
 }
 
 /******************************************************************************
- * Function         phNxpUciHal_setCalibParamTxPower
+ * Function         CountryCodeCapsApplyTxPower
  *
- * Description      This function sets the TX power
+ * Description      This function sets the TX power from COUNTRY_CODE_CAPS
  *
- * Returns          true/false
+ * Returns          false if no tx_power_offset or no Upper-layer Calibration cmd was given
+ *                  true if it was successfully applied.
  *
  ******************************************************************************/
-static bool phNxpUciHal_setCalibParamTxPower(void)
+static bool CountryCodeCapsApplyTxPower(void)
 {
-  if (!phNxpUciHal_updateTxPower())
+  if (gtx_power.empty())
     return false;
 
-  // GID : 0xF / OID : 0x21
-  std::vector<uint8_t> packet{0x2f, 0x21, 0x00, 0x00};
-  packet.insert(packet.end(), gtx_power.begin(), gtx_power.end());
-  packet[3] = gtx_power.size();
+  // use whole packet as-is from upper-layer command (gtx_power[])
+  std::vector<uint8_t> packet(gtx_power.size());
+  uint16_t packet_size = 0;
+  if (!CountryCodeCapsGenTxPowerPacket(packet.data(), packet.size(), &packet_size))
+    return false;
 
-  tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
+  tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(packet_size, packet.data());
   if (status != UWBSTATUS_SUCCESS) {
       NXPLOG_UCIHAL_D("%s: send failed", __func__);
   }
@@ -736,18 +720,13 @@ void phNxpUciHal_extcal_handle_coreinit(void)
   extcal_do_ant_delay();
 }
 
-extern bool isCountryCodeMapCreated;
-
 void apply_per_country_calibrations(void)
 {
   // TX-POWER can be provided by
   // 1) COUNTRY_CODE_CAPS with offset values.
   // 2) Extra calibration files with absolute tx power values
   // only one should be applied if both were provided by platform
-  if (isCountryCodeMapCreated) {
-    // Apply COUNTRY_CODE_CAPS's txpower offset
-    phNxpUciHal_setCalibParamTxPower();
-  } else {
+  if (!CountryCodeCapsApplyTxPower()) {
     extcal_do_tx_power();
   }
 
@@ -771,10 +750,9 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
 
   phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
   phNxpUciHal_resetRuntimeSettings();
-  isCountryCodeMapCreated = false;
 
   if (!is_valid_country_code(country_code)) {
-    NXPLOG_UCIHAL_D("Country code %c%c is invalid, disable UWB", country_code[0], country_code[1]);
+    NXPLOG_UCIHAL_D("Country code %c%c is invalid, UWB should be disabled", country_code[0], country_code[1]);
   }
 
   if (NxpConfig_SetCountryCode(country_code)) {
@@ -791,28 +769,21 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
       rt_set->uwb_enable = !uwb_disable;
     }
 
-    if (!is_valid_country_code(country_code) && rt_set->uwb_enable) {
-      NXPLOG_UCIHAL_E("UWB is enabled by ExtCal with invalid country code %c%c,"
-                      " forcing disabled",
-                      country_code[0], country_code[1]);
-    }
-
-    // Load 'COUNTRY_CODE_CAPS' restrictions (via 'conf_map')
+    // Apply COUNTRY_CODE_CAPS
     uint8_t cc_caps[UCI_MAX_DATA_LEN];
     long retlen = 0;
     if (NxpConfig_GetByteArray(NAME_NXP_UWB_COUNTRY_CODE_CAPS, cc_caps, sizeof(cc_caps), &retlen) && retlen) {
       NXPLOG_UCIHAL_D("COUNTRY_CODE_CAPS is provided.");
-
-      uint32_t cc_caps_len = retlen;
-      uint8_t cc_data[UCI_MAX_DATA_LEN];
-      uint32_t cc_data_len = sizeof(cc_data);
-      phNxpUciHal_applyCountryCaps(country_code, cc_caps, cc_caps_len, cc_data, &cc_data_len);
-
-      if (get_conf_map(cc_data, cc_data_len)) {
-        isCountryCodeMapCreated = true;
-        NXPLOG_UCIHAL_D("Country code caps loaded");
-      }
+      phNxpUciHal_applyCountryCaps(country_code, cc_caps, retlen);
     }
+
+    // Check country code validity
+    if (!is_valid_country_code(country_code) && rt_set->uwb_enable) {
+      NXPLOG_UCIHAL_E("UWB is not disabled by configuration files with invalid country code %c%c,"
+                      " forcing it disabled", country_code[0], country_code[1]);
+      rt_set->uwb_enable = false;
+    }
+
     // Apply per-country calibration, it's handled by SessionTrack
     SessionTrack_onCountryCodeChanged();
   }
@@ -948,4 +919,105 @@ bool phNxpUciHal_handle_set_app_config(uint16_t *data_len, uint8_t *p_data)
   SessionTrack_onAppConfig(session_handle, ch);
 
   return false;
+}
+
+void phNxpUciHal_handle_get_caps_info(uint16_t data_len, uint8_t *p_data)
+{
+  if (data_len < UCI_MSG_CORE_GET_CAPS_INFO_NR_OFFSET)
+    return;
+
+  uint8_t status = p_data[UCI_RESPONSE_STATUS_OFFSET];
+  uint8_t nr = p_data[UCI_MSG_CORE_GET_CAPS_INFO_NR_OFFSET];
+  if (status != UWBSTATUS_SUCCESS || nr < 1)
+    return;
+
+  auto tlvs = decodeTlvBytes({0xe0, 0xe1, 0xe2, 0xe3}, &p_data[UCI_MSG_CORE_GET_CAPS_INFO_TLV_OFFSET], data_len - UCI_MSG_CORE_GET_CAPS_INFO_TLV_OFFSET);
+  if (tlvs.size() != nr) {
+    NXPLOG_UCIHAL_E("Failed to parse DevCaps %zu != %u", tlvs.size(), nr);
+  }
+
+  // Remove all NXP vendor specific parameters
+  for (auto it = tlvs.begin(); it != tlvs.end();) {
+    if (it->first > 0xff)
+      it = tlvs.erase(it);
+    else
+      it++;
+  }
+
+  // Override AOA_SUPPORT_TAG_ID
+  auto it = tlvs.find(AOA_SUPPORT_TAG_ID);
+  if (it != tlvs.end()) {
+    if (nxpucihal_ctrl.numberOfAntennaPairs == 1) {
+      it->second = std::vector<uint8_t>{0x01};
+    } else if (nxpucihal_ctrl.numberOfAntennaPairs > 1) {
+      it->second = std::vector<uint8_t>{0x05};
+    } else {
+      it->second = std::vector<uint8_t>{0x00};
+    }
+  }
+
+  // Byteorder of CCC_SUPPORTED_PROTOCOL_VERSIONS_ID
+  it = tlvs.find(CCC_SUPPORTED_PROTOCOL_VERSIONS_ID);
+  if (it != tlvs.end() && it->second.size() == 2) {
+    std::swap(it->second[0], it->second[1]);
+  }
+
+  // Append UWB_VENDOR_CAPABILITY from configuration files
+  {
+    std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
+    long retlen = 0;
+    if (NxpConfig_GetByteArray(NAME_UWB_VENDOR_CAPABILITY, buffer.data(),
+                               buffer.size(), &retlen) && retlen) {
+      auto vendorTlvs = decodeTlvBytes({}, buffer.data(), retlen);
+      for (auto const& [key, val] : vendorTlvs) {
+        tlvs[key] = val;
+      }
+    }
+  }
+
+  // Apply restrictions
+  const phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
+
+  uint8_t fira_channels = 0xff;
+  if (rt_set->restricted_channel_mask & (1 << 5))
+    fira_channels &= CHANNEL_5_MASK;
+  if (rt_set->restricted_channel_mask & (1 << 9))
+    fira_channels &= CHANNEL_9_MASK;
+
+  uint8_t ccc_channels = 0;
+  if (!(rt_set->restricted_channel_mask & (1 << 5)))
+    ccc_channels |= 0x01;
+  if (!(rt_set->restricted_channel_mask & (1 << 9)))
+    ccc_channels |= 0x02;
+
+  tlvs[UWB_CHANNELS] = std::vector{fira_channels};
+  tlvs[CCC_UWB_CHANNELS] = std::vector{ccc_channels};
+
+  // Convert it back to raw packet bytes
+  uint8_t packet[256];
+
+  // header
+  memcpy(packet, p_data, UCI_MSG_HDR_SIZE);
+  // status
+  packet[UCI_RESPONSE_STATUS_OFFSET] = UWBSTATUS_SUCCESS;
+  // nr
+  packet[UCI_MSG_CORE_GET_CAPS_INFO_NR_OFFSET] = tlvs.size();
+
+  // tlvs
+  auto tlv_bytes = encodeTlvBytes(tlvs);
+  if ((tlv_bytes.size() + UCI_MSG_CORE_GET_CAPS_INFO_TLV_OFFSET) > sizeof(packet)) {
+    NXPLOG_UCIHAL_E("DevCaps overflow!");
+  } else {
+    uint8_t packet_len = UCI_MSG_CORE_GET_CAPS_INFO_TLV_OFFSET + tlv_bytes.size();
+    packet[UCI_PAYLOAD_LENGTH_OFFSET] = packet_len - UCI_MSG_HDR_SIZE;
+    memcpy(&packet[UCI_MSG_CORE_GET_CAPS_INFO_TLV_OFFSET], tlv_bytes.data(), tlv_bytes.size());
+
+    phNxpUciHal_print_packet(NXP_TML_UCI_RSP_NTF_UWBS_2_AP, packet, packet_len);
+
+    // send GET CAPS INFO response to the Upper Layer
+    (*nxpucihal_ctrl.p_uwb_stack_data_cback)(packet_len, packet);
+    // skip the incoming packet as we have send the modified response
+    // already
+    nxpucihal_ctrl.isSkipPacket = 1;
+  }
 }
