@@ -210,9 +210,7 @@ constexpr uint8_t kSessionType_CCCRanging = 0xA0;
 /* Generic Status Codes */
 #define UCI_STATUS_OK 0x00
 #define UCI_STATUS_FAILED 0x02
-#define UCI_STATUS_SYNTAX_ERROR  0x03
 #define UCI_STATUS_INVALID_PARAM 0x04
-#define UCI_STATUS_INVALID_MSG_SIZE 0x06
 #define UCI_STATUS_COMMAND_RETRY 0x0A
 #define UCI_STATUS_UNKNOWN 0x0B
 #define UCI_STATUS_THERMAL_RUNAWAY 0x54
