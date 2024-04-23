@@ -541,104 +541,57 @@ double phNxpUciHal_byteArrayToDouble(const uint8_t* p_data) {
   return d;                                                       \
 }
 
-/*******************************************************************************
- * Function      get_input_map
- *
- * Description   Creates a map from the USBS CAPS Response with key as Tag and
- *               value as a vector containing Length and Values of the Tag.
- *
- * Returns       true if the map creation successful
- *
- *******************************************************************************/
-bool get_input_map(const uint8_t *i_data, uint16_t iData_len,
-                   uint8_t startIndex) {
-  vector<uint16_t> input_vec;
-  bool ret = true;
-  uint16_t i = startIndex, j = 0, tag = 0, len = 0;
-  if (i_data == NULL) {
-    NXPLOG_UCIHAL_D("input map creation failed, i_data is NULL");
-    return false;
-  }
+std::map<uint16_t, std::vector<uint8_t>>
+decodeTlvBytes(const std::vector<uint8_t> &ext_ids, const uint8_t *tlv_bytes, size_t tlv_len)
+{
+  std::map<uint16_t, std::vector<uint8_t>> ret;
 
-  while (i < iData_len) {
-    if (i + 1 >= iData_len) {
-      ret = false;
-      break;
-    }
-    tag = i_data[i++];
-    // Tag IDs from 0xE0 to 0xE2 are extended tag IDs with 2 bytes length.
-    if ((tag >= 0xE0) && (tag <= 0xE2)) {
-      if (i + 1 >= iData_len) {
-        ret = false;
+  size_t i = 0;
+  while ((i + 1) < tlv_len) {
+    uint16_t tag;
+    uint8_t len;
+
+    uint8_t byte0 = tlv_bytes[i++];
+    uint8_t byte1 = tlv_bytes[i++];
+    if (std::find(ext_ids.begin(), ext_ids.end(), byte0) != ext_ids.end()) {
+      if (i >= tlv_len) {
+        NXPLOG_UCIHAL_E("Failed to decode TLV bytes (offset=%zu).", i);
         break;
       }
-      tag = (tag << 8) | i_data[i++];
+      tag = (byte0 << 8) | byte1; // 2 bytes tag as big endiann
+      len = tlv_bytes[i++];
+    } else {
+      tag = byte0;
+      len = byte1;
     }
-    if (i + 1 >= iData_len) {
-      ret = false;
+    if ((i + len) > tlv_len) {
+      NXPLOG_UCIHAL_E("Failed to decode TLV bytes (offset=%zu).", i);
       break;
     }
-    len = i_data[i++];
-    input_vec.insert(input_vec.begin(), len);
-    if (i + len > iData_len) {
-      ret = false;
-      break;
-    }
-    for (j = 1; j <= len; j++) {
-      input_vec.insert(input_vec.begin() + j, i_data[i++]);
-    }
-    input_map[tag] = input_vec;
-    input_vec.clear();
+    ret[tag] = std::vector(&tlv_bytes[i], &tlv_bytes[i + len]);
+    i += len;
   }
+
   return ret;
 }
 
-/*******************************************************************************
- * Function      get_conf_map
- *
- * Description   Creates a map from the Country code conf with key as Tag and
- *               value as a vector containing Length and Values of the Tag.
- *
- * Returns       true if the map creation successful
- *
- *******************************************************************************/
-bool get_conf_map(uint8_t *c_data, uint16_t cData_len) {
-  vector<uint16_t> conf_vec;
-  bool ret = true;
-  uint16_t i = 0, j = 0, tag = 0, len = 0;
-  if (c_data == NULL) {
-    NXPLOG_UCIHAL_D("Country code conf map creation failed, c_data is NULL");
-    return false;
+std::vector<uint8_t> encodeTlvBytes(const std::map<uint16_t, std::vector<uint8_t>> &tlvs)
+{
+  std::vector<uint8_t> bytes;
+
+  for (auto const & [tag, val] : tlvs) {
+    // Tag
+    if (tag > 0xff) {
+      bytes.push_back(tag >> 8);
+    }
+    bytes.push_back(tag & 0xff);
+
+    // Length
+    bytes.push_back(val.size());
+
+    // Value
+    bytes.insert(bytes.end(), val.begin(), val.end());
   }
-  while (i < cData_len) {
-    if (i + 1 >= cData_len) {
-      ret = false;
-      break;
-    }
-    tag = c_data[i++];
-    // Tag IDs from 0xE0 to 0xE2 are extended tag IDs with 2 bytes length.
-    if ((tag >= 0xE0) && (tag <= 0xE2)) {
-      if (i + 1 >= cData_len) {
-        ret = false;
-        break;
-      }
-      tag = (tag << 8) | c_data[i++];
-    }
-    if (i + 1 >= cData_len) {
-      ret = false;
-      break;
-    }
-    len = c_data[i++];
-    conf_vec.insert(conf_vec.begin(), len);
-    if (i + len > cData_len) {
-      ret = false;
-      break;
-    }
-    for (j = 1; j <= len; j++) {
-      conf_vec.insert(conf_vec.begin() + j, c_data[i++]);
-    }
-    conf_map[tag] = conf_vec;
-    conf_vec.clear();
-  }
-  return ret;
+
+  return bytes;
 }
