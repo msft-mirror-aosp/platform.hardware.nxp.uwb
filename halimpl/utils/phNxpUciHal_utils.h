@@ -174,9 +174,6 @@ void phNxpUciHal_print_packet(enum phNxpUciHal_Pkt_Type what, const uint8_t* p_d
                               uint16_t len);
 void phNxpUciHal_emergency_recovery(void);
 double phNxpUciHal_byteArrayToDouble(const uint8_t* p_data);
-bool get_input_map(const uint8_t *i_data, uint16_t iData_len,
-                   uint8_t startIndex);
-bool get_conf_map(uint8_t *c_data, uint16_t cData_len);
 
 template <typename T>
 static inline T le_bytes_to_cpu(const uint8_t *p)
