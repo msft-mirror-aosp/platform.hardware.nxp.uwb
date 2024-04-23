@@ -82,6 +82,7 @@ typedef void (*pphTmlUwb_TransactCompletionCb_t)(
  *
  */
 typedef struct phTmlUwb_ReadWriteInfo {
+  volatile bool bThreadShouldStop;
   volatile uint8_t bEnable; /*This flag shall decide whether to perform
                                Write/Read operation */
   uint8_t
@@ -101,8 +102,7 @@ typedef struct phTmlUwb_Context {
   pthread_t readerThread; /*Handle to the thread which handles write and read
                              operations */
   pthread_t writerThread;
-  volatile uint8_t
-      bThreadDone; /*Flag to decide whether to run or abort the thread */
+
   phTmlUwb_ReadWriteInfo_t tReadInfo;  /*Pointer to Reader Thread Structure */
   phTmlUwb_ReadWriteInfo_t tWriteInfo; /*Pointer to Writer Thread Structure */
   void* pDevHandle;                    /* Pointer to Device Handle */
@@ -145,8 +145,6 @@ tHAL_UWB_STATUS phTmlUwb_Write(uint8_t* pBuffer, uint16_t wLength,
 tHAL_UWB_STATUS phTmlUwb_Read(uint8_t* pBuffer, uint16_t wLength,
                         pphTmlUwb_TransactCompletionCb_t pTmlReadComplete,
                         void* pContext);
-tHAL_UWB_STATUS phTmlUwb_WriteAbort(void);
-tHAL_UWB_STATUS phTmlUwb_ReadAbort(void);
 void phTmlUwb_eSE_Reset(void);
 void phTmlUwb_Spi_Reset(void);
 void phTmlUwb_Chip_Reset(void);
