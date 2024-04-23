@@ -642,3 +642,59 @@ bool get_conf_map(uint8_t *c_data, uint16_t cData_len) {
   }
   return ret;
 }
+
+// Decode bytes into map<key=T, val=LV>
+std::map<uint16_t, std::vector<uint8_t>>
+decodeTlvBytes(const std::vector<uint8_t> &ext_ids, const uint8_t *tlv_bytes, size_t tlv_len)
+{
+  std::map<uint16_t, std::vector<uint8_t>> ret;
+
+  size_t i = 0;
+  while ((i + 1) < tlv_len) {
+    uint16_t tag;
+    uint8_t len;
+
+    uint8_t byte0 = tlv_bytes[i++];
+    uint8_t byte1 = tlv_bytes[i++];
+    if (std::find(ext_ids.begin(), ext_ids.end(), byte0) != ext_ids.end()) {
+      if (i >= tlv_len) {
+        NXPLOG_UCIHAL_E("Failed to decode TLV bytes (offset=%zu).", i);
+        break;
+      }
+      tag = (byte0 << 8) | byte1; // 2 bytes tag as big endiann
+      len = tlv_bytes[i++];
+    } else {
+      tag = byte0;
+      len = byte1;
+    }
+    if ((i + len) > tlv_len) {
+      NXPLOG_UCIHAL_E("Failed to decode TLV bytes (offset=%zu).", i);
+      break;
+    }
+    ret[tag] = std::vector(&tlv_bytes[i], &tlv_bytes[i + len]);
+    i += len;
+  }
+
+  return ret;
+}
+
+std::vector<uint8_t> encodeTlvBytes(const std::map<uint16_t, std::vector<uint8_t>> &tlvs)
+{
+  std::vector<uint8_t> bytes;
+
+  for (auto const & [tag, val] : tlvs) {
+    // Tag
+    if (tag > 0xff) {
+      bytes.push_back(tag >> 8);
+    }
+    bytes.push_back(tag & 0xff);
+
+    // Length
+    bytes.push_back(val.size());
+
+    // Value
+    bytes.insert(bytes.end(), val.begin(), val.end());
+  }
+
+  return bytes;
+}

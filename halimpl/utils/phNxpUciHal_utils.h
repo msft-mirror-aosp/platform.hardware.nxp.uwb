@@ -223,4 +223,11 @@ static inline void cpu_to_le_bytes(uint8_t *p, const T num)
   if (phNxpUciHal_get_monitor()) \
   pthread_mutex_unlock(&phNxpUciHal_get_monitor()->concurrency_mutex)
 
+// Decode bytes into map<key=T, val=LV>
+std::map<uint16_t, std::vector<uint8_t>>
+decodeTlvBytes(const std::vector<uint8_t> &ext_ids, const uint8_t *tlv_bytes, size_t tlv_len);
+
+// Encode map<key=T, val=LV> into TLV bytes
+std::vector<uint8_t> encodeTlvBytes(const std::map<uint16_t, std::vector<uint8_t>> &tlvs);
+
 #endif /* _PHNXPUCIHAL_UTILS_H_ */
