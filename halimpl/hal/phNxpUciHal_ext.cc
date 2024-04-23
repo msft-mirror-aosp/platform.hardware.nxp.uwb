@@ -41,16 +41,11 @@ extern phNxpUciHal_Control_t nxpucihal_ctrl;
 
 static std::vector<uint8_t> gtx_power;
 
-phNxpUciHalProp_Control_t extNxpucihal_ctrl;
-uint32_t hwResetTimer;
-
 /************** HAL extension functions ***************************************/
-static void phNxpUciHal_send_dev_error_status_ntf();
 static bool phNxpUciHal_is_retry_not_required(uint8_t uci_octet0);
 static void phNxpUciHal_clear_thermal_error_status();
 static void phNxpUciHal_hw_reset_ntf_timeout_cb(uint32_t timerId,
                                                 void *pContext);
-tHAL_UWB_STATUS phNxpUciHal_handle_thermal_error_status();
 
 /******************************************************************************
  * Function         phNxpUciHal_process_ext_cmd_rsp
@@ -401,22 +396,6 @@ static void phNxpUciHal_applyCountryCaps(const char country_code[2],
 }
 
 /*******************************************************************************
- * Function      phNxpUciHal_send_dev_error_status_ntf
- *
- * Description   send device status notification. Upper layer might restart
- *               HAL service.
- *
- * Returns       void
- *
- *******************************************************************************/
-static void phNxpUciHal_send_dev_error_status_ntf() {
- NXPLOG_UCIHAL_D("phNxpUciHal_send_dev_error_status_ntf ");
- nxpucihal_ctrl.rx_data_len = 5;
- static uint8_t rsp_data[5] = {0x60, 0x01, 0x00, 0x01, 0xFF};
- (*nxpucihal_ctrl.p_uwb_stack_data_cback)(nxpucihal_ctrl.rx_data_len, rsp_data);
-}
-
-/*******************************************************************************
  * Function      phNxpUciHal_is_retry_not_required
  *
  * Description   UCI command retry check
@@ -537,516 +516,6 @@ static bool phNxpUciHal_setCalibParamTxPower(void)
   return true;
 }
 
-/******************************************************************************
- * Function         phNxpUciHal_hw_reset_ntf_timeout_cb
- *
- * Description      Timer call back function
- *
- * Returns          None
- *
- ******************************************************************************/
-static void phNxpUciHal_hw_reset_ntf_timeout_cb(uint32_t timerId,
-                                                void *pContext) {
- UNUSED(timerId);
- UNUSED(pContext);
- NXPLOG_UCIHAL_E("phNxpUciHal_hw_reset_ntf_timeout_cb!!!");
- tHAL_UWB_STATUS status;
-
- status = phOsalUwb_Timer_Stop(hwResetTimer);
- if (UWBSTATUS_SUCCESS == status) {
-      NXPLOG_UCIHAL_D("Response timer stopped");
- } else {
-      NXPLOG_UCIHAL_E("Response timer stop ERROR!!!");
- }
- pthread_cond_signal(&extNxpucihal_ctrl.mCondVar);
- extNxpucihal_ctrl.isThermalRecoveryOngoing = false;
-
- return;
-}
-
-/******************************************************************************
- * Function         phNxpUciHal_handle_thermal_error_status
- *
- * Description     This function handles the core generic error ntf with status
- *                 temperature exceeded(0x54)
- *
- * Returns          return uwb status, On success
- *                  update the acutual state of operation in arg pointer
- *
- ******************************************************************************/
-tHAL_UWB_STATUS phNxpUciHal_handle_thermal_error_status() {
-
- tHAL_UWB_STATUS status = UWBSTATUS_FAILED;
- extNxpucihal_ctrl.isThermalRecoveryOngoing = true;
-
- /* Send FW crash NTF to upper layer for triggering MW recovery */
- nxpucihal_ctrl.rx_data_len = 5;
- nxpucihal_ctrl.p_rx_data[0] = 0x60;
- nxpucihal_ctrl.p_rx_data[1] = 0x01;
- nxpucihal_ctrl.p_rx_data[2] = 0x00;
- nxpucihal_ctrl.p_rx_data[3] = 0x01;
- nxpucihal_ctrl.p_rx_data[4] = 0xFF;
- (*nxpucihal_ctrl.p_uwb_stack_data_cback)(nxpucihal_ctrl.rx_data_len,
-                                          nxpucihal_ctrl.p_rx_data);
-
- hwResetTimer = phOsalUwb_Timer_Create();
-
- status = phOsalUwb_Timer_Start(hwResetTimer, HAL_HW_RESET_NTF_TIMEOUT,
-                                &phNxpUciHal_hw_reset_ntf_timeout_cb, NULL);
-
- if (UWBSTATUS_SUCCESS == status) {
-      nxpucihal_ctrl.isRecoveryTimerStarted = true;
-      NXPLOG_UCIHAL_E("HW Reset Ntf timer started");
- } else {
-      NXPLOG_UCIHAL_E("HW Reset Ntf timer not started!!!");
-      pthread_cond_signal(&extNxpucihal_ctrl.mCondVar);
-      return UWBSTATUS_FAILED;
- }
- return UWBSTATUS_SUCCESS;
-}
-
-/******************************************************************************
- * Function         phNxpUciHal_clear_thermal_error_status
- *
- * Description     This function is used to clear thermal error context.
- *
- * Returns          void
- *
- ******************************************************************************/
-static void phNxpUciHal_clear_thermal_error_status() {
- tHAL_UWB_STATUS status = UWBSTATUS_FAILED;
- nxpucihal_ctrl.isSkipPacket = 1;
- NXPLOG_UCIHAL_D("received hw reset ntf");
- pthread_cond_signal(&extNxpucihal_ctrl.mCondVar);
- extNxpucihal_ctrl.isThermalRecoveryOngoing = false;
- if (nxpucihal_ctrl.isRecoveryTimerStarted == true) {
-      status = phOsalUwb_Timer_Stop(hwResetTimer);
-      if (UWBSTATUS_SUCCESS == status) {
-        NXPLOG_UCIHAL_D("Response timer stopped");
-      } else {
-        NXPLOG_UCIHAL_E("Response timer stop ERROR!!!");
-      }
- }
-}
-
-struct ReadOtpCookie {
-  ReadOtpCookie(uint8_t param_id, uint8_t *buffer, size_t len) :
-    m_valid(false), m_id(param_id), m_buffer(buffer), m_len(len) {
-  }
-  std::atomic_bool  m_valid;
-  uint8_t m_id;
-  uint8_t *m_buffer;
-  size_t  m_len;
-};
-
-/******************************************************************************
- * Function         otp_read_data
- *
- * Description      Read OTP calibration data
- *
- * Returns          true on success
- *
- ******************************************************************************/
-static bool otp_read_data(const uint8_t channel, const uint8_t param_id, uint8_t *buffer, size_t len)
-{
-  ReadOtpCookie cookie(param_id, buffer, len);
-
-  if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.calib_data_ntf_wait, &cookie) != UWBSTATUS_SUCCESS) {
-    NXPLOG_UCIHAL_E("Failed to create call back data for reading otp");
-    return false;
-  }
-
-  // READ_CALIB_DATA_CMD
-  std::vector<uint8_t> packet{(UCI_MT_CMD << UCI_MT_SHIFT) | UCI_GID_PROPRIETARY_0X0A, UCI_MSG_READ_CALIB_DATA, 0x00, 0x03};
-  packet.push_back(channel);
-  packet.push_back(0x01);      // OTP read option
-  packet.push_back(param_id);
-
-  tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
-  if (status != UWBSTATUS_SUCCESS) {
-    goto fail_otp_read_data;
-  }
-
-  phNxpUciHal_sem_timed_wait_sec(&nxpucihal_ctrl.calib_data_ntf_wait, 3);
-  if (!cookie.m_valid) {
-    goto fail_otp_read_data;
-  }
-
-  phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.calib_data_ntf_wait);
-  return true;
-
-fail_otp_read_data:
-  phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.calib_data_ntf_wait);
-  NXPLOG_UCIHAL_E("Failed to read OTP data id=%u", param_id);
-  return false;
-}
-
-/******************************************************************************
- * Function         phNxpUciHal_parseCoreDeviceInfoRsp
- *
- * Description      This function parse Core device Info response.
- *
- * Returns          void.
- *
- ******************************************************************************/
-static void phNxpUciHal_parseCoreDeviceInfoRsp(const uint8_t *p_rx_data, size_t rx_data_len)
-{
-  uint8_t index = 13; // Excluding the header and Versions
-  uint8_t paramId = 0;
-  uint8_t length = 0;
-
-  if (nxpucihal_ctrl.isDevInfoCached) {
-    return;
-  }
-
-  NXPLOG_UCIHAL_D("phNxpUciHal_parseCoreDeviceInfoRsp Enter..");
-
-  if (rx_data_len > sizeof(nxpucihal_ctrl.dev_info_resp)) {
-      NXPLOG_UCIHAL_E("FIXME: CORE_DEVICE_INFO_RSP buffer overflow!");
-      return;
-  }
-
-  memcpy(nxpucihal_ctrl.dev_info_resp, nxpucihal_ctrl.p_rx_data, nxpucihal_ctrl.rx_data_len);
-
-  uint8_t len = p_rx_data[index++];
-  len = len + index;
-  while (index < len) {
-    paramId = p_rx_data[index++];
-    length = p_rx_data[index++];
-    if (paramId == DEVICE_NAME_PARAM_ID && length >= 6) {
-      /* SR100T --> T */
-      switch(p_rx_data[index + 5]) {
-      case DEVICE_TYPE_SR1xxS:
-        nxpucihal_ctrl.device_type = DEVICE_TYPE_SR1xxS;
-        break;
-      case DEVICE_TYPE_SR1xxT:
-        nxpucihal_ctrl.device_type = DEVICE_TYPE_SR1xxT;
-        break;
-      default:
-        nxpucihal_ctrl.device_type = DEVICE_TYPE_UNKNOWN;
-        break;
-      }
-    } else if (paramId == FW_VERSION_PARAM_ID && length >= 3) {
-      nxpucihal_ctrl.fw_version.major_version = p_rx_data[index];
-      nxpucihal_ctrl.fw_version.minor_version = p_rx_data[index + 1];
-      nxpucihal_ctrl.fw_version.rc_version = p_rx_data[index + 2];
-    } else if (paramId == FW_BOOT_MODE_PARAM_ID && length >= 1) {
-      nxpucihal_ctrl.fw_boot_mode = p_rx_data[index];
-      break;
-    }
-    index = index + length;
-  }
-  NXPLOG_UCIHAL_D("phNxpUciHal_parseCoreDeviceInfoRsp: Device Info cached.");
-  nxpucihal_ctrl.isDevInfoCached = true;
-  return;
-}
-
-/******************************************************************************
- * Function         phNxpUciHal_process_response
- *
- * Description      This function handles all the propriotory hal
- *functionalities.
- *
- * Returns          void.
- *
- ******************************************************************************/
-void phNxpUciHal_process_response() {
-  tHAL_UWB_STATUS status;
-
-  uint8_t mt = 0, gid = 0, oid = 0, pbf = 0;
-  mt = (nxpucihal_ctrl.p_rx_data[0]  & UCI_MT_MASK) >> UCI_MT_SHIFT;
-  gid = nxpucihal_ctrl.p_rx_data[0] & UCI_GID_MASK;
-  oid = nxpucihal_ctrl.p_rx_data[1] & UCI_OID_MASK;
-  pbf = (nxpucihal_ctrl.p_rx_data[0] & UCI_PBF_MASK) >> UCI_PBF_SHIFT;
-
-  switch (gid) {
-    case UCI_GID_CORE:
-       switch (oid) {
-         case UCI_MSG_CORE_GENERIC_ERROR_NTF:
-           if ((nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] ==
-                UCI_STATUS_THERMAL_RUNAWAY) ||
-               (nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] ==
-                UCI_STATUS_LOW_VBAT)) {
-             nxpucihal_ctrl.isSkipPacket = 1;
-             status = phNxpUciHal_handle_thermal_error_status();
-             if (status != UCI_STATUS_OK) {
-               NXPLOG_UCIHAL_E("phNxpUciHal_handle_thermal_error_status failed");
-             }
-           }
-           break;
-         case UCI_MSG_CORE_DEVICE_STATUS_NTF:
-           if (nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] ==
-               UCI_STATUS_HW_RESET) {
-             phNxpUciHal_clear_thermal_error_status();
-           }
-           break;
-         case UCI_MSG_CORE_DEVICE_INFO:
-           if (mt == UCI_MT_RSP) {
-             if (pbf) {
-               // FIXME: Fix the whole logic if this really happens
-               NXPLOG_UCIHAL_E("FIXME: CORE_DEVICE_INFO_RSP is fragmented!");
-             } else {
-               phNxpUciHal_parseCoreDeviceInfoRsp(nxpucihal_ctrl.p_rx_data,
-                                                  nxpucihal_ctrl.rx_data_len);
-             }
-           }
-           break;
-       }
-       break;
-    case UCI_GID_PROPRIETARY_0X0A:
-       if ((mt == UCI_MT_NTF) && (oid == UCI_MSG_READ_CALIB_DATA)) {
-         // READ_CALIB_DATA_NTF: status(1), length-of-payload(1), payload(N)
-         const uint8_t plen = nxpucihal_ctrl.p_rx_data[3]; // payload-length
-         const uint8_t *p = &nxpucihal_ctrl.p_rx_data[4];  // payload
-         ReadOtpCookie *cookie =
-             (ReadOtpCookie *)nxpucihal_ctrl.calib_data_ntf_wait.pContext;
-
-         if (!cookie) {
-           NXPLOG_UCIHAL_E("Otp read: unexpected OTP read.");
-         } else if (cookie->m_valid) {
-           // cookie is already valid
-           NXPLOG_UCIHAL_E("Otp read: unexpected OTP read, param-id=0x%x",
-                           cookie->m_id);
-         } else if (plen < 2) {
-           NXPLOG_UCIHAL_E("Otp read: bad payload length %u", plen);
-         } else if (p[0] != UCI_STATUS_OK) {
-           NXPLOG_UCIHAL_E("Otp read: bad status=0x%x",
-                           nxpucihal_ctrl.p_rx_data[4]);
-         } else if (p[1] != cookie->m_len) {
-           NXPLOG_UCIHAL_E(
-               "Otp read: size mismatch %u (expected %zu for param 0x%x)", p[1],
-               cookie->m_len, cookie->m_id);
-         } else {
-           memcpy(cookie->m_buffer, &p[2], cookie->m_len);
-           cookie->m_valid = true;
-           SEM_POST(&nxpucihal_ctrl.calib_data_ntf_wait);
-         }
-       }
-       break;
-  }
-}
-
-// SW defined data structures
-typedef enum {
-  // 6 bytes
-  // [1:0] cap1 [3:2] cap2 [5:4] gm current control
-  EXTCAL_PARAM_CLK_ACCURACY   = 0x1,    // xtal
-
-  // 3n + 1 bytes
-  // [0] n, number of entries +  n * { [0] antenna-id [1:0] RX delay(Q14.2) }
-  EXTCAL_PARAM_RX_ANT_DELAY   = 0x2,    // ant_delay
-
-  // 5N + 1 bytes
-  // [0]: n, number of entries + n * { [0] antenna-id [2:1] delta-peak [4:3] id-rms }
-  EXTCAL_PARAM_TX_POWER       = 0x3,    // tx_power
-
-  // channel independent
-  // 1 byte
-  //  b0: enable/disable DDFS tone generation (default off)
-  //  b1: enable/disable DC suppression (default off)
-  EXTCAL_PARAM_TX_BASE_BAND_CONTROL   = 0x101,  // ddfs_enable, dc_suppress
-
-  // channel independent (raw data contains channel info)
-  // bytes array
-  EXTCAL_PARAM_DDFS_TONE_CONFIG       = 0x102,  // ddfs_tone_config
-
-  // channel independent
-  // byte array
-  EXTCAL_PARAM_TX_PULSE_SHAPE         = 0x103,  // tx_pulse_shape
-} extcal_param_id_t;
-
-// Based on NXP SR1xx UCI v2.0.5
-// current HAL impl only supports "xtal" read from otp
-// others should be existed in .conf files
-
-static tHAL_UWB_STATUS sr1xx_set_calibration(uint8_t channel, const std::vector<uint8_t> &tlv)
-{
-  // SET_CALIBRATION_CMD header: GID=0xF OID=0x21
-  std::vector<uint8_t> packet({ (0x20 | UCI_GID_PROPRIETARY_0X0F), UCI_MSG_SET_DEVICE_CALIBRATION, 0x00, 0x00});
-
-  // use 9 for channel-independent parameters
-  if (!channel) {
-    channel = 9;
-  }
-  packet.push_back(channel);
-  packet.insert(packet.end(), tlv.begin(), tlv.end());
-  packet[3] = packet.size() - 4;
-  return phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
-}
-
-static tHAL_UWB_STATUS sr1xx_set_conf(const std::vector<uint8_t> &tlv)
-{
-  // SET_CALIBRATION_CMD header: GID=0xF OID=0x21
-  std::vector<uint8_t> packet({ (0x20 | UCI_GID_CORE), UCI_MSG_CORE_SET_CONFIG, 0x00, 0x00});
-  packet.push_back(1);  // number of parameters
-  packet.insert(packet.end(), tlv.begin(), tlv.end());
-  packet[3] = packet.size() - 4;
-  return phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
-}
-
-/******************************************************************************
- * Function         phNxpUciHal_apply_calibration
- *
- * Description      Send calibration/dev-config command to UWBS
- *
- * Parameters       id        - parameter id
- *                  channel   - channel number. 0 if it's channel independentt
- *                  data      - parameter value
- *                  data_len  - length of data
- *
- * Returns          0 : success, <0 : errno
- *
- ******************************************************************************/
-tHAL_UWB_STATUS sr1xx_apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len)
-{
-  // Device Calibration
-  const uint8_t UCI_PARAM_ID_RF_CLK_ACCURACY_CALIB    = 0x01;
-  const uint8_t UCI_PARAM_ID_RX_ANT_DELAY_CALIB       = 0x02;
-  const uint8_t UCI_PARAM_ID_TX_POWER_PER_ANTENNA     = 0x04;
-
-  // Device Configurations
-  const uint16_t UCI_PARAM_ID_TX_BASE_BAND_CONFIG     = 0xe426;
-  const uint16_t UCI_PARAM_ID_DDFS_TONE_CONFIG        = 0xe427;
-  const uint16_t UCI_PARAM_ID_TX_PULSE_SHAPE_CONFIG   = 0xe428;
-
-  switch (id) {
-  case EXTCAL_PARAM_CLK_ACCURACY:
-    {
-      if (data_len != 6) {
-        return UWBSTATUS_FAILED;
-      }
-
-      std::vector<uint8_t> tlv;
-      // Tag
-      tlv.push_back(UCI_PARAM_ID_RF_CLK_ACCURACY_CALIB);
-      // Length
-      tlv.push_back((uint8_t)data_len + 1);
-      // Value
-      tlv.push_back(3); // number of register (must be 0x03)
-      tlv.insert(tlv.end(), data, data + data_len);
-
-      return sr1xx_set_calibration(ch, tlv);
-    }
-  case EXTCAL_PARAM_RX_ANT_DELAY:
-    {
-      if (!ch || data_len < 1 || !data[0] || (data[0] * 3) != (data_len - 1)) {
-        return UWBSTATUS_FAILED;
-      }
-
-      std::vector<uint8_t> tlv;
-      // Tag
-      tlv.push_back(UCI_PARAM_ID_RX_ANT_DELAY_CALIB);
-      // Length
-      tlv.push_back((uint8_t)data_len);
-      // Value
-      tlv.insert(tlv.end(), data, data + data_len);
-
-      return sr1xx_set_calibration(ch, tlv);
-    }
-  case EXTCAL_PARAM_TX_POWER:
-    {
-      if (!ch || data_len < 1 || !data[0] || (data[0] * 5) != (data_len - 1)) {
-        return UWBSTATUS_FAILED;
-      }
-
-      std::vector<uint8_t> tlv;
-      // Tag
-      tlv.push_back(UCI_PARAM_ID_TX_POWER_PER_ANTENNA);
-      // Length
-      tlv.push_back((uint8_t)data_len);
-      // Value
-      tlv.insert(tlv.end(), data, data + data_len);
-
-      return sr1xx_set_calibration(ch, tlv);
-    }
-  case EXTCAL_PARAM_TX_BASE_BAND_CONTROL:
-    {
-      if (data_len != 1) {
-        return UWBSTATUS_FAILED;
-      }
-
-      std::vector<uint8_t> tlv;
-      // Tag
-      tlv.push_back(UCI_PARAM_ID_TX_BASE_BAND_CONFIG >> 8);
-      tlv.push_back(UCI_PARAM_ID_TX_BASE_BAND_CONFIG & 0xff);
-      // Length
-      tlv.push_back(1);
-      // Value
-      tlv.push_back(data[0]);
-
-      return sr1xx_set_conf(tlv);
-    }
-  case EXTCAL_PARAM_DDFS_TONE_CONFIG:
-    {
-      if (!data_len) {
-        return UWBSTATUS_FAILED;
-      }
-
-      std::vector<uint8_t> tlv;
-      // Tag
-      tlv.push_back(UCI_PARAM_ID_DDFS_TONE_CONFIG >> 8);
-      tlv.push_back(UCI_PARAM_ID_DDFS_TONE_CONFIG & 0xff);
-      // Length
-      tlv.push_back(data_len);
-      // Value
-      tlv.insert(tlv.end(), data, data + data_len);
-
-      return sr1xx_set_conf(tlv);
-    }
-  case EXTCAL_PARAM_TX_PULSE_SHAPE:
-    {
-      if (!data_len) {
-        return UWBSTATUS_FAILED;
-      }
-
-      std::vector<uint8_t> tlv;
-      // Tag
-      tlv.push_back(UCI_PARAM_ID_TX_PULSE_SHAPE_CONFIG >> 8);
-      tlv.push_back(UCI_PARAM_ID_TX_PULSE_SHAPE_CONFIG & 0xff);
-      // Length
-      tlv.push_back(data_len);
-      // Value
-      tlv.insert(tlv.end(), data, data + data_len);
-
-      return sr1xx_set_conf(tlv);
-    }
-  default:
-    NXPLOG_UCIHAL_E("Unsupported parameter: 0x%x", id);
-    return UWBSTATUS_FAILED;
-  }
-}
-
-tHAL_UWB_STATUS sr1xx_read_otp(extcal_param_id_t id, uint8_t *data, size_t data_len, size_t *retlen)
-{
-  switch(id) {
-  case EXTCAL_PARAM_CLK_ACCURACY:
-    {
-      const size_t param_len = 6;
-      uint8_t otp_xtal_data[3];
-
-      if (data_len < param_len) {
-        NXPLOG_UCIHAL_E("Requested RF_CLK_ACCURACY_CALIB with %zu bytes (expected >= %zu)", data_len, param_len);
-        return UWBSTATUS_FAILED;
-      }
-      if (!otp_read_data(0x09, OTP_ID_XTAL_CAP_GM_CTRL, otp_xtal_data, sizeof(otp_xtal_data))) {
-        NXPLOG_UCIHAL_E("Failed to read OTP XTAL_CAP_GM_CTRL");
-        return UWBSTATUS_FAILED;
-      }
-      memset(data, 0, param_len);
-      // convert OTP_ID_XTAL_CAP_GM_CTRL to EXTCAL_PARAM_RX_ANT_DELAY
-      data[0] = otp_xtal_data[0]; // cap1
-      data[2] = otp_xtal_data[1]; // cap2
-      data[4] = otp_xtal_data[2]; // gm_current_control (default: 0x30)
-      *retlen = param_len;
-      return UWBSTATUS_SUCCESS;
-    }
-    break;
-  default:
-    NXPLOG_UCIHAL_E("Unsupported otp parameter %d", id);
-    return UWBSTATUS_FAILED;
-  }
-}
-
 // Channels
 const static uint8_t cal_channels[] = {5, 6, 8, 9};
 
@@ -1061,7 +530,7 @@ static void extcal_do_xtal(void)
   size_t xtal_data_len = 0;
 
   if (NxpConfig_GetNum("cal.otp.xtal", &otp_xtal_flag, 1) && otp_xtal_flag) {
-    sr1xx_read_otp(EXTCAL_PARAM_CLK_ACCURACY, xtal_data, sizeof(xtal_data), &xtal_data_len);
+    nxpucihal_ctrl.uwb_chip->read_otp(EXTCAL_PARAM_CLK_ACCURACY, xtal_data, sizeof(xtal_data), &xtal_data_len);
   }
   if (!xtal_data_len) {
     long retlen = 0;
@@ -1073,7 +542,7 @@ static void extcal_do_xtal(void)
   if (xtal_data_len) {
     NXPLOG_UCIHAL_D("Apply CLK_ACCURARY (len=%zu, from-otp=%c)", xtal_data_len, otp_xtal_flag ? 'y' : 'n');
 
-    ret = sr1xx_apply_calibration(EXTCAL_PARAM_CLK_ACCURACY, 0, xtal_data, xtal_data_len);
+    ret = nxpucihal_ctrl.uwb_chip->apply_calibration(EXTCAL_PARAM_CLK_ACCURACY, 0, xtal_data, xtal_data_len);
 
     if (ret != UWBSTATUS_SUCCESS) {
       NXPLOG_UCIHAL_E("Failed to apply CLK_ACCURACY (len=%zu, from-otp=%c)",
@@ -1091,6 +560,13 @@ static void extcal_do_ant_delay(void)
   // parameter: cal.ant<N>.ch<N>.ant_delay=X
   // N(1) + N * {AntennaID(1), Rxdelay(Q14.2)}
   if (n_rx_antennas) {
+
+    const int16_t extra_delay = nxpucihal_ctrl.uwb_chip->extra_group_delay();
+
+    if (extra_delay) {
+      NXPLOG_UCIHAL_D("RX_ANT_DELAY_CALIB: Extra compensation '%d'", extra_delay);
+    }
+
     for (auto ch : cal_channels) {
       std::vector<uint8_t> entries;
       uint8_t n_entries = 0;
@@ -1107,6 +583,7 @@ static void extcal_do_ant_delay(void)
         if (!NxpConfig_GetNum(key, &delay_value, 2))
           continue;
 
+        delay_value = delay_value + extra_delay;
         NXPLOG_UCIHAL_D("Apply RX_ANT_DELAY_CALIB: %s = %u", key, delay_value);
         entries.push_back(ant_id);
         // Little Endian
@@ -1119,7 +596,7 @@ static void extcal_do_ant_delay(void)
         continue;
 
       entries.insert(entries.begin(), n_entries);
-      tHAL_UWB_STATUS ret = sr1xx_apply_calibration(EXTCAL_PARAM_RX_ANT_DELAY, ch, entries.data(), entries.size());
+      tHAL_UWB_STATUS ret = nxpucihal_ctrl.uwb_chip->apply_calibration(EXTCAL_PARAM_RX_ANT_DELAY, ch, entries.data(), entries.size());
       if (ret != UWBSTATUS_SUCCESS) {
         NXPLOG_UCIHAL_E("Failed to apply RX_ANT_DELAY for channel %u", ch);
       }
@@ -1163,7 +640,7 @@ static void extcal_do_tx_power(void)
         continue;
 
       entries.insert(entries.begin(), n_entries);
-      tHAL_UWB_STATUS ret = sr1xx_apply_calibration(EXTCAL_PARAM_TX_POWER, ch, entries.data(), entries.size());
+      tHAL_UWB_STATUS ret = nxpucihal_ctrl.uwb_chip->apply_calibration(EXTCAL_PARAM_TX_POWER, ch, entries.data(), entries.size());
       if (ret != UWBSTATUS_SUCCESS) {
         NXPLOG_UCIHAL_E("Failed to apply TX_POWER for channel %u", ch);
       }
@@ -1180,7 +657,7 @@ static void extcal_do_tx_pulse_shape(void)
   if (NxpConfig_GetByteArray("cal.tx_pulse_shape", data, sizeof(data), &retlen) && retlen) {
       NXPLOG_UCIHAL_D("Apply TX_PULSE_SHAPE: data = { %lu bytes }", retlen);
 
-      tHAL_UWB_STATUS ret = sr1xx_apply_calibration(EXTCAL_PARAM_TX_PULSE_SHAPE, 0, data, (size_t)retlen);
+      tHAL_UWB_STATUS ret = nxpucihal_ctrl.uwb_chip->apply_calibration(EXTCAL_PARAM_TX_PULSE_SHAPE, 0, data, (size_t)retlen);
       if (ret != UWBSTATUS_SUCCESS) {
         NXPLOG_UCIHAL_E("Failed to apply TX_PULSE_SHAPE.");
       }
@@ -1211,7 +688,7 @@ static void extcal_do_tx_base_band(void)
     } else {
       NXPLOG_UCIHAL_D("Apply DDFS_TONE_CONFIG: ddfs_tone_config = { %lu bytes }", retlen);
 
-      ret = sr1xx_apply_calibration(EXTCAL_PARAM_DDFS_TONE_CONFIG, 0, ddfs_tone, (size_t)retlen);
+      ret = nxpucihal_ctrl.uwb_chip->apply_calibration(EXTCAL_PARAM_DDFS_TONE_CONFIG, 0, ddfs_tone, (size_t)retlen);
       if (ret != UWBSTATUS_SUCCESS) {
         NXPLOG_UCIHAL_E("Failed to apply DDFS_TONE_CONFIG, ddfs was not enabled.");
         ddfs_enable = 0;
@@ -1226,7 +703,7 @@ static void extcal_do_tx_base_band(void)
       flag |= 0x01;
     if (dc_suppress)
       flag |= 0x02;
-    ret = sr1xx_apply_calibration(EXTCAL_PARAM_TX_BASE_BAND_CONTROL, 0, &flag, 1);
+    ret = nxpucihal_ctrl.uwb_chip->apply_calibration(EXTCAL_PARAM_TX_BASE_BAND_CONTROL, 0, &flag, 1);
     if (ret) {
       NXPLOG_UCIHAL_E("Failed to apply TX_BASE_BAND_CONTROL");
     }
