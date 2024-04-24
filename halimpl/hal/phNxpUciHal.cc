@@ -42,9 +42,6 @@
 using namespace std;
 using android::base::StringPrintf;
 
-extern map<uint16_t, vector<uint16_t>> input_map;
-extern map<uint16_t, vector<uint16_t>> conf_map;
-
 /*********************** Global Variables *************************************/
 /* UCI HAL Control structure */
 phNxpUciHal_Control_t nxpucihal_ctrl;
@@ -57,10 +54,6 @@ bool uwb_get_platform_id = false;
 uint32_t timeoutTimerId = 0;
 char persistant_log_path[120];
 static uint8_t Rx_data[UCI_MAX_DATA_LEN];
-
-/* AOA support handling */
-bool isAntennaRxPairDefined = false;
-int numberOfAntennaPairs = 0;
 
 /**************** local methods used in this file only ************************/
 static void phNxpUciHal_write_complete(void* pContext,
@@ -224,7 +217,6 @@ static void phNxpUciHal_client_thread(phNxpUciHal_Control_t* p_nxpucihal_ctrl)
   NXPLOG_UCIHAL_D("NxpUciHal thread stopped");
 }
 
-bool isCountryCodeMapCreated = false;
 /******************************************************************************
  * Function         phNxpUciHal_parse
  *
@@ -266,84 +258,6 @@ bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data)
       return phNxpUciHal_handle_set_app_config(&nxpucihal_ctrl.cmd_len, nxpucihal_ctrl.p_cmd_data);
     } else if ((gid == UCI_GID_SESSION_MANAGE) && (oid == UCI_MSG_SESSION_STATE_INIT)) {
       SessionTrack_onSessionInit(nxpucihal_ctrl.cmd_len, nxpucihal_ctrl.p_cmd_data);
-    }
-  } else if (mt == UCI_MT_RSP) {
-    if ((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_GET_CAPS_INFO)) {
-        map<uint16_t, vector<uint16_t>>::iterator itr;
-        vector<uint16_t>::iterator v_itr;
-        uint16_t arrLen, tag, idx;
-
-        // do not modify caps if the country code is not received from upper
-        // layer.
-        if (isCountryCodeMapCreated == false) {
-          return false;
-        }
-        // Check UWBS Caps response status
-        if (p_data[4] == 0) {
-          idx = UCI_PKT_HDR_LEN + UCI_PKT_PAYLOAD_STATUS_LEN +
-                UCI_PKT_NUM_CAPS_LEN;
-          if (get_input_map(p_data, data_len, idx)) {
-            NXPLOG_UCIHAL_D("Input Map created");
-          } else {
-            NXPLOG_UCIHAL_D("Input Map creation failed");
-            return false;
-          }
-        } else {
-          return false;
-        }
-        // Compare the maps for Tags and modify input map if Values are
-        // different
-        for (itr = input_map.begin(); itr != input_map.end(); ++itr) {
-          tag = itr->first;
-          // Check for the Tag in both maps
-          if ((conf_map.count(tag)) == 1) {
-            if (tag == UWB_CHANNELS || tag == CCC_UWB_CHANNELS) {
-              NXPLOG_UCIHAL_D(
-                  "Tag = 0x%02X , modify UWB_CHANNELS based on country conf ",
-                  tag);
-              for (uint32_t j = 0; j < (itr->second).size(); j++) {
-                (input_map[tag])[j] =
-                    ((conf_map[tag])[j]) & ((input_map[tag])[j]);
-              }
-            }
-          } else {
-            // TAG not found do nothing
-          }
-        }
-        // convert the modified input map to p_caps_resp array
-        memset(nxpucihal_ctrl.p_caps_resp, 0, UCI_MAX_DATA_LEN);
-        // Header information from Input array is updated in initial bytes
-        nxpucihal_ctrl.p_caps_resp[0] = p_data[0];
-        nxpucihal_ctrl.p_caps_resp[1] = p_data[1];
-        nxpucihal_ctrl.p_caps_resp[2] = p_data[2];
-        nxpucihal_ctrl.p_caps_resp[4] = p_data[4];
-        for (itr = input_map.begin(); itr != input_map.end(); ++itr) {
-          tag = itr->first;
-          // If Tag is 0xE0 or 0xE1 or 0xE2,Tag will be of 2 bytes
-          if (((tag >> 8) >= 0xE0) && ((tag >> 8) <= 0xE2)) {
-            nxpucihal_ctrl.p_caps_resp[idx++] = (tag & 0xFF00) >> 8;
-            nxpucihal_ctrl.p_caps_resp[idx++] = (tag & 0x00FF);
-          } else {
-            nxpucihal_ctrl.p_caps_resp[idx++] = tag;
-          }
-          for (v_itr = itr->second.begin(); v_itr != itr->second.end();
-               ++v_itr) {
-            nxpucihal_ctrl.p_caps_resp[idx++] = (*v_itr);
-          }
-        }
-        arrLen = idx;
-        // exclude the initial header data
-        nxpucihal_ctrl.p_caps_resp[3] = arrLen - UCI_PKT_HDR_LEN;
-        // update the number of parameter TLVs.
-        nxpucihal_ctrl.p_caps_resp[5] = input_map.size();
-        input_map.clear();
-        // send GET CAPS INFO response to the Upper Layer
-        (*nxpucihal_ctrl.p_uwb_stack_data_cback)(arrLen,
-                                                 nxpucihal_ctrl.p_caps_resp);
-        // skip the incoming packet as we have send the modified response
-        // already
-        nxpucihal_ctrl.isSkipPacket = 1;
-        ret = false;
     }
   } else {
     ret = false;
@@ -558,128 +472,6 @@ static void phNxpUciHal_write_complete(void* pContext,
 }
 
 /******************************************************************************
- * Function         phNxpUciHal_parse_get_capsInfo
- *
- * Description      parse the caps info response as per FIRA 2.0.
- *
- * Returns          void.
- *
- ******************************************************************************/
-void phNxpUciHal_parse_get_capsInfo(uint16_t data_len, uint8_t *p_data) {
-  uint8_t *p = p_data;
-  uint8_t pDeviceCapsInfo[UCI_MAX_DATA_LEN];
-  uint8_t *pp = pDeviceCapsInfo;
-  uint8_t tagId = 0, subTagId = 0, len = 0;
-  uint8_t mt = 0, gid = 0, oid = 0;
-  uint8_t capsLen = p_data[5];
-  uint8_t dataLen = p_data[3];
-  mt = (*(p_data)&UCI_MT_MASK) >> UCI_MT_SHIFT;
-  gid = p_data[0] & UCI_GID_MASK;
-  oid = p_data[1] & UCI_OID_MASK;
-  uint8_t *p_caps_value;
-  if (mt == UCI_MT_RSP) {
-    if ((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_GET_CAPS_INFO)) {
-      if (p_data[4] == 0) {
-          for (uint16_t index = 6; index < data_len;) {
-            tagId = p_data[index++];
-            if (tagId != 0xE0 && tagId != 0xE3) {
-              len = p_data[index++];
-              /* b0 = Azimuth AoA -90 degree to 90 degree
-               * b1 = Azimuth AoA -180 degree to 180 degree
-               * b2 = Elevation AoA
-               * b3 = AoA FOM
-               */
-              if (AOA_SUPPORT_TAG_ID == tagId) {
-                if (isAntennaRxPairDefined) {
-                  if (numberOfAntennaPairs == 1) {
-                    *p_caps_value = 1;
-                  } else if (numberOfAntennaPairs > 1) {
-                    // If antenna pair more than 1 then it will support both b0
-                    // = Azimuth AoA -90° to 90° and b2=Elevation AoA then value
-                    // will set to 5
-                    *p_caps_value = 5;
-                  }
-                } else {
-                  *p_caps_value = 0;
-                }
-              } else {
-                p_caps_value = (uint8_t *)(p_data + index);
-              }
-              UINT8_TO_STREAM(pp, tagId);
-              UINT8_TO_STREAM(pp, len);
-              if (tagId == CCC_SUPPORTED_PROTOCOL_VERSIONS_ID) {
-                UINT8_TO_STREAM(pp, p_caps_value[len - 1]);
-                UINT8_TO_STREAM(pp, p_caps_value[0]);
-              } else {
-                ARRAY_TO_STREAM(pp, p_caps_value, len);
-              }
-              index = index + len;
-            } else { // ignore vendor specific data
-              if ((index + 1) >= data_len) {
-                break;
-              }
-              subTagId = p_data[index++];
-              if ((index + 1) > data_len) {
-                break;
-              }
-              len = p_data[index++];
-              index = index + len;
-              capsLen--;
-              dataLen =
-                  dataLen - (len + 3); // from datalen substract tagId,
-                                       // subTagId, len and value of config
-            }
-          }
-
-          // mapping device caps according to Fira 2.0
-          std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
-          buffer.fill(0);
-          uint8_t *vendorConfig = NULL;
-          long retlen = 0;
-          int numberOfParams = 0;
-
-          if (NxpConfig_GetByteArray(NAME_UWB_VENDOR_CAPABILITY,
-                                         buffer.data(), buffer.size(),
-                                         &retlen)) {
-            if (retlen > 0) {
-              vendorConfig = buffer.data();
-              ARRAY_TO_STREAM(pp, vendorConfig, retlen);
-              dataLen += retlen;
-
-              // calculate number of params
-              int index = 0, paramId, length;
-              do {
-                paramId = vendorConfig[index++];
-                length = vendorConfig[index++];
-                index = index + length;
-                numberOfParams++;
-              } while (index < retlen);
-
-              NXPLOG_UCIHAL_D("Get caps read info from config file, length: "
-                              "%ld, numberOfParams: %d",
-                              retlen, numberOfParams);
-
-              nxpucihal_ctrl.rx_data_len = UCI_MSG_HDR_SIZE + dataLen;
-              UCI_MSG_BLD_HDR0(p, UCI_MT_RSP, UCI_GID_CORE);
-              UCI_MSG_BLD_HDR1(p, UCI_MSG_CORE_GET_CAPS_INFO);
-              UINT8_TO_STREAM(p, 0x00);
-              UINT8_TO_STREAM(p, dataLen);
-              UINT8_TO_STREAM(p, 0x00); // status
-              UINT8_TO_STREAM(p, (capsLen + numberOfParams));
-              ARRAY_TO_STREAM(p, pDeviceCapsInfo, dataLen);
-            } else {
-              NXPLOG_UCIHAL_E("Reading config file for %s failed!!!",
-                              NAME_UWB_VENDOR_CAPABILITY);
-            }
-          }
-      }
-      phNxpUciHal_print_packet(NXP_TML_UCI_RSP_NTF_UWBS_2_AP, nxpucihal_ctrl.p_rx_data,
-                               nxpucihal_ctrl.rx_data_len);
-    }
-  }
-}
-
-/******************************************************************************
  * Function         phNxpUciHal_read_complete
  *
  * Description      This function is called whenever there is an UCI packet
@@ -723,15 +515,14 @@ void phNxpUciHal_read_complete(void* pContext,
       oid = nxpucihal_ctrl.p_rx_data[1] & UCI_OID_MASK;
       pbf = (nxpucihal_ctrl.p_rx_data[0] & UCI_PBF_MASK) >> UCI_PBF_SHIFT;
 
-      // mapping device caps according to Fira 2.0
-      if (gid == UCI_GID_CORE && oid == UCI_OID_GET_CAPS_INFO) {
-        phNxpUciHal_parse_get_capsInfo(nxpucihal_ctrl.rx_data_len,
-         nxpucihal_ctrl.p_rx_data);
-      }
-
       nxpucihal_ctrl.isSkipPacket = 0;
-      phNxpUciHal_parse(nxpucihal_ctrl.rx_data_len, nxpucihal_ctrl.p_rx_data);
+
       phNxpUciHal_rx_handler_check(pInfo->wLength, pInfo->pBuff);
+
+      // mapping device caps according to Fira 2.0
+      if (mt == UCI_MT_RSP && gid == UCI_GID_CORE && oid == UCI_MSG_CORE_GET_CAPS_INFO) {
+        phNxpUciHal_handle_get_caps_info(nxpucihal_ctrl.rx_data_len, nxpucihal_ctrl.p_rx_data);
+      }
 
       // phNxpUciHal_process_ext_cmd_rsp() is waiting for the response packet
       // set this true to wake it up for other reasons
@@ -758,9 +549,6 @@ void phNxpUciHal_read_complete(void* pContext,
             // Upper layer should take care of it.
             nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_COMMAND_RETRANSMIT;
             nxpucihal_ctrl.isSkipPacket = 1;
-            bWakeupExtCmd = true;
-          } else  if (status_code == UCI_STATUS_INVALID_MSG_SIZE || status_code == UCI_STATUS_SYNTAX_ERROR) {
-            nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_INVALID_COMMAND_LENGTH;
             bWakeupExtCmd = true;
           }
         }
@@ -921,9 +709,8 @@ static void parseAntennaConfig(const char *configName)
     length = data[index++];
     if ((ANTENNA_RX_PAIR_DEFINE_TAG_ID == tagId) &&
         (ANTENNA_RX_PAIR_DEFINE_SUB_TAG_ID == subTagId)) {
-      isAntennaRxPairDefined = true;
-      numberOfAntennaPairs = data[index];
-      NXPLOG_UCIHAL_D("numberOfAntennaPairs:%d", numberOfAntennaPairs);
+      nxpucihal_ctrl.numberOfAntennaPairs = data[index];
+      NXPLOG_UCIHAL_D("numberOfAntennaPairs:%d", nxpucihal_ctrl.numberOfAntennaPairs);
       break;
     } else {
       index = index + length;

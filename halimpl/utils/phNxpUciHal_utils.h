@@ -174,9 +174,6 @@ void phNxpUciHal_print_packet(enum phNxpUciHal_Pkt_Type what, const uint8_t* p_d
                               uint16_t len);
 void phNxpUciHal_emergency_recovery(void);
 double phNxpUciHal_byteArrayToDouble(const uint8_t* p_data);
-bool get_input_map(const uint8_t *i_data, uint16_t iData_len,
-                   uint8_t startIndex);
-bool get_conf_map(uint8_t *c_data, uint16_t cData_len);
 
 template <typename T>
 static inline T le_bytes_to_cpu(const uint8_t *p)
@@ -222,5 +219,12 @@ static inline void cpu_to_le_bytes(uint8_t *p, const T num)
 #define CONCURRENCY_UNLOCK()     \
   if (phNxpUciHal_get_monitor()) \
   pthread_mutex_unlock(&phNxpUciHal_get_monitor()->concurrency_mutex)
+
+// Decode bytes into map<key=T, val=LV>
+std::map<uint16_t, std::vector<uint8_t>>
+decodeTlvBytes(const std::vector<uint8_t> &ext_ids, const uint8_t *tlv_bytes, size_t tlv_len);
+
+// Encode map<key=T, val=LV> into TLV bytes
+std::vector<uint8_t> encodeTlvBytes(const std::map<uint16_t, std::vector<uint8_t>> &tlvs);
 
 #endif /* _PHNXPUCIHAL_UTILS_H_ */

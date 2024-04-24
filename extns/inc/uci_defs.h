@@ -64,9 +64,6 @@
 #define UCI_GID_PROPRIETARY_0X0F  0x0F /* Proprietary Group */
 #define UCI_GID_INTERNAL          0x0B /* Internal Group */
 
-/* 0100b - 1100b RFU */
-#define UCI_OID_GET_CAPS_INFO 0x03
-
 /* OID: Opcode Identifier (byte 1) */
 #define UCI_OID_MASK 0x3F
 #define UCI_OID_SHIFT 0
@@ -117,6 +114,9 @@
 #define UCI_MSG_CORE_DEVICE_STATUS_NTF 1
 #define UCI_MSG_CORE_DEVICE_INFO 2
 #define UCI_MSG_CORE_GET_CAPS_INFO 3
+#define UCI_MSG_CORE_GET_CAPS_INFO_NR_OFFSET  5
+#define UCI_MSG_CORE_GET_CAPS_INFO_TLV_OFFSET 6
+
 #define UCI_MSG_CORE_SET_CONFIG 4
 #define UCI_MSG_CORE_GENERIC_ERROR_NTF 7
 
@@ -210,9 +210,7 @@ constexpr uint8_t kSessionType_CCCRanging = 0xA0;
 /* Generic Status Codes */
 #define UCI_STATUS_OK 0x00
 #define UCI_STATUS_FAILED 0x02
-#define UCI_STATUS_SYNTAX_ERROR  0x03
 #define UCI_STATUS_INVALID_PARAM 0x04
-#define UCI_STATUS_INVALID_MSG_SIZE 0x06
 #define UCI_STATUS_COMMAND_RETRY 0x0A
 #define UCI_STATUS_UNKNOWN 0x0B
 #define UCI_STATUS_THERMAL_RUNAWAY 0x54

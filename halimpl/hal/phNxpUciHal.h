@@ -189,7 +189,6 @@ typedef struct phNxpUciHal_Control {
   uint8_t p_cmd_data[UCI_MAX_DATA_LEN];
   uint16_t rsp_len;
   uint8_t p_rsp_data[UCI_MAX_DATA_LEN];
-  uint8_t p_caps_resp[UCI_MAX_DATA_LEN];
 
   /* CORE_DEVICE_INFO_RSP cache */
   bool isDevInfoCached;
@@ -205,6 +204,9 @@ typedef struct phNxpUciHal_Control {
 
   // Per-country settings
   phNxpUciHal_Runtime_Settings_t rt_settings;
+
+  // AOA support handling
+  int numberOfAntennaPairs;
 
   // Extra calibration
   // Antenna Definitions for extra calibration, b0=Antenna1, b1=Antenna2, ...
