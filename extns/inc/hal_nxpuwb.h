@@ -1,6 +1,6 @@
 /******************************************************************************
  *
- *  Copyright 2018-2020 NXP
+ *  Copyright 2018-2023 NXP
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -17,26 +17,25 @@
  ******************************************************************************/
 #ifndef ANDROID_HARDWARE_HAL_NXPUWB_V1_0_H
 #define ANDROID_HARDWARE_HAL_NXPUWB_V1_0_H
-#include <vector>
+#include <aidl/android/hardware/uwb/UwbEvent.h>
+#include <aidl/android/hardware/uwb/UwbStatus.h>
 #include <string>
+#include <vector>
+
+using ::aidl::android::hardware::uwb::UwbEvent;
+using ::aidl::android::hardware::uwb::UwbStatus;
 
 enum {
-  HAL_UWB_STATUS_OK = 0x00,
-  HAL_UWB_STATUS_ERR_TRANSPORT = 0x01,
-  HAL_UWB_STATUS_ERR_CMD_TIMEOUT = 0x02
+  HAL_UWB_STATUS_OK = (int32_t)UwbStatus::OK,
+  HAL_UWB_STATUS_ERR_TRANSPORT = (int32_t)UwbStatus::ERR_TRANSPORT,
+  HAL_UWB_STATUS_ERR_CMD_TIMEOUT = (int32_t)UwbStatus::ERR_CMD_TIMEOUT
 };
 
 enum {
-  HAL_UWB_OPEN_CPLT_EVT = 0x00,
-  HAL_UWB_CLOSE_CPLT_EVT = 0x01,
-  HAL_UWB_INIT_CPLT_EVT = 0x02,
-  HAL_UWB_ERROR_EVT = 0x03
-};
-
-
-enum NxpUwbHalStatus {
-    /** In case of an error, HCI network needs to be re-initialized */
-    HAL_STATUS_OK = 0x00,
+  HAL_UWB_OPEN_CPLT_EVT = (int32_t)UwbEvent::OPEN_CPLT,
+  HAL_UWB_CLOSE_CPLT_EVT = (int32_t)UwbEvent::CLOSE_CPLT,
+  HAL_UWB_INIT_CPLT_EVT = (int32_t)UwbEvent::POST_INIT_CPLT,
+  HAL_UWB_ERROR_EVT = (int32_t)UwbEvent::ERROR
 };
 
 #endif  // ANDROID_HARDWARE_HAL_NXPUWB_V1_0_H

@@ -1,7 +1,7 @@
 /******************************************************************************
  *
  *  Copyright (C) 2011-2012 Broadcom Corporation
- *  Copyright 2018-2019 NXP.
+ *  Copyright 2018-2019, 2023 NXP
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -16,85 +16,112 @@
  *  limitations under the License.
  *
  ******************************************************************************/
+//#define LOG_NDEBUG 0
+#define LOG_TAG "NxpUwbConf"
+
+#include <sys/stat.h>
+
+#include <iomanip>
+#include <memory>
+#include <sstream>
+#include <limits.h>
+#include <stdio.h>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+#include <android-base/logging.h>
+#include <cutils/properties.h>
+#include <log/log.h>
 
 #include "phNxpConfig.h"
-#include <stdio.h>
-#include <string>
-#include <vector>
-#include <list>
-#include <sys/stat.h>
-#include <android-base/stringprintf.h>
-#include <base/logging.h>
-#include <cutils/properties.h>
-#include  "phNxpLog.h"
+#include "phNxpUciHal.h"
+#include "phNxpUciHal_ext.h"
+#include "phNxpUciHal_utils.h"
+#include "phNxpLog.h"
 
-using android::base::StringPrintf;
+static const char default_nxp_config_path[] = "/vendor/etc/libuwb-nxp.conf";
+static const char country_code_config_name[] = "libuwb-countrycode.conf";
+static const char nxp_uci_config_file[] = "libuwb-uci.conf";
+static const char default_uci_config_path[] = "/vendor/etc/";
 
-extern bool uwb_debug_enabled;
+static const char country_code_specifier[] = "<country>";
+static const char sku_specifier[] = "<sku>";
 
-#define nxp_config_name             "libuwb-nxp.conf"
-#define uci_config_name             "libuwb-uci.conf"
-
-
-const char alternative_config_path[] = "/vendor/etc/";
-
-#define extra_config_base "libuwb-"
-#define extra_config_ext ".conf"
-
-#define extra_config_ext        ".conf"
-#define     IsStringValue       0x80000000
-
-const char nxp_uci_config_path[] = "/vendor/etc/libuwb-uci.conf";
-const char default_nxp_config_path[] = "/vendor/etc/";
+static const char prop_name_calsku[] = "persist.vendor.uwb.cal.sku";
+static const char prop_default_calsku[] = "defaultsku";
 
 using namespace::std;
 
-class uwbParam : public string
+class uwbParam
 {
 public:
+    enum class type { STRING, NUMBER, BYTEARRAY, STRINGARRAY };
     uwbParam();
-    uwbParam(const char* name, const string& value);
-    uwbParam(const char* name, unsigned long value);
+    uwbParam(const uwbParam& param);
+    uwbParam(uwbParam&& param);
+
+    uwbParam(const string& value);
+    uwbParam(vector<uint8_t>&& value);
+    uwbParam(unsigned long value);
+    uwbParam(vector<string>&& value);
+
     virtual ~uwbParam();
+
+    type getType() const { return m_type; }
     unsigned long numValue() const {return m_numValue;}
     const char*   str_value() const {return m_str_value.c_str();}
     size_t        str_len() const   {return m_str_value.length();}
+    const uint8_t* arr_value() const { return m_arrValue.data(); }
+    size_t arr_len() const { return m_arrValue.size(); }
+
+    size_t str_arr_len() const { return m_arrStrValue.size(); }
+    const char* str_arr_elem(const int index) const { return m_arrStrValue[index].c_str(); }
+    size_t str_arr_elem_len(const int index) const { return m_arrStrValue[index].length(); }
+
+    void dump(const string &tag) const;
 private:
-    string          m_str_value;
     unsigned long   m_numValue;
+    string          m_str_value;
+    vector<uint8_t>  m_arrValue;
+    vector<string>  m_arrStrValue;
+    type m_type;
 };
 
-class CUwbNxpConfig : public vector<const uwbParam*>
+class CUwbNxpConfig
 {
 public:
-    virtual ~CUwbNxpConfig();
-    static CUwbNxpConfig& GetInstance();
-    friend void readOptionalConfig(const char* optional);
-
-    bool    getValue(const char* name, char* pValue, size_t len) const;
-    bool    getValue(const char* name, unsigned long& rValue) const;
-    bool    getValue(const char* name, unsigned short & rValue) const;
-    bool    getValue(const char* name, char* pValue, long len,long* readlen) const;
-    const uwbParam*    find(const char* p_name) const;
-    void    readNxpConfig(const char* fileName) const;
-    void    clean();
-private:
     CUwbNxpConfig();
-    bool    readConfig(const char* name, bool bResetContent);
-    void    moveFromList();
-    void    moveToList();
-    void    add(const uwbParam* pParam);
-    void    dump();
-    bool    isAllowed(const char* name);
-    list<const uwbParam*> m_list;
+    CUwbNxpConfig(CUwbNxpConfig&& config);
+    CUwbNxpConfig(const char *filepath);
+    virtual ~CUwbNxpConfig();
+    CUwbNxpConfig& operator=(CUwbNxpConfig&& config);
+
+    bool isValid() const { return mValidFile; }
+    bool isCountrySpecific() const { return mCountrySpecific; }
+    void reset() {
+        m_map.clear();
+        mValidFile = false;
+    }
+
+    const uwbParam*    find(const char* p_name) const;
+    void    setCountry(const string& strCountry);
+
+    void    dump() const;
+
+    const unordered_map<string, uwbParam>& get_data() const {
+        return m_map;
+    }
+private:
+    bool    readConfig();
+
+    unordered_map<string, uwbParam> m_map;
     bool    mValidFile;
+    string  mFilePath;
     string  mCurrentFile;
-
-    unsigned long   state;
-
-    inline bool Is(unsigned long f) {return (state & f) == f;}
-    inline void Set(unsigned long f) {state |= f;}
-    inline void Reset(unsigned long f) {state &= ~f;}
+    bool    mCountrySpecific;
 };
 
 /*******************************************************************************
@@ -106,12 +133,12 @@ private:
 ** Returns:     1, if printable, otherwise 0
 **
 *******************************************************************************/
-inline bool isPrintable(char c)
+static inline bool isPrintable(char c)
 {
     return  (c >= 'A' && c <= 'Z') ||
             (c >= 'a' && c <= 'z') ||
             (c >= '0' && c <= '9') ||
-            c == '/' || c == '_' || c == '-' || c == '.';
+            c == '/' || c == '_' || c == '-' || c == '.' || c == ',';
 }
 
 /*******************************************************************************
@@ -123,17 +150,20 @@ inline bool isPrintable(char c)
 ** Returns:     true, if numerical digit
 **
 *******************************************************************************/
-inline bool isDigit(char c, int base)
+static inline bool isDigit(char c, int base)
 {
-    if ('0' <= c && c <= '9')
-        return true;
-    if (base == 16)
-    {
-        if (('A' <= c && c <= 'F') ||
-            ('a' <= c && c <= 'f') )
-            return true;
+    if (base == 10) {
+        return isdigit(c);
+    } else if (base == 16) {
+        return isxdigit(c);
+    } else {
+        return false;
     }
-    return false;
+}
+
+static inline bool isArrayDelimeter(char c)
+{
+    return (isspace(c) || c== ',' || c == ':' || c == '-' || c == '}');
 }
 
 /*******************************************************************************
@@ -169,297 +199,182 @@ inline int getDigitValue(char c, int base)
 ** Returns:     1, if there are any config data, 0 otherwise
 **
 *******************************************************************************/
-bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
+bool CUwbNxpConfig::readConfig()
 {
     enum {
         BEGIN_LINE = 1,
         TOKEN,
         STR_VALUE,
         NUM_VALUE,
+        ARR_SPACE,
+        ARR_STR,
+        ARR_STR_SPACE,
+        ARR_NUM,
         BEGIN_HEX,
         BEGIN_QUOTE,
         END_LINE
     };
 
     FILE*   fd;
-    struct stat buf;
     string  token;
     string  strValue;
     unsigned long    numValue = 0;
-    uwbParam* pParam = NULL;
-    int     i = 0;
+    vector<uint8_t> arrValue;
+    vector<string> arrStr;
     int     base = 0;
-    char    c;
-    int     bflag = 0;
-    mCurrentFile = name;
+    int     c;
+    const char *name = mCurrentFile.c_str();
+    unsigned long state = BEGIN_LINE;
 
-    state = BEGIN_LINE;
+    mValidFile = false;
+    m_map.clear();
+
     /* open config file, read it into a buffer */
-    if ((fd = fopen(name, "rb")) == NULL)
+    if ((fd = fopen(name, "r")) == NULL)
     {
-        DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("%s Cannot open config file %s\n", __func__, name);
-        if (bResetContent)
-        {
-            DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("%s Using default value for all settings\n", __func__);
-            mValidFile = false;
-        }
+        ALOGD("%s Cannot open config file %s\n", __func__, name);
         return false;
     }
-    DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("%s Opened %s config %s\n", __func__, (bResetContent ? "base" : "optional"), name);
-    if(stat(name, &buf) < 0)
-    {
-        DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("Get File Information failed");
-        fclose(fd);
-        return false;
-    }
+    ALOGV("%s Opened config %s\n", __func__, name);
 
-    mValidFile = true;
-    if (size() > 0)
-    {
-        if (bResetContent)
-        clean();
-        else
-            moveToList();
-    }
+    for (;;) {
+        c = fgetc(fd);
 
-    for (;;)
-    {
-        if (feof(fd) || fread(&c, 1, 1, fd) != 1)
-        {
-            if (state == BEGIN_LINE)
-                break;
-
-            // got to the EOF but not in BEGIN_LINE state so the file
-            // probably does not end with a newline, so the parser has
-            // not processed current line, simulate a newline in the file
-            c = '\n';
-        }
-
-        switch (state & 0xff)
-        {
+        switch (state) {
         case BEGIN_LINE:
-            if (c == '#')
-                state = END_LINE;
-            else if (isPrintable(c))
-            {
-                i = 0;
-                token.erase();
-                strValue.erase();
+            if (isPrintable(c)) {
+                token.clear();
+                numValue = 0;
+                strValue.clear();
+                arrValue.clear();
+                arrStr.clear();
                 state = TOKEN;
                 token.push_back(c);
+            } else {
+                state = END_LINE;
             }
             break;
         case TOKEN:
-            if (c == '=')
-            {
-                token.push_back('\0');
+            if (c == '=') {
                 state = BEGIN_QUOTE;
-            }
-            else if (isPrintable(c))
+            } else if (isPrintable(c)) {
                 token.push_back(c);
-            else
+            } else {
                 state = END_LINE;
+            }
             break;
         case BEGIN_QUOTE:
-            if (c == '"')
-            {
+            if (c == '"') {
                 state = STR_VALUE;
                 base = 0;
-            }
-            else if (c == '0')
+            } else if (c == '0') {
                 state = BEGIN_HEX;
-            else if (isDigit(c, 10))
-            {
+            } else if (isDigit(c, 10)) {
                 state = NUM_VALUE;
                 base = 10;
                 numValue = getDigitValue(c, base);
-                i = 0;
-            }
-            else if (c == '{')
-            {
-                state = NUM_VALUE;
-                bflag = 1;
+            } else if (c == '{') {
+                state = ARR_SPACE;
                 base = 16;
-                i = 0;
-                Set(IsStringValue);
-            }
-            else
+            } else {
                 state = END_LINE;
+            }
             break;
         case BEGIN_HEX:
-            if (c == 'x' || c == 'X')
-            {
+            if (c == 'x' || c == 'X') {
                 state = NUM_VALUE;
                 base = 16;
                 numValue = 0;
-                i = 0;
-                break;
-            }
-            else if (isDigit(c, 10))
-            {
+            } else if (isDigit(c, 10)) {
                 state = NUM_VALUE;
                 base = 10;
                 numValue = getDigitValue(c, base);
-                break;
-            }
-            else if (c != '\n' && c != '\r')
-            {
+            } else {
+                m_map.try_emplace(token, move(uwbParam(numValue)));
                 state = END_LINE;
-                break;
-            }
-            // fall through to numValue to handle numValue
-            if (isDigit(c, base))
-            {
-                numValue *= base;
-                numValue += getDigitValue(c, base);
-                ++i;
-            }
-            //else if(bflag == 1 && (c == ' ' || c == '\r' || c=='\n' || c=='\t'))
-            //{
-            //    break;
-            //}
-            //else if (base == 16 && (c== ','|| c == ':' || c == '-' || c == ' ' || c == '}'))
-            //{
-
-            //    if( c=='}' )
-            //    {
-            //        bflag = 0;
-            //    }
-            //    if (i > 0)
-            //    {
-            //        int n = (i+1) / 2;
-            //        while (n-- > 0)
-            //        {
-            //            numValue = numValue >> (n * 8);
-            //            unsigned char c = (numValue)  & 0xFF;
-            //            strValue.push_back(c);
-            //        }
-            //    }
-
-            //    Set(IsStringValue);
-            //    numValue = 0;
-            //    i = 0;
-            //}
-            else
-            {
-                if (c == '\n' || c == '\r')
-                {
-                    if(bflag == 0 )
-                    {
-                        state = BEGIN_LINE;
-                    }
-                }
-            //    else
-            //    {
-            //        if( bflag == 0)
-            //        {
-            //            state = END_LINE;
-            //        }
-            //    }
-                if (Is(IsStringValue) && base == 16 && i > 0)
-                {
-                    int n = (i+1) / 2;
-                    while (n-- > 0)
-                        strValue.push_back(((numValue >> (n * 8))  & 0xFF));
-                }
-                if (strValue.length() > 0)
-                    pParam = new uwbParam(token.c_str(), strValue);
-                else
-                    pParam = new uwbParam(token.c_str(), numValue);
-                add(pParam);
-                strValue.erase();
-                numValue = 0;
             }
             break;
-
         case NUM_VALUE:
-            if (isDigit(c, base))
-            {
+            if (isDigit(c, base)) {
                 numValue *= base;
                 numValue += getDigitValue(c, base);
-                ++i;
+            } else {m_map.try_emplace(token, move(uwbParam(numValue)));
+                state = END_LINE;
             }
-            else if(bflag == 1 && (c == ' ' || c == '\r' || c=='\n' || c=='\t'))
-            {
-                break;
+            break;
+        case ARR_SPACE:
+            if (isDigit(c, 16)) {
+                numValue = getDigitValue(c, base);
+                state = ARR_NUM;
+            } else if (c == '}') {
+                m_map.try_emplace(token, move(uwbParam(move(arrValue))));
+                state = END_LINE;
+            } else if (c == '"') {
+                state = ARR_STR;
+            } else if (c == EOF) {
+                state = END_LINE;
             }
-            else if (base == 16 && (c== ','|| c == ':' || c == '-' || c == ' ' || c == '}'))
-            {
-
-                if( c=='}' )
-                {
-                    bflag = 0;
-                }
-                if (i > 0)
-                {
-                    int n = (i+1) / 2;
-                    while (n-- > 0)
-                    {
-                        numValue = numValue >> (n * 8);
-                        unsigned char c = (numValue)  & 0xFF;
-                        strValue.push_back(c);
-                    }
-                }
-
-                Set(IsStringValue);
-                numValue = 0;
-                i = 0;
+            break;
+        case ARR_STR:
+            if (c == '"') {
+                arrStr.emplace_back(move(strValue));
+                strValue.clear();
+                state = ARR_STR_SPACE;
+            } else {
+                strValue.push_back(c);
             }
-            else
-            {
-                if (c == '\n' || c == '\r')
-                {
-                    if(bflag == 0 )
-                    {
-                        state = BEGIN_LINE;
-                    }
-                }
-                else
-                {
-                    if( bflag == 0)
-                    {
-                        state = END_LINE;
-                    }
-                }
-                if (Is(IsStringValue) && base == 16 && i > 0)
-                {
-                    int n = (i+1) / 2;
-                    while (n-- > 0)
-                        strValue.push_back(((numValue >> (n * 8))  & 0xFF));
-                }
-                if (strValue.length() > 0)
-                    pParam = new uwbParam(token.c_str(), strValue);
-                else
-                    pParam = new uwbParam(token.c_str(), numValue);
-                add(pParam);
-                strValue.erase();
-                numValue = 0;
+            break;
+        case ARR_STR_SPACE:
+            if (c == '}') {
+                m_map.try_emplace(token, move(uwbParam(move(arrStr))));
+                state = END_LINE;
+            } else if (c == '"') {
+                state = ARR_STR;
+            }
+            break;
+        case ARR_NUM:
+            if (isDigit(c, 16)) {
+                numValue *= 16;
+                numValue += getDigitValue(c, base);
+            } else if (isArrayDelimeter(c)) {
+                arrValue.push_back(numValue & 0xff);
+                state = ARR_SPACE;
+            } else {
+                state = END_LINE;
+            }
+            if (c == '}') {
+                m_map.try_emplace(token, move(uwbParam(move(arrValue))));
+                state = END_LINE;
             }
             break;
         case STR_VALUE:
-            if (c == '"')
-            {
-                strValue.push_back('\0');
+            if (c == '"') {
                 state = END_LINE;
-                pParam = new uwbParam(token.c_str(), strValue);
-                add(pParam);
-            }
-            else if (isPrintable(c))
+                m_map.try_emplace(token, move(uwbParam(strValue)));
+            } else {
                 strValue.push_back(c);
+            }
             break;
         case END_LINE:
-            if (c == '\n' || c == '\r')
-                state = BEGIN_LINE;
-            break;
+            // do nothing
         default:
             break;
         }
+        if (c == EOF)
+            break;
+        else if (state == END_LINE && (c == '\n' || c == '\r'))
+            state = BEGIN_LINE;
+        else if (c == '#')
+            state = END_LINE;
     }
 
     fclose(fd);
 
-    moveFromList();
-    return size() > 0;
+    if (m_map.size() > 0) {
+        mValidFile = true;
+    }
+
+    return mValidFile;
 }
 
 /*******************************************************************************
@@ -472,8 +387,8 @@ bool CUwbNxpConfig::readConfig(const char* name, bool bResetContent)
 **
 *******************************************************************************/
 CUwbNxpConfig::CUwbNxpConfig() :
-    mValidFile(true),
-    state(0)
+    mValidFile(false),
+    mCountrySpecific(false)
 {
 }
 
@@ -490,127 +405,64 @@ CUwbNxpConfig::~CUwbNxpConfig()
 {
 }
 
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::GetInstance()
-**
-** Description: get class singleton object
-**
-** Returns:     none
-**
-*******************************************************************************/
-CUwbNxpConfig& CUwbNxpConfig::GetInstance()
+CUwbNxpConfig::CUwbNxpConfig(const char *filepath) :
+    mValidFile(false),
+    mFilePath(filepath),
+    mCountrySpecific(false)
 {
-  static CUwbNxpConfig theInstance;
-  if (theInstance.size() == 0 && theInstance.mValidFile) {
-    string strPath;
-    if (default_nxp_config_path[0] != '\0') {
-      strPath.assign(default_nxp_config_path);
-      strPath += nxp_config_name;
-      theInstance.readConfig(strPath.c_str(), true);
-      if (!theInstance.empty()) {
-        return theInstance;
-      }
+    auto pos = mFilePath.find(sku_specifier);
+    if (pos != string::npos) {
+        char prop_str[PROPERTY_VALUE_MAX];
+        property_get(prop_name_calsku, prop_str,prop_default_calsku);
+        mFilePath.replace(pos, strlen(sku_specifier), prop_str);
     }
-  }
-  return theInstance;
+
+    // country specifier will be evaluated later in setCountry() path
+    pos = mFilePath.find(country_code_specifier);
+    if (pos == string::npos) {
+        mCurrentFile = mFilePath;
+        readConfig();
+    } else {
+        mCountrySpecific = true;
+    }
 }
 
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::getValue()
-**
-** Description: get a string value of a setting
-**
-** Returns:     true if setting exists
-**              false if setting does not exist
-**
-*******************************************************************************/
-bool CUwbNxpConfig::getValue(const char* name, char* pValue, size_t len) const
+CUwbNxpConfig::CUwbNxpConfig(CUwbNxpConfig&& config)
 {
-    const uwbParam* pParam = find(name);
-    if (pParam == NULL)
-        return false;
+    m_map = move(config.m_map);
+    mValidFile = config.mValidFile;
+    mFilePath = move(config.mFilePath);
+    mCurrentFile = move(config.mCurrentFile);
+    mCountrySpecific = config.mCountrySpecific;
 
-    if (pParam->str_len() > 0)
-    {
-        memset(pValue, 0, len);
-        memcpy(pValue, pParam->str_value(), pParam->str_len());
-        return true;
-    }
-    return false;
+    config.mValidFile = false;
 }
 
-bool CUwbNxpConfig::getValue(const char* name, char* pValue, long len,long* readlen) const
+CUwbNxpConfig& CUwbNxpConfig::operator=(CUwbNxpConfig&& config)
 {
-    const uwbParam* pParam = find(name);
-    if (pParam == NULL)
-        return false;
+    m_map = move(config.m_map);
+    mValidFile = config.mValidFile;
+    mFilePath = move(config.mFilePath);
+    mCurrentFile = move(config.mCurrentFile);
+    mCountrySpecific = config.mCountrySpecific;
 
-    if (pParam->str_len() > 0)
-    {
-        if(pParam->str_len() <= (unsigned long)len)
-        {
-            memset(pValue, 0, len);
-            memcpy(pValue, pParam->str_value(), pParam->str_len());
-            *readlen = pParam->str_len();
-        }
-        else
-        {
-            *readlen = -1;
-        }
-
-        return true;
-    }
-    return false;
+    config.mValidFile = false;
+    return *this;
 }
 
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::getValue()
-**
-** Description: get a long numerical value of a setting
-**
-** Returns:     true if setting exists
-**              false if setting does not exist
-**
-*******************************************************************************/
-bool CUwbNxpConfig::getValue(const char* name, unsigned long& rValue) const
+void CUwbNxpConfig::setCountry(const string& strCountry)
 {
-    const uwbParam* pParam = find(name);
-    if (pParam == NULL)
-        return false;
+    if (!isCountrySpecific())
+        return;
 
-    if (pParam->str_len() == 0)
-    {
-        rValue = static_cast<unsigned long>(pParam->numValue());
-        return true;
+    mCurrentFile = mFilePath;
+    auto pos = mCurrentFile.find(country_code_specifier);
+    if (pos == string::npos) {
+        return;
     }
-    return false;
-}
 
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::getValue()
-**
-** Description: get a short numerical value of a setting
-**
-** Returns:     true if setting exists
-**              false if setting does not exist
-**
-*******************************************************************************/
-bool CUwbNxpConfig::getValue(const char* name, unsigned short& rValue) const
-{
-    const uwbParam* pParam = find(name);
-    if (pParam == NULL)
-        return false;
-
-    if (pParam->str_len() == 0)
-    {
-        rValue = static_cast<unsigned short>(pParam->numValue());
-        return true;
-    }
-    return false;
+    mCurrentFile.replace(pos, strlen(country_code_specifier), strCountry);
+    readConfig();
 }
 
 /*******************************************************************************
@@ -624,99 +476,14 @@ bool CUwbNxpConfig::getValue(const char* name, unsigned short& rValue) const
 *******************************************************************************/
 const uwbParam* CUwbNxpConfig::find(const char* p_name) const
 {
-    if (size() == 0)
+    const auto it = m_map.find(p_name);
+
+    if (it == m_map.cend()) {
         return NULL;
-
-    for (const_iterator it = begin(), itEnd = end(); it != itEnd; ++it)
-    {
-        if (**it < p_name)
-        {
-            continue;
-        }
-        else if (**it == p_name)
-        {
-            if((*it)->str_len() > 0)
-            {
-                DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("%s found %s=%s\n", __func__, p_name, (*it)->str_value());
-            }
-            else
-            {
-                DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("%s found %s=(0x%lx)\n", __func__, p_name, (*it)->numValue());
-            }
-            return *it;
-        }
-        else
-            break;
     }
-    return NULL;
-}
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::readNxpPHYConfig()
-**
-** Description: read Config settings from RF conf file
-**
-** Returns:     none
-**
-*******************************************************************************/
-void CUwbNxpConfig::readNxpConfig(const char* fileName) const
-{
-    DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("readNxpConfig-Enter..Reading");
-    CUwbNxpConfig::GetInstance().readConfig(fileName, false);
-}
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::clean()
-**
-** Description: reset the setting array
-**
-** Returns:     none
-**
-*******************************************************************************/
-void CUwbNxpConfig::clean()
-{
-    if (size() == 0)
-        return;
-
-    for (iterator it = begin(), itEnd = end(); it != itEnd; ++it)
-        delete *it;
-    clear();
+    return &it->second;
 }
 
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::Add()
-**
-** Description: add a setting object to the list
-**
-** Returns:     none
-**
-*******************************************************************************/
-void CUwbNxpConfig::add(const uwbParam* pParam)
-{
-    if (m_list.size() == 0)
-    {
-        m_list.push_back(pParam);
-        return;
-    }
-    if((mCurrentFile.find("nxpPhy") != std::string::npos) && !isAllowed(pParam->c_str()))
-    {
-        DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("%s Token restricted. Returning", __func__);
-        return;
-    }
-    for (list<const uwbParam*>::iterator it = m_list.begin(), itEnd = m_list.end(); it != itEnd; ++it)
-    {
-        if (**it < pParam->c_str())
-            continue;
-        if (**it == pParam->c_str())
-            m_list.insert(m_list.erase(it), pParam);
-        else
-            m_list.insert(it, pParam);
-
-        return;
-    }
-    m_list.push_back(pParam);
-}
 /*******************************************************************************
 **
 ** Function:    CUwbNxpConfig::dump()
@@ -726,195 +493,436 @@ void CUwbNxpConfig::add(const uwbParam* pParam)
 ** Returns:     none
 **
 *******************************************************************************/
-void CUwbNxpConfig::dump()
+void CUwbNxpConfig::dump() const
 {
-    DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("%s Enter", __func__);
+    ALOGV("Dump configuration file %s : %s, %zu entries", mCurrentFile.c_str(),
+        mValidFile ? "valid" : "invalid", m_map.size());
 
-    for (list<const uwbParam*>::iterator it = m_list.begin(), itEnd = m_list.end(); it != itEnd; ++it)
-    {
-        if((*it)->str_len()>0)
-            DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("%s %s \t= %s", __func__, (*it)->c_str(),(*it)->str_value());
-        else
-            DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("%s %s \t= (0x%0lX)\n", __func__,(*it)->c_str(),(*it)->numValue());
+    for (auto &it : m_map) {
+        auto &key = it.first;
+        auto &param = it.second;
+        param.dump(key);
     }
 }
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::isAllowed()
-**
-** Description: checks if token update is allowed
-**
-** Returns:     true if allowed else false
-**
-*******************************************************************************/
-bool CUwbNxpConfig::isAllowed(const char* name)
-{
-    string token(name);
-    bool stat = false;
-    return stat;
-}
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::moveFromList()
-**
-** Description: move the setting object from list to array
-**
-** Returns:     none
-**
-*******************************************************************************/
-void CUwbNxpConfig::moveFromList()
-{
-    if (m_list.size() == 0)
-        return;
 
-    for (list<const uwbParam*>::iterator it = m_list.begin(), itEnd = m_list.end(); it != itEnd; ++it)
-        push_back(*it);
-    m_list.clear();
-}
-
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::moveToList()
-**
-** Description: move the setting object from array to list
-**
-** Returns:     none
-**
-*******************************************************************************/
-void CUwbNxpConfig::moveToList()
-{
-    if (m_list.size() != 0)
-        m_list.clear();
-
-    for (iterator it = begin(), itEnd = end(); it != itEnd; ++it)
-        m_list.push_back(*it);
-    clear();
-}
-
-/*******************************************************************************
-**
-** Function:    uwbParam::uwbParam()
-**
-** Description: class constructor
-**
-** Returns:     none
-**
-*******************************************************************************/
+/*******************************************************************************/
 uwbParam::uwbParam() :
-    m_numValue(0)
+    m_numValue(0),
+    m_type(type::NUMBER)
 {
 }
 
-/*******************************************************************************
-**
-** Function:    uwbParam::~uwbParam()
-**
-** Description: class destructor
-**
-** Returns:     none
-**
-*******************************************************************************/
 uwbParam::~uwbParam()
 {
 }
 
-/*******************************************************************************
-**
-** Function:    uwbParam::uwbParam()
-**
-** Description: class copy constructor
-**
-** Returns:     none
-**
-*******************************************************************************/
-uwbParam::uwbParam(const char* name,  const string& value) :
-    string(name),
+uwbParam::uwbParam(const uwbParam &param) :
+    m_numValue(param.m_numValue),
+    m_str_value(param.m_str_value),
+    m_arrValue(param.m_arrValue),
+    m_arrStrValue(param.m_arrStrValue),
+    m_type(param.m_type)
+{
+}
+
+uwbParam::uwbParam(uwbParam &&param) :
+    m_numValue(param.m_numValue),
+    m_str_value(move(param.m_str_value)),
+    m_arrValue(move(param.m_arrValue)),
+    m_arrStrValue(move(param.m_arrStrValue)),
+    m_type(param.m_type)
+{
+}
+
+uwbParam::uwbParam(const string& value) :
+    m_numValue(0),
     m_str_value(value),
-    m_numValue(0)
+    m_type(type::STRING)
 {
+}
+
+uwbParam::uwbParam(unsigned long value) :
+    m_numValue(value),
+    m_type(type::NUMBER)
+{
+}
+
+uwbParam::uwbParam(vector<uint8_t> &&value) :
+    m_arrValue(move(value)),
+    m_type(type::BYTEARRAY)
+{
+}
+
+uwbParam::uwbParam(vector<string> &&value) :
+    m_arrStrValue(move(value)),
+    m_type(type::STRINGARRAY)
+{
+}
+
+
+void uwbParam::dump(const string &tag) const
+{
+    if (m_type == type::NUMBER) {
+        ALOGV(" - %s = 0x%lx", tag.c_str(), m_numValue);
+    } else if (m_type == type::STRING) {
+        ALOGV(" - %s = %s", tag.c_str(), m_str_value.c_str());
+    } else if (m_type == type::BYTEARRAY) {
+        stringstream ss_hex;
+        ss_hex.fill('0');
+        for (auto b : m_arrValue) {
+            ss_hex << setw(2) << hex << (int)b << " ";
+        }
+        ALOGV(" - %s = { %s}", tag.c_str(), ss_hex.str().c_str());
+    } else if (m_type == type::STRINGARRAY) {
+        stringstream ss;
+        for (auto s : m_arrStrValue) {
+            ss << "\"" << s << "\", ";
+        }
+        ALOGV(" - %s = { %s}", tag.c_str(), ss.str().c_str());
+    }
+}
+/*******************************************************************************/
+class RegionCodeMap {
+public:
+    void loadMapping(const char *filepath) {
+        CUwbNxpConfig config(filepath);
+        if (!config.isValid()) {
+            ALOGW("Region mapping was not provided.");
+            return;
+        }
+
+        ALOGI("Region mapping was provided by %s", filepath);
+        auto &all_params = config.get_data();
+        for (auto &it : all_params) {
+            const auto &region_str = it.first;
+            const uwbParam *param = &it.second;
+
+            // split space-separated strings into set
+            stringstream ss(param->str_value());
+            string cc;
+            unordered_set<string> cc_set;
+            while (ss >> cc) {
+              if (cc.length() == 2 && isupper(cc[0]) && isupper(cc[1])) {
+                cc_set.emplace(move(cc));
+              }
+            }
+            auto result = m_map.try_emplace(region_str, move(cc_set));
+            if (!result.second) {
+              // region conlifct : merge
+              result.first->second.merge(move(cc_set));
+            }
+        }
+        m_config = move(config);
+    }
+    string xlateCountryCode(const char country_code[2]) {
+        string code{country_code[0], country_code[1]};
+        if (m_config.isValid()) {
+            for (auto &it : m_map) {
+                const auto &region_str = it.first;
+                const auto &cc_set = it.second;
+                if (cc_set.find(code) != cc_set.end()) {
+                    ALOGV("map country code %c%c --> %s",
+                            country_code[0], country_code[1], region_str.c_str());
+                    return region_str;
+                }
+            }
+        }
+        return code;
+    }
+    void reset() {
+        m_config.reset();
+        m_map.clear();
+    }
+    void dump() {
+        ALOGV("Region mapping dump:");
+        for (auto &entry : m_map) {
+            const auto &region_str = entry.first;
+            const auto &cc_set = entry.second;
+            stringstream ss;
+            for (const auto s : cc_set) {
+                ss << "\"" << s << "\", ";
+            }
+            ALOGV("- %s = { %s}", region_str.c_str(), ss.str().c_str());
+        }
+    }
+private:
+    CUwbNxpConfig m_config;
+    unordered_map<string, unordered_set<string>> m_map;
+};
+
+/*******************************************************************************/
+class CascadeConfig {
+public:
+    CascadeConfig();
+
+    void init(const char *main_config);
+    void deinit();
+    bool setCountryCode(const char country_code[2]);
+
+    const uwbParam* find(const char *name)  const;
+    bool    getValue(const char* name, char* pValue, size_t len) const;
+    bool    getValue(const char* name, unsigned long& rValue) const;
+    bool    getValue(const char* name, uint8_t* pValue, long len, long* readlen) const;
+private:
+    // default_nxp_config_path
+    CUwbNxpConfig mMainConfig;
+
+    // uci config
+    CUwbNxpConfig mUciConfig;
+
+    // EXTRA_CONF_PATH[N]
+    vector<CUwbNxpConfig> mExtraConfig;
+
+    // [COUNTRY_CODE_CAP_FILE_LOCATION]/country_code_config_name
+    CUwbNxpConfig mCapsConfig;
+
+    // Region Code mapping
+    RegionCodeMap mRegionMap;
+
+    // Current region code
+    string mCurRegionCode;
+
+    void dump() {
+        mMainConfig.dump();
+        mUciConfig.dump();
+
+        for (const auto &config : mExtraConfig)
+            config.dump();
+
+        mCapsConfig.dump();
+        mRegionMap.dump();
+    }
+};
+
+CascadeConfig::CascadeConfig()
+{
+}
+
+void CascadeConfig::init(const char *main_config)
+{
+    ALOGV("CascadeConfig initialize with %s", main_config);
+
+    // Main config file
+    CUwbNxpConfig config(main_config);
+    if (!config.isValid()) {
+        ALOGW("Failed to load main config file");
+        return;
+    }
+    mMainConfig = move(config);
+
+    {
+        // UCI config file
+        std::string uciConfigFilePath = default_uci_config_path;
+        uciConfigFilePath += nxp_uci_config_file;
+
+        CUwbNxpConfig config(uciConfigFilePath.c_str());
+        if (!config.isValid()) {
+            ALOGW("Failed to load uci config file:%s",
+                    uciConfigFilePath.c_str());
+        } else {
+            mUciConfig = move(config);
+        }
+    }
+
+    // Read EXTRA_CONF_PATH[N]
+    for (int i = 1; i <= 10; i++) {
+        char key[32];
+        snprintf(key, sizeof(key), "EXTRA_CONF_PATH_%d", i);
+        const uwbParam *param = mMainConfig.find(key);
+        if (!param)
+            continue;
+        CUwbNxpConfig config(param->str_value());
+        ALOGD("Extra calibration file %s : %svalid", param->str_value(), config.isValid() ? "" : "in");
+        if (config.isValid() || config.isCountrySpecific()) {
+            mExtraConfig.emplace_back(move(config));
+        }
+    }
+
+    // Pick one libuwb-countrycode.conf with the highest VERSION number
+    // from multiple directories specified by COUNTRY_CODE_CAP_FILE_LOCATION
+    unsigned long arrLen = 0;
+    if (NxpConfig_GetStrArrayLen(NAME_COUNTRY_CODE_CAP_FILE_LOCATION, &arrLen) && arrLen > 0) {
+        const long loc_max_len = 260;
+        auto loc = make_unique<char[]>(loc_max_len);
+        int version, max_version = -1;
+        string strPickedPath;
+        bool foundCapFile = false;
+        CUwbNxpConfig pickedConfig;
+
+        for (int i = 0; i < arrLen; i++) {
+            if (!NxpConfig_GetStrArrayVal(NAME_COUNTRY_CODE_CAP_FILE_LOCATION, i, loc.get(), loc_max_len)) {
+                continue;
+            }
+            string strPath(loc.get());
+            strPath += country_code_config_name;
+
+            ALOGV("Try to load %s", strPath.c_str());
+
+            CUwbNxpConfig config(strPath.c_str());
+
+            const uwbParam *param = config.find(NAME_NXP_COUNTRY_CODE_VERSION);
+            version = param ? atoi(param->str_value()) : -2;
+            if (version > max_version) {
+                foundCapFile = true;
+                pickedConfig = move(config);
+                strPickedPath = move(strPath);
+                max_version = version;
+            }
+        }
+        if (foundCapFile) {
+            mCapsConfig = move(pickedConfig);
+            ALOGI("CountryCodeCaps file %s loaded with VERSION=%d", strPickedPath.c_str(), max_version);
+        } else {
+            ALOGI("No CountryCodeCaps specified");
+        }
+    } else {
+        ALOGI(NAME_COUNTRY_CODE_CAP_FILE_LOCATION " was not specified, skip loading CountryCodeCaps");
+    }
+
+    // Load region mapping
+    const uwbParam *param = find(NAME_REGION_MAP_PATH);
+    if (param) {
+        mRegionMap.loadMapping(param->str_value());
+    }
+
+    ALOGD("CascadeConfig initialized");
+
+    dump();
+}
+
+void CascadeConfig::deinit()
+{
+    mMainConfig.reset();
+    mExtraConfig.clear();
+    mCapsConfig.reset();
+    mRegionMap.reset();
+    mUciConfig.reset();
+    mCurRegionCode.clear();
+}
+
+bool CascadeConfig::setCountryCode(const char country_code[2])
+{
+    string strRegion = mRegionMap.xlateCountryCode(country_code);
+
+    if (strRegion == mCurRegionCode) {
+        ALOGI("Same region code(%c%c --> %s), per-country configuration not updated.",
+              country_code[0], country_code[1], strRegion.c_str());
+        return false;
+    }
+
+    ALOGI("Apply country code %c%c --> %s\n", country_code[0], country_code[1], strRegion.c_str());
+    mCurRegionCode = strRegion;
+    for (auto &x : mExtraConfig) {
+        if (x.isCountrySpecific()) {
+            x.setCountry(mCurRegionCode);
+            x.dump();
+        }
+    }
+    return true;
+}
+
+const uwbParam* CascadeConfig::find(const char *name) const
+{
+    const uwbParam* param = NULL;
+
+    param = mCapsConfig.find(name);
+    if (param)
+      return param;
+
+    for (auto it = mExtraConfig.rbegin(); it != mExtraConfig.rend(); it++) {
+        param = it->find(name);
+        if (param)
+            break;
+    }
+    if (!param) {
+        param = mMainConfig.find(name);
+    }
+    if (!param) {
+        param = mUciConfig.find(name);
+    }
+    return param;
+}
+
+// TODO: move these getValue() helpers out of the class
+bool CascadeConfig::getValue(const char* name, char* pValue, size_t len) const
+{
+    const uwbParam *param = find(name);
+    if (!param)
+        return false;
+    if (param->getType() != uwbParam::type::STRING)
+        return false;
+    if (len < (param->str_len() + 1))
+        return false;
+
+    strncpy(pValue, param->str_value(), len);
+    return true;
+}
+
+bool CascadeConfig::getValue(const char* name, uint8_t* pValue, long len, long* readlen) const
+{
+    const uwbParam *param = find(name);
+    if (!param)
+        return false;
+    if (param->getType() != uwbParam::type::BYTEARRAY)
+        return false;
+    if (len < param->arr_len())
+        return false;
+    memcpy(pValue, param->arr_value(), param->arr_len());
+    if (readlen)
+        *readlen = param->arr_len();
+    return true;
+}
+
+bool CascadeConfig::getValue(const char* name, unsigned long& rValue) const
+{
+    const uwbParam *param = find(name);
+    if (!param)
+        return false;
+    if (param->getType() != uwbParam::type::NUMBER)
+        return false;
+
+    rValue = param->numValue();
+    return true;
+}
+
+/*******************************************************************************/
+
+static CascadeConfig gConfig;
+
+void NxpConfig_Init(void)
+{
+    gConfig.init(default_nxp_config_path);
+}
+
+void NxpConfig_Deinit(void)
+{
+    gConfig.deinit();
+}
+
+// return true if new per-country configuration file was load.
+//        false if it can stay at the current configuration.
+bool NxpConfig_SetCountryCode(const char country_code[2])
+{
+    return gConfig.setCountryCode(country_code);
 }
 
 /*******************************************************************************
 **
-** Function:    uwbParam::uwbParam()
-**
-** Description: class copy constructor
-**
-** Returns:     none
-**
-*******************************************************************************/
-uwbParam::uwbParam(const char* name,  unsigned long value) :
-    string(name),
-    m_numValue(value)
-{
-}
-
-/*******************************************************************************
-**
-** Function:    readOptionalConfig()
-**
-** Description: read Config settings from an optional conf file
-**
-** Returns:     none
-**
-*******************************************************************************/
-void readOptionalConfig(const char* extra)
-{
-    string strPath;
-    if (alternative_config_path[0] != '\0')
-        strPath.assign(alternative_config_path);
-
-    strPath += extra_config_base;
-    strPath += extra;
-    strPath += extra_config_ext;
-    CUwbNxpConfig::GetInstance().readConfig(strPath.c_str(), false);
-}
-
-/*******************************************************************************
-**
-** Function:    GetStrValue
+** Function:    NxpConfig_GetStr
 **
 ** Description: API function for getting a string value of a setting
 **
 ** Returns:     True if found, otherwise False.
 **
 *******************************************************************************/
-extern "C" int GetNxpConfigStrValue(const char* name, char* pValue, unsigned long len)
+int NxpConfig_GetStr(const char* name, char* pValue, unsigned long len)
 {
-    CUwbNxpConfig& rConfig = CUwbNxpConfig::GetInstance();
-
-    return rConfig.getValue(name, pValue, len);
+    return gConfig.getValue(name, pValue, len);
 }
 
 /*******************************************************************************
 **
-** Function:    GetNxpConfigCountryCodeByteArrayValue()
-**
-** Description: Read byte array value from the config file.
-**
-** Parameters:
-**              name    - name of the config param to read.
-**              fName   - name of the Country code.
-**              pValue  - pointer to input buffer.
-**              bufflen - input buffer length.
-**              len     - out parameter to return the number of bytes read from config file,
-**                        return -1 in case bufflen is not enough.
-**
-** Returns:     TRUE[1] if config param name is found in the config file, else FALSE[0]
-**
-*******************************************************************************/
-extern "C" int GetNxpConfigCountryCodeByteArrayValue(const char* name,const char* fName, char* pValue,long bufflen, long *len)
-{
-    DLOG_IF(INFO, true) << StringPrintf("GetNxpConfigCountryCodeByteArrayValue enter....");
-    CUwbNxpConfig& rConfig = CUwbNxpConfig::GetInstance();
-    readOptionalConfig(fName);
-    DLOG_IF(INFO, true) << StringPrintf("GetNxpConfigCountryCodeByteArrayValue exit....");
-    return rConfig.getValue(name, pValue, bufflen,len);
-}
-
-/*******************************************************************************
-**
-** Function:    GetNxpConfigUciByteArrayValue()
+** Function:    NxpConfig_GetByteArray()
 **
 ** Description: Read byte array value from the config file.
 **
@@ -928,72 +936,33 @@ extern "C" int GetNxpConfigCountryCodeByteArrayValue(const char* name,const char
 ** Returns:     TRUE[1] if config param name is found in the config file, else FALSE[0]
 **
 *******************************************************************************/
-extern "C" int GetNxpConfigUciByteArrayValue(const char* name, char* pValue,long bufflen, long *len)
+int NxpConfig_GetByteArray(const char* name, uint8_t* pValue, long bufflen, long *len)
 {
-    DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("GetNxpConfigUciByteArrayValue enter....");
-    CUwbNxpConfig& rConfig = CUwbNxpConfig::GetInstance();
-    rConfig.readNxpConfig(nxp_uci_config_path);
-    DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("GetNxpConfigUciByteArrayValue exit....");
-    return rConfig.getValue(name, pValue, bufflen,len);
+    return gConfig.getValue(name, pValue, bufflen,len);
 }
 
 /*******************************************************************************
 **
-** Function:    GetNxpByteArrayValue()
-**
-** Description: Read byte array value from the config file.
-**
-** Parameters:
-**              name    - name of the config param to read.
-**              pValue  - pointer to input buffer.
-**              bufflen - input buffer length.
-**              len     - out parameter to return the number of bytes read from config file,
-**                        return -1 in case bufflen is not enough.
-**
-** Returns:     TRUE[1] if config param name is found in the config file, else FALSE[0]
-**
-*******************************************************************************/
-extern "C" int GetNxpConfigByteArrayValue(const char* name, char* pValue,long bufflen, long *len)
-{
-    DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("GetNxpConfigByteArrayValue enter....");
-    CUwbNxpConfig& rConfig = CUwbNxpConfig::GetInstance();
-    rConfig.readNxpConfig(default_nxp_config_path);
-    DLOG_IF(INFO, uwb_debug_enabled) << StringPrintf("GetNxpConfigByteArrayValue1 enter....");
-    return rConfig.getValue(name, pValue, bufflen,len);
-}
-
-/*******************************************************************************
-**
-** Function:    GetNumValue
+** Function:    NxpConfig_GetNum
 **
 ** Description: API function for getting a numerical value of a setting
 **
 ** Returns:     true, if successful
 **
 *******************************************************************************/
-extern "C" int GetNxpConfigNumValue(const char* name, void* pValue, unsigned long len)
+int NxpConfig_GetNum(const char* name, void* pValue, unsigned long len)
 {
-    DLOG_IF(INFO, true) << StringPrintf("GetNxpConfigNumValue... enter....");
     if (pValue == NULL){
         return false;
     }
-    CUwbNxpConfig& rConfig = CUwbNxpConfig::GetInstance();
-    const uwbParam* pParam = rConfig.find(name);
+    const uwbParam* pParam = gConfig.find(name);
 
     if (pParam == NULL)
         return false;
-    unsigned long v = pParam->numValue();
-    unsigned int strLen = (unsigned int)pParam->str_len();
-    if (v == 0 && strLen > 0 && strLen < 4)
-    {
-        const unsigned char* p = (const unsigned char*)pParam->str_value();
-        for (unsigned int i = 0 ; i < strLen; ++i)
-        {
-            v *= 256;
-            v += *p++;
-        }
-    }
+    if (pParam->getType() != uwbParam::type::NUMBER)
+        return false;
 
+    unsigned long v = pParam->numValue();
     switch (len)
     {
     case sizeof(unsigned long):
@@ -1006,8 +975,33 @@ extern "C" int GetNxpConfigNumValue(const char* name, void* pValue, unsigned lon
         *(static_cast<unsigned char*> (pValue)) = (unsigned char)v;
         break;
     default:
-    DLOG_IF(INFO, true) << StringPrintf("GetNxpConfigNumValue default");
         return false;
     }
+    return true;
+}
+
+// Get the length of a 'string-array' type parameter
+int NxpConfig_GetStrArrayLen(const char* name, unsigned long* pLen)
+{
+    const uwbParam* param = gConfig.find(name);
+    if (!param || param->getType() != uwbParam::type::STRINGARRAY)
+        return false;
+
+    *pLen = param->str_arr_len();
+    return true;
+}
+
+// Get a string value from 'string-array' type parameters, index zero-based
+int NxpConfig_GetStrArrayVal(const char* name, int index, char* pValue, unsigned long len)
+{
+    const uwbParam* param = gConfig.find(name);
+    if (!param || param->getType() != uwbParam::type::STRINGARRAY)
+        return false;
+    if (index < 0 || index >= param->str_arr_len())
+        return false;
+
+    if (len < param->str_arr_elem_len(index) + 1)
+        return false;
+    strncpy(pValue, param->str_arr_elem(index), len);
     return true;
 }

@@ -1,6 +1,8 @@
 /*
  * Copyright 2021, The Android Open Source Project
  *
+ * Copyright 2023 NXP
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -28,8 +30,19 @@ namespace impl {
 using namespace ::aidl::android::hardware::uwb;
 
 UwbChip::UwbChip(const std::string& name) : name_(name){};
-std::shared_ptr<IUwbClientCallback> UwbChip:: mClientCallback = nullptr;
+std::shared_ptr<IUwbClientCallback> UwbChip::mClientCallback = nullptr;
+AIBinder_DeathRecipient *mClientDeathRecipient = nullptr;
 UwbChip::~UwbChip() {}
+
+void onServiceDied(void *cookie) {
+  if (UwbChip::mClientCallback != nullptr &&
+      !AIBinder_isAlive(UwbChip::mClientCallback->asBinder().get())) {
+    LOG(INFO)
+        << "UWB framework service died. Hence closing the UwbChip connection.";
+    UwbChip *uwbChip = static_cast<UwbChip *>(cookie);
+    uwbChip->close();
+  }
+}
 
 ::ndk::ScopedAStatus UwbChip::getName(std::string* name) {
     *name = name_;
@@ -44,22 +57,34 @@ UwbChip::~UwbChip() {}
         LOG(ERROR) << "AIDL-HAL open clientCallback is null......";
         return ndk::ScopedAStatus::fromExceptionCode(EX_ILLEGAL_ARGUMENT);
       }
+      mClientDeathRecipient = AIBinder_DeathRecipient_new(onServiceDied);
+      auto linkRet =
+          AIBinder_linkToDeath(clientCallback->asBinder().get(),
+                               mClientDeathRecipient, this /* cookie */);
+      if (linkRet == STATUS_OK) {
+        LOG(INFO) << "AIDL-linkToDeath succeed: " << linkRet;
+      } else {
+        LOG(ERROR) << "AIDL-linkToDeath failed: " << linkRet;
+      }
       int status = phNxpUciHal_open(eventCallback, dataCallback);
       LOG(INFO) << "AIDL-open Exit" << status;
       return ndk::ScopedAStatus::ok();
 }
 
 ::ndk::ScopedAStatus UwbChip::close() {
-     LOG(INFO) << "AIDL-Close Enter";
-     if (mClientCallback == nullptr) {
+      LOG(INFO) << "AIDL-Close Enter";
+      if (mClientCallback == nullptr) {
         LOG(ERROR) << "AIDL-HAL close mCallback is null......";
-        return ndk::ScopedAStatus(AStatus_fromExceptionCode(EX_UNSUPPORTED_OPERATION));
+        return ndk::ScopedAStatus(
+            AStatus_fromExceptionCode(EX_UNSUPPORTED_OPERATION));
       }
-     phNxpUciHal_close();
-     if (mClientCallback != nullptr) {
-       mClientCallback = nullptr;
-     }
-     return ndk::ScopedAStatus::ok();
+      phNxpUciHal_close();
+      if (mClientCallback != nullptr) {
+        mClientCallback = nullptr;
+      }
+      AIBinder_DeathRecipient_delete(mClientDeathRecipient);
+      mClientDeathRecipient = nullptr;
+      return ndk::ScopedAStatus::ok();
 }
 
 ::ndk::ScopedAStatus UwbChip::coreInit() {

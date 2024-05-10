@@ -41,7 +41,6 @@ extern phNxpUciHal_Control_t nxpucihal_ctrl;
 #define PH_UWB_TIMER_ID_INVALID (0xFFFF)
 
 /* Forward declarations */
-static void phOsalUwb_PostTimerMsg(phLibUwb_Message_t* pMsg);
 static void phOsalUwb_DeferredCall(void* pParams);
 static void phOsalUwb_Timer_Expired(union sigval sv);
 
@@ -341,30 +340,6 @@ static void phOsalUwb_DeferredCall(void* pParams) {
 
 /*******************************************************************************
 **
-** Function         phOsalUwb_PostTimerMsg
-**
-** Description      Posts message on the user thread
-**                  Shall be invoked upon expiration of a timer
-**                  Shall post message on user thread through which timer
-**                  callback function shall be invoked
-**
-** Parameters       pMsg - pointer to the message structure posted on user
-**                         thread
-**
-** Returns          None
-**
-*******************************************************************************/
-static void phOsalUwb_PostTimerMsg(phLibUwb_Message_t* pMsg) {
-  (void)phDal4Uwb_msgsnd(
-      nxpucihal_ctrl.gDrvCfg
-          .nClientId /*gpphOsalUwb_Context->dwCallbackThreadID*/,
-      pMsg, 0);
-
-  return;
-}
-
-/*******************************************************************************
-**
 ** Function         phOsalUwb_Timer_Expired
 **
 ** Description      posts message upon expiration of timer
@@ -384,16 +359,12 @@ static void phOsalUwb_Timer_Expired(union sigval sv) {
   /* Timer is stopped when callback function is invoked */
   pTimerHandle->eState = eTimerStopped;
 
-  pTimerHandle->tDeferedCallInfo.pDeferedCall = &phOsalUwb_DeferredCall;
-  pTimerHandle->tDeferedCallInfo.pParam = (void*)((intptr_t)(sv.sival_int));
-
-  pTimerHandle->tOsalMessage.eMsgType = PH_LIBUWB_DEFERREDCALL_MSG;
-  pTimerHandle->tOsalMessage.pMsgData = (void*)&pTimerHandle->tDeferedCallInfo;
+  pTimerHandle->tDeferredCallInfo.pDeferredCall = &phOsalUwb_DeferredCall;
+  pTimerHandle->tDeferredCallInfo.pParam = (void*)((intptr_t)(sv.sival_int));
 
   /* Post a message on the queue to invoke the function */
-  phOsalUwb_PostTimerMsg((phLibUwb_Message_t*)&pTimerHandle->tOsalMessage);
-
-  return;
+  auto msg = std::make_shared<phLibUwb_Message>(PH_LIBUWB_DEFERREDCALL_MSG, &pTimerHandle->tDeferredCallInfo);
+  nxpucihal_ctrl.gDrvCfg.pClientMq->send(msg);
 }
 
 /*******************************************************************************
