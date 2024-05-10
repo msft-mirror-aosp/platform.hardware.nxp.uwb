@@ -106,7 +106,6 @@ typedef struct phTmlUwb_Context {
   phTmlUwb_ReadWriteInfo_t tWriteInfo; /*Pointer to Writer Thread Structure */
   void* pDevHandle;                    /* Pointer to Device Handle */
   std::shared_ptr<MessageQueue<phLibUwb_Message>> pClientMq; /* Pointer to Client thread message queue */
-  uint8_t bEnableCrc;           /*Flag to validate/not CRC for input buffer */
   sem_t rxSemaphore;
   sem_t txSemaphore;      /* Lock/Acquire txRx Semaphore */
 
