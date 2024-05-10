@@ -53,7 +53,6 @@ extern void setDeviceHandle(void* pDevHandle);
 static void phTmlUwb_WaitWriteComplete(void);
 static void phTmlUwb_SignalWriteComplete(void);
 static int phTmlUwb_WaitReadInit(void);
-static int phTmlUwb_ReadAbortInit(void);
 
 /* Function definitions */
 
@@ -120,8 +119,6 @@ tHAL_UWB_STATUS phTmlUwb_Init(const char* pDevName, std::shared_ptr<MessageQueue
         } else if (0 != sem_init(&gpphTmlUwb_Context->txSemaphore, 0, 0)) {
           wInitStatus = UWBSTATUS_FAILED;
         } else if(0 != phTmlUwb_WaitReadInit()) {
-           wInitStatus = UWBSTATUS_FAILED;
-        } else if(0 != phTmlUwb_ReadAbortInit()) {
            wInitStatus = UWBSTATUS_FAILED;
         } else {
           /* Start TML thread (to handle write and read operations) */
@@ -196,29 +193,13 @@ static void* phTmlUwb_TmlReaderThread(void* pParam)
 
     if (-1 == dwNoBytesWrRd) {
       NXPLOG_TML_E("TmlReader: Error in SPI Read");
-      pthread_mutex_lock(&gpphTmlUwb_Context->read_abort_lock);
-      if(gpphTmlUwb_Context->is_read_abort) {
-        pthread_cond_signal(&gpphTmlUwb_Context->read_abort_condition);
-        gpphTmlUwb_Context->is_read_abort = false;
-      }
-      else {
-        sem_post(&gpphTmlUwb_Context->rxSemaphore);
-      }
-      pthread_mutex_unlock(&gpphTmlUwb_Context->read_abort_lock);
+      sem_post(&gpphTmlUwb_Context->rxSemaphore);
     } else if (dwNoBytesWrRd > UCI_MAX_DATA_LEN) {
       NXPLOG_TML_E("TmlReader: Numer of bytes read exceeds the limit");
       sem_post(&gpphTmlUwb_Context->rxSemaphore);
     } else if(0 == dwNoBytesWrRd) {
       NXPLOG_TML_E("TmlReader: Empty packet Read, Ignore read and try new read");
-      pthread_mutex_lock(&gpphTmlUwb_Context->read_abort_lock);
-      if(gpphTmlUwb_Context->is_read_abort) {
-        pthread_cond_signal(&gpphTmlUwb_Context->read_abort_condition);
-        gpphTmlUwb_Context->is_read_abort = false;
-      }
-      else {
-        sem_post(&gpphTmlUwb_Context->rxSemaphore);
-      }
-      pthread_mutex_unlock(&gpphTmlUwb_Context->read_abort_lock);
+      sem_post(&gpphTmlUwb_Context->rxSemaphore);
     } else {
       memcpy(gpphTmlUwb_Context->tReadInfo.pBuffer, temp, dwNoBytesWrRd);
 
@@ -544,9 +525,7 @@ tHAL_UWB_STATUS phTmlUwb_StartRead(uint8_t* pBuffer, uint16_t wLength,
   gpphTmlUwb_Context->tReadInfo.pContext = pContext;
 
   /* Set first event to invoke Reader Thread */
-  if(gpphTmlUwb_Context->is_read_abort != true) {
-    sem_post(&gpphTmlUwb_Context->rxSemaphore); // To be enabled later
-  }
+  sem_post(&gpphTmlUwb_Context->rxSemaphore);
 
   /* Create Reader threads */
   gpphTmlUwb_Context->tReadInfo.bThreadShouldStop = false;
@@ -764,32 +743,6 @@ static int phTmlUwb_WaitReadInit(void) {
   ret = pthread_cond_init(&gpphTmlUwb_Context->wait_busy_condition, &attr);
   if (ret) {
     NXPLOG_TML_E(" phTmlUwb_WaitReadInit failed, error = 0x%X", ret);
-  }
-  return ret;
-}
-
-/*******************************************************************************
-**
-** Function         phTmlUwb_ReadAbortInit
-**
-** Description      init function read abort context
-**
-** Parameters       None
-**
-** Returns          int
-**
-*******************************************************************************/
-static int phTmlUwb_ReadAbortInit(void) {
-  int ret;
-  pthread_condattr_t attr;
-  pthread_condattr_init(&attr);
-  pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
-  memset(&gpphTmlUwb_Context->read_abort_condition, 0,
-         sizeof(gpphTmlUwb_Context->read_abort_condition));
-  pthread_mutex_init(&gpphTmlUwb_Context->read_abort_lock, NULL);
-  ret = pthread_cond_init(&gpphTmlUwb_Context->read_abort_condition, &attr);
-  if (ret) {
-    NXPLOG_TML_E(" phTmlUwb_ReadAbortInit failed, error = 0x%X", ret);
   }
   return ret;
 }
