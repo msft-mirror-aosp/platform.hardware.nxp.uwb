@@ -157,9 +157,6 @@ tHAL_UWB_STATUS phTmlUwb_Init(const char* pDevName, std::shared_ptr<MessageQueue
 *******************************************************************************/
 static void* phTmlUwb_TmlReaderThread(void* pParam)
 {
-  tHAL_UWB_STATUS wStatus = UWBSTATUS_SUCCESS;
-  int32_t dwNoBytesWrRd = PH_TMLUWB_RESET_VALUE;
-  uint8_t temp[UCI_MAX_DATA_LEN];
   /* Transaction info buffer to be passed to Callback Thread */
   static phTmlUwb_TransactInfo_t tTransactionInfo;
   /* Structure containing Tml callback function and parameters to be invoked
@@ -175,7 +172,7 @@ static void* phTmlUwb_TmlReaderThread(void* pParam)
   while (!gpphTmlUwb_Context->tReadInfo.bThreadShouldStop) {
     /* If Tml write is requested */
     /* Set the variable to success initially */
-    wStatus = UWBSTATUS_SUCCESS;
+    tHAL_UWB_STATUS wStatus = UWBSTATUS_SUCCESS;
     if(sem_wait(&gpphTmlUwb_Context->rxSemaphore)!=0){
         NXPLOG_TML_E("Failed to wait rxSemaphore");
     }
@@ -186,11 +183,12 @@ static void* phTmlUwb_TmlReaderThread(void* pParam)
       wStatus = UWBSTATUS_SUCCESS;
 
       /* Variable to fetch the actual number of bytes read */
-      dwNoBytesWrRd = PH_TMLUWB_RESET_VALUE;
+      int32_t dwNoBytesWrRd = PH_TMLUWB_RESET_VALUE;
 
       /* Read the data from the file onto the buffer */
       if (NULL != gpphTmlUwb_Context->pDevHandle) {
         NXPLOG_TML_D("SRxxx - Invoking SPI Read");
+        uint8_t temp[UCI_MAX_DATA_LEN];
         dwNoBytesWrRd =
             phTmlUwb_spi_read(gpphTmlUwb_Context->pDevHandle, temp, UCI_MAX_DATA_LEN);
 
