@@ -46,9 +46,6 @@ using android::base::StringPrintf;
 /* UCI HAL Control structure */
 phNxpUciHal_Control_t nxpucihal_ctrl;
 
-/* TML Context */
-extern phTmlUwb_Context_t* gpphTmlUwb_Context;
-
 bool uwb_device_initialized = false;
 bool uwb_get_platform_id = false;
 uint32_t timeoutTimerId = 0;
@@ -626,29 +623,27 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
 
   SessionTrack_deinit();
 
+  NXPLOG_UCIHAL_D("Terminating phNxpUciHal client thread...");
+  phTmlUwb_DeferredCall(std::make_shared<phLibUwb_Message>(UCI_HAL_CLOSE_CPLT_MSG));
+  nxpucihal_ctrl.client_thread.join();
+
+  status = phTmlUwb_Shutdown();
+
+  phNxpUciHal_rx_handler_destroy();
+
   nxpucihal_ctrl.halStatus = HAL_STATUS_CLOSE;
-
-  if (NULL != gpphTmlUwb_Context->pDevHandle) {
-    NXPLOG_UCIHAL_D("Terminating phNxpUciHal client thread...");
-    phTmlUwb_DeferredCall(std::make_shared<phLibUwb_Message>(UCI_HAL_CLOSE_CPLT_MSG));
-    nxpucihal_ctrl.client_thread.join();
-
-    status = phTmlUwb_Shutdown();
-
-    phNxpUciHal_rx_handler_destroy();
-
-    phOsalUwb_Timer_Cleanup();
-
-    NXPLOG_UCIHAL_D("phNxpUciHal_close - phOsalUwb_DeInit completed");
-  }
 
   CONCURRENCY_UNLOCK();
 
   nxpucihal_ctrl.uwb_chip.reset();
 
+  phOsalUwb_Timer_Cleanup();
+
   phNxpUciHal_cleanup_monitor();
 
   NxpConfig_Deinit();
+
+  NXPLOG_UCIHAL_D("phNxpUciHal_close completed");
 
   /* Return success always */
   return UWBSTATUS_SUCCESS;
