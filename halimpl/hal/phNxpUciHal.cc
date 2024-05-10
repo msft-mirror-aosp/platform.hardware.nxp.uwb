@@ -491,7 +491,7 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
 
   if (pInfo->wStatus != UWBSTATUS_SUCCESS) {
     NXPLOG_UCIHAL_E("read error status = 0x%x", pInfo->wStatus);
-    goto end_read_complete;
+    return;
   }
 
   NXPLOG_UCIHAL_D("read successful status = 0x%x", pInfo->wStatus);
@@ -602,17 +602,6 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
     }
     index += length;
   } //End of loop
-
-end_read_complete:
-  /* Read again because read must be pending always.*/
-  if (nxpucihal_ctrl.halStatus != HAL_STATUS_CLOSE) {
-    tHAL_UWB_STATUS status = phTmlUwb_Read(
-        Rx_data, UCI_MAX_DATA_LEN,
-        (pphTmlUwb_TransactCompletionCb_t)&phNxpUciHal_read_complete, NULL);
-    if (status != UWBSTATUS_PENDING) {
-      NXPLOG_UCIHAL_E("read status error status = %x", status);
-    }
-  }
 }
 
 /******************************************************************************
@@ -908,9 +897,9 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
                                       true, dev_status_ntf_cb);
 
   // Initiate UCI packet read
-  status = phTmlUwb_Read( Rx_data, UCI_MAX_DATA_LEN,
+  status = phTmlUwb_StartRead( Rx_data, UCI_MAX_DATA_LEN,
             (pphTmlUwb_TransactCompletionCb_t)&phNxpUciHal_read_complete, NULL);
-  if (status != UWBSTATUS_PENDING) {
+  if (status != UWBSTATUS_SUCCESS) {
     NXPLOG_UCIHAL_E("read status error status = %x", status);
     return status;
   }
