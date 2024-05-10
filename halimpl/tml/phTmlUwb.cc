@@ -39,7 +39,9 @@ extern phNxpUciHal_Control_t nxpucihal_ctrl;
 phTmlUwb_Context_t* gpphTmlUwb_Context = NULL;
 
 /* Local Function prototypes */
-static tHAL_UWB_STATUS phTmlUwb_StartThread(void);
+static tHAL_UWB_STATUS phTmlUwb_StartWriterThread(void);
+static void phTmlUwb_StopWriterThread(void);
+
 static void phTmlUwb_CleanUp(void);
 static void phTmlUwb_ReadDeferredCb(void* pParams);
 static void phTmlUwb_WriteDeferredCb(void* pParams);
@@ -52,9 +54,6 @@ static void phTmlUwb_WaitWriteComplete(void);
 static void phTmlUwb_SignalWriteComplete(void);
 static int phTmlUwb_WaitReadInit(void);
 static int phTmlUwb_ReadAbortInit(void);
-
-static void phTmlUwb_ReadAbort(void);
-static void phTmlUwb_WriteAbort(void);
 
 /* Function definitions */
 
@@ -111,7 +110,6 @@ tHAL_UWB_STATUS phTmlUwb_Init(const char* pDevName, std::shared_ptr<MessageQueue
         wInitStatus = PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_INVALID_DEVICE);
         gpphTmlUwb_Context->pDevHandle = NULL;
       } else {
-        gpphTmlUwb_Context->tReadInfo.bEnable = 0;
         gpphTmlUwb_Context->tWriteInfo.bEnable = 0;
         gpphTmlUwb_Context->tReadInfo.bThreadBusy = false;
         gpphTmlUwb_Context->tWriteInfo.bThreadBusy = false;
@@ -129,7 +127,7 @@ tHAL_UWB_STATUS phTmlUwb_Init(const char* pDevName, std::shared_ptr<MessageQueue
            wInitStatus = UWBSTATUS_FAILED;
         } else {
           /* Start TML thread (to handle write and read operations) */
-          if (UWBSTATUS_SUCCESS != phTmlUwb_StartThread()) {
+          if (UWBSTATUS_SUCCESS != phTmlUwb_StartWriterThread()) {
             wInitStatus = PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_FAILED);
           } else {
             /* Store the Thread Identifier to which Message is to be posted */
@@ -150,46 +148,6 @@ tHAL_UWB_STATUS phTmlUwb_Init(const char* pDevName, std::shared_ptr<MessageQueue
 
 /*******************************************************************************
 **
-** Function         phTmlUwb_StartThread
-**
-** Description      Initializes comport, reader and writer threads
-**
-** Parameters       None
-**
-** Returns          UWB status:
-**                  UWBSTATUS_SUCCESS - threads initialized successfully
-**                  UWBSTATUS_FAILED - initialization failed due to system error
-**
-*******************************************************************************/
-static tHAL_UWB_STATUS phTmlUwb_StartThread(void) {
-  tHAL_UWB_STATUS wStartStatus = UWBSTATUS_SUCCESS;
-  void* h_threadsEvent = 0x00;
-  int pthread_create_status = 0;
-
-  gpphTmlUwb_Context->tReadInfo.bThreadShouldStop = false;
-  gpphTmlUwb_Context->tWriteInfo.bThreadShouldStop = false;
-
-  /* Create Reader and Writer threads */
-  pthread_create_status =
-      pthread_create(&gpphTmlUwb_Context->readerThread, NULL,
-                     &phTmlUwb_TmlReaderThread, (void*)h_threadsEvent);
-  if (0 != pthread_create_status) {
-    wStartStatus = UWBSTATUS_FAILED;
-  } else {
-    /*Start Writer Thread*/
-    pthread_create_status =
-        pthread_create(&gpphTmlUwb_Context->writerThread, NULL,
-                       &phTmlUwb_TmlWriterThread, (void*)h_threadsEvent);
-    if (0 != pthread_create_status) {
-      wStartStatus = UWBSTATUS_FAILED;
-    }
-  }
-
-  return wStartStatus;
-}
-
-/*******************************************************************************
-**
 ** Function         phTmlUwb_TmlReaderThread
 **
 ** Description      Read the data from the lower layer driver
@@ -199,7 +157,8 @@ static tHAL_UWB_STATUS phTmlUwb_StartThread(void) {
 ** Returns          None
 **
 *******************************************************************************/
-static void* phTmlUwb_TmlReaderThread(void* pParam) {
+static void* phTmlUwb_TmlReaderThread(void* pParam)
+{
   tHAL_UWB_STATUS wStatus = UWBSTATUS_SUCCESS;
   int32_t dwNoBytesWrRd = PH_TMLUWB_RESET_VALUE;
   uint8_t temp[UCI_MAX_DATA_LEN];
@@ -268,7 +227,7 @@ static void* phTmlUwb_TmlReaderThread(void* pParam) {
           memcpy(gpphTmlUwb_Context->tReadInfo.pBuffer, temp, dwNoBytesWrRd);
 
           NXPLOG_TML_D("SRxxx - SPI Read successful");
-          gpphTmlUwb_Context->tReadInfo.bEnable = 0;
+
           if (gpphTmlUwb_Context->tWriteInfo.bThreadBusy) {
             NXPLOG_TML_D("Delay Read if write thread is busy");
           }
@@ -490,9 +449,9 @@ tHAL_UWB_STATUS phTmlUwb_Shutdown(void)
   }
 
   // Abort io threads
-  phTmlUwb_ReadAbort();
+  phTmlUwb_StopRead();
 
-  phTmlUwb_WriteAbort();
+  phTmlUwb_StopWriterThread();
 
   phTmlUwb_CleanUp();
 
@@ -593,65 +552,50 @@ tHAL_UWB_STATUS phTmlUwb_Write(uint8_t* pBuffer, uint16_t wLength,
 **                  UWBSTATUS_BUSY - read request is already in progress
 **
 *******************************************************************************/
-tHAL_UWB_STATUS phTmlUwb_Read(uint8_t* pBuffer, uint16_t wLength,
+tHAL_UWB_STATUS phTmlUwb_StartRead(uint8_t* pBuffer, uint16_t wLength,
                         pphTmlUwb_TransactCompletionCb_t pTmlReadComplete,
-                        void* pContext) {
-  tHAL_UWB_STATUS wReadStatus;
-
+                        void* pContext)
+{
   /* Check whether TML is Initialized */
-  if (NULL != gpphTmlUwb_Context) {
-    if ((gpphTmlUwb_Context->pDevHandle != NULL) && (NULL != pBuffer) &&
-        (PH_TMLUWB_RESET_VALUE != wLength) && (NULL != pTmlReadComplete)) {
-      if (!gpphTmlUwb_Context->tReadInfo.bThreadBusy) {
-        /* Setting the flag marks beginning of a Read Operation */
-        gpphTmlUwb_Context->tReadInfo.bThreadBusy = true;
-        /* Copy the buffer, length and Callback function,
-           This shall be utilized while invoking the Callback function in thread
-           */
-        gpphTmlUwb_Context->tReadInfo.pBuffer = pBuffer;
-        gpphTmlUwb_Context->tReadInfo.wLength = wLength;
-        gpphTmlUwb_Context->tReadInfo.pThread_Callback = pTmlReadComplete;
-        gpphTmlUwb_Context->tReadInfo.pContext = pContext;
-        wReadStatus = UWBSTATUS_PENDING;
-
-        /* Set event to invoke Reader Thread */
-        if(gpphTmlUwb_Context->is_read_abort != true) {
-          gpphTmlUwb_Context->tReadInfo.bEnable = 1; // To be enabled later
-          sem_post(&gpphTmlUwb_Context->rxSemaphore); // To be enabled later
-        }
-      } else {
-        wReadStatus = PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_BUSY);
-      }
-    } else {
-      wReadStatus = PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_INVALID_PARAMETER);
-    }
-  } else {
-    wReadStatus = PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_NOT_INITIALISED);
+  if (!gpphTmlUwb_Context || !gpphTmlUwb_Context->pDevHandle) {
+    return PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_NOT_INITIALISED);
   }
 
-  return wReadStatus;
+  if (!pBuffer || wLength < 1 || !pTmlReadComplete) {
+    return PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_INVALID_PARAMETER);
+  }
+
+  if (gpphTmlUwb_Context->tReadInfo.bThreadBusy) {
+    return PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_BUSY);
+  }
+
+  /* Setting the flag marks beginning of a Read Operation */
+  gpphTmlUwb_Context->tReadInfo.bThreadBusy = true;
+  gpphTmlUwb_Context->tReadInfo.pBuffer = pBuffer;
+  gpphTmlUwb_Context->tReadInfo.wLength = wLength;
+  gpphTmlUwb_Context->tReadInfo.pThread_Callback = pTmlReadComplete;
+  gpphTmlUwb_Context->tReadInfo.pContext = pContext;
+
+  /* Set event to invoke Reader Thread */
+  if(gpphTmlUwb_Context->is_read_abort != true) {
+    gpphTmlUwb_Context->tReadInfo.bEnable = true; // To be enabled later
+    sem_post(&gpphTmlUwb_Context->rxSemaphore); // To be enabled later
+  }
+
+  /* Create Reader threads */
+  gpphTmlUwb_Context->tReadInfo.bThreadShouldStop = false;
+  int ret = pthread_create(&gpphTmlUwb_Context->readerThread, NULL,
+                       &phTmlUwb_TmlReaderThread, NULL);
+  if (ret) {
+    return UWBSTATUS_FAILED;
+  } else {
+    return UWBSTATUS_SUCCESS;
+  }
 }
 
-/*******************************************************************************
-**
-** Function         phTmlUwb_ReadAbort
-**
-** Description      Aborts pending read request (if any)
-**
-** Parameters       None
-**
-** Returns          UWB status:
-**                  UWBSTATUS_SUCCESS - ongoing read operation aborted
-**                  UWBSTATUS_INVALID_PARAMETER - at least one parameter is
-**                                                invalid
-**                  UWBSTATUS_NOT_INITIALIZED - TML layer is not initialized
-**                  UWBSTATUS_BOARD_COMMUNICATION_ERROR - unable to cancel read
-**                                                        operation
-**
-*******************************************************************************/
-static void phTmlUwb_ReadAbort(void)
+void phTmlUwb_StopRead()
 {
-  gpphTmlUwb_Context->tReadInfo.bEnable = 0;
+  gpphTmlUwb_Context->tReadInfo.bEnable = false;
   gpphTmlUwb_Context->tReadInfo.bThreadBusy = false;
   gpphTmlUwb_Context->tReadInfo.bThreadShouldStop = true;
 
@@ -664,22 +608,46 @@ static void phTmlUwb_ReadAbort(void)
 
 /*******************************************************************************
 **
-** Function         phTmlUwb_WriteAbort
+** Function         phTmlUwb_StartWriterThread
 **
-** Description      Aborts pending write request (if any)
+** Description      start writer thread
 **
 ** Parameters       None
 **
 ** Returns          UWB status:
-**                  UWBSTATUS_SUCCESS - ongoing write operation aborted
-**                  UWBSTATUS_INVALID_PARAMETER - at least one parameter is
-**                                                invalid
-**                  UWBSTATUS_NOT_INITIALIZED - TML layer is not initialized
-**                  UWBSTATUS_BOARD_COMMUNICATION_ERROR - unable to cancel write
-**                                                        operation
+**                  UWBSTATUS_SUCCESS - threads initialized successfully
+**                  UWBSTATUS_FAILED - initialization failed due to system error
 **
 *******************************************************************************/
-static void phTmlUwb_WriteAbort(void)
+static tHAL_UWB_STATUS phTmlUwb_StartWriterThread(void)
+{
+  int ret;
+
+  gpphTmlUwb_Context->tWriteInfo.bThreadShouldStop = false;
+
+  /*Start Writer Thread*/
+  ret = pthread_create(&gpphTmlUwb_Context->writerThread, NULL,
+                       &phTmlUwb_TmlWriterThread, NULL);
+  if (ret) {
+    return UWBSTATUS_FAILED;
+  } else {
+    return UWBSTATUS_SUCCESS;
+  }
+}
+
+
+/*******************************************************************************
+**
+** Function         phTmlUwb_StopWriterThread
+**
+** Description      Stop writer thread
+**
+** Parameters       None
+**
+** Returns          None
+**
+*******************************************************************************/
+static void phTmlUwb_StopWriterThread(void)
 {
   gpphTmlUwb_Context->tWriteInfo.bEnable = 0;
   gpphTmlUwb_Context->tWriteInfo.bThreadBusy = false;
@@ -718,16 +686,16 @@ void phTmlUwb_DeferredCall(std::shared_ptr<phLibUwb_Message> msg)
 ** Returns          None
 **
 *******************************************************************************/
-static void phTmlUwb_ReadDeferredCb(void* pParams) {
+static void phTmlUwb_ReadDeferredCb(void* pParams)
+{
   /* Transaction info buffer to be passed to Callback Function */
   phTmlUwb_TransactInfo_t* pTransactionInfo = (phTmlUwb_TransactInfo_t*)pParams;
 
   /* Reset the flag to accept another Read Request */
-  gpphTmlUwb_Context->tReadInfo.bThreadBusy = false;
   gpphTmlUwb_Context->tReadInfo.pThread_Callback(
       gpphTmlUwb_Context->tReadInfo.pContext, pTransactionInfo);
 
-  return;
+  sem_post(&gpphTmlUwb_Context->rxSemaphore);
 }
 
 /*******************************************************************************
@@ -892,7 +860,8 @@ void phTmlUwb_Chip_Reset(void){
 void phTmlUwb_Spi_Reset(void) {
   int ret;
   struct timespec absTimeout;
-  phTmlUwb_ReadAbort();
+
+  phTmlUwb_StopRead();
   if (clock_gettime(CLOCK_MONOTONIC, &absTimeout) == -1) {
     NXPLOG_TML_E("Reader Thread clock_gettime failed");
   }
@@ -910,8 +879,6 @@ void phTmlUwb_Spi_Reset(void) {
   usleep(5000);    //wait for helios bootROM mode
   gpphTmlUwb_Context->is_read_abort = false;
   pthread_mutex_unlock(&gpphTmlUwb_Context->read_abort_lock);
-  /*Abort the reader thread if client thread shall enable read again in case if valid packet received and notified to upper layer*/
-  phTmlUwb_ReadAbort();
 }
 
 void phTmlUwb_Suspend(void)
