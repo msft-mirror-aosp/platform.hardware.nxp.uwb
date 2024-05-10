@@ -83,8 +83,7 @@ typedef void (*pphTmlUwb_TransactCompletionCb_t)(
  */
 typedef struct phTmlUwb_ReadWriteInfo {
   volatile bool bThreadShouldStop;
-  volatile uint8_t bEnable; /*This flag shall decide whether to perform
-                               Write/Read operation */
+  volatile bool bThreadRunning;
   uint8_t
       bThreadBusy; /*Flag to indicate thread is busy on respective operation */
   /* Transaction completion Callback function */

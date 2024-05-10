@@ -110,8 +110,6 @@ tHAL_UWB_STATUS phTmlUwb_Init(const char* pDevName, std::shared_ptr<MessageQueue
         wInitStatus = PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_INVALID_DEVICE);
         gpphTmlUwb_Context->pDevHandle = NULL;
       } else {
-        gpphTmlUwb_Context->tWriteInfo.bEnable = 0;
-        gpphTmlUwb_Context->tReadInfo.bThreadBusy = false;
         gpphTmlUwb_Context->tWriteInfo.bThreadBusy = false;
         gpphTmlUwb_Context->pClientMq = pClientMq;
 
@@ -169,6 +167,8 @@ static void* phTmlUwb_TmlReaderThread(void* pParam)
   static phLibUwb_DeferredCall_t tDeferredInfo;
   /* Initialize Message structure to post message onto Callback Thread */
   UNUSED(pParam);
+
+  gpphTmlUwb_Context->tReadInfo.bThreadRunning = true;
   NXPLOG_TML_D("SRxxx - Tml Reader Thread Started");
 
   /* Writer thread loop shall be running till shutdown is invoked */
@@ -180,7 +180,7 @@ static void* phTmlUwb_TmlReaderThread(void* pParam)
         NXPLOG_TML_E("Failed to wait rxSemaphore");
     }
     /* If Tml read is requested */
-    if (1 == gpphTmlUwb_Context->tReadInfo.bEnable) {
+    if (1) {
       NXPLOG_TML_D("SRxxx - Read requested");
       /* Set the variable to success initially */
       wStatus = UWBSTATUS_SUCCESS;
@@ -228,9 +228,6 @@ static void* phTmlUwb_TmlReaderThread(void* pParam)
 
           NXPLOG_TML_D("SRxxx - SPI Read successful");
 
-          if (gpphTmlUwb_Context->tWriteInfo.bThreadBusy) {
-            NXPLOG_TML_D("Delay Read if write thread is busy");
-          }
           /* Update the actual number of bytes read including header */
           gpphTmlUwb_Context->tReadInfo.wLength = (uint16_t)(dwNoBytesWrRd);
 
@@ -264,11 +261,11 @@ static void* phTmlUwb_TmlReaderThread(void* pParam)
       } else {
         NXPLOG_TML_D("SRxxx -gpphTmlUwb_Context->pDevHandle is NULL");
       }
-    } else {
-      NXPLOG_TML_D("SRxxx - read request NOT enabled");
-      usleep(10 * 1000);
     }
   } /* End of While loop */
+
+  gpphTmlUwb_Context->tReadInfo.bThreadRunning = false;
+  NXPLOG_TML_D("SRxxx - Tml Reader Thread stopped");
 
   return NULL;
 }
@@ -293,6 +290,8 @@ static void* phTmlUwb_TmlWriterThread(void* pParam) {
      by the callback thread */
   static phLibUwb_DeferredCall_t tDeferredInfo;
   UNUSED(pParam);
+
+  gpphTmlUwb_Context->tWriteInfo.bThreadRunning = true;
   NXPLOG_TML_D("SRxxx - Tml Writer Thread Started");
 
   /* Writer thread loop shall be running till shutdown is invoked */
@@ -302,11 +301,10 @@ static void* phTmlUwb_TmlWriterThread(void* pParam) {
       NXPLOG_TML_E("Failed to wait txSemaphore");
     }
     /* If Tml write is requested */
-    if (1 == gpphTmlUwb_Context->tWriteInfo.bEnable) {
+    if (1) {
       /* Set the variable to success initially */
       wStatus = UWBSTATUS_SUCCESS;
       if (NULL != gpphTmlUwb_Context->pDevHandle) {
-        gpphTmlUwb_Context->tWriteInfo.bEnable = 0;
         /* Variable to fetch the actual number of bytes written */
         dwNoBytesWrRd = PH_TMLUWB_RESET_VALUE;
         /* Write the data in the buffer onto the file */
@@ -364,12 +362,11 @@ static void* phTmlUwb_TmlWriterThread(void* pParam) {
       } else {
         NXPLOG_TML_D("SRxxx - gpphTmlUwb_Context->pDevHandle is NULL");
       }
-    } else {
-      NXPLOG_TML_D("SRxxx - Write request NOT enabled");
-      usleep(10000);
     }
-
   } /* End of While loop */
+
+  gpphTmlUwb_Context->tWriteInfo.bThreadRunning = false;
+  NXPLOG_TML_D("SRxxx - Tml Writer Thread stopped");
 
   return NULL;
 }
@@ -512,7 +509,6 @@ tHAL_UWB_STATUS phTmlUwb_Write(uint8_t* pBuffer, uint16_t wLength,
 
         wWriteStatus = UWBSTATUS_PENDING;
         /* Set event to invoke Writer Thread */
-        gpphTmlUwb_Context->tWriteInfo.bEnable = 1;
         sem_post(&gpphTmlUwb_Context->txSemaphore);
       } else {
         wWriteStatus = PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_BUSY);
@@ -565,20 +561,18 @@ tHAL_UWB_STATUS phTmlUwb_StartRead(uint8_t* pBuffer, uint16_t wLength,
     return PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_INVALID_PARAMETER);
   }
 
-  if (gpphTmlUwb_Context->tReadInfo.bThreadBusy) {
+  if (gpphTmlUwb_Context->tReadInfo.bThreadRunning) {
     return PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_BUSY);
   }
 
   /* Setting the flag marks beginning of a Read Operation */
-  gpphTmlUwb_Context->tReadInfo.bThreadBusy = true;
   gpphTmlUwb_Context->tReadInfo.pBuffer = pBuffer;
   gpphTmlUwb_Context->tReadInfo.wLength = wLength;
   gpphTmlUwb_Context->tReadInfo.pThread_Callback = pTmlReadComplete;
   gpphTmlUwb_Context->tReadInfo.pContext = pContext;
 
-  /* Set event to invoke Reader Thread */
+  /* Set first event to invoke Reader Thread */
   if(gpphTmlUwb_Context->is_read_abort != true) {
-    gpphTmlUwb_Context->tReadInfo.bEnable = true; // To be enabled later
     sem_post(&gpphTmlUwb_Context->rxSemaphore); // To be enabled later
   }
 
@@ -595,15 +589,15 @@ tHAL_UWB_STATUS phTmlUwb_StartRead(uint8_t* pBuffer, uint16_t wLength,
 
 void phTmlUwb_StopRead()
 {
-  gpphTmlUwb_Context->tReadInfo.bEnable = false;
-  gpphTmlUwb_Context->tReadInfo.bThreadBusy = false;
   gpphTmlUwb_Context->tReadInfo.bThreadShouldStop = true;
 
-  // to wakeup from blocking read()
-  phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_ControlCode_t::SetPower, ABORT_READ_PENDING);
-  sem_post(&gpphTmlUwb_Context->rxSemaphore);
+  if (gpphTmlUwb_Context->tReadInfo.bThreadRunning) {
+    // to wakeup from blocking read()
+    phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_ControlCode_t::SetPower, ABORT_READ_PENDING);
+    sem_post(&gpphTmlUwb_Context->rxSemaphore);
 
-  pthread_join(gpphTmlUwb_Context->readerThread, NULL);
+    pthread_join(gpphTmlUwb_Context->readerThread, NULL);
+  }
 }
 
 /*******************************************************************************
@@ -649,13 +643,14 @@ static tHAL_UWB_STATUS phTmlUwb_StartWriterThread(void)
 *******************************************************************************/
 static void phTmlUwb_StopWriterThread(void)
 {
-  gpphTmlUwb_Context->tWriteInfo.bEnable = 0;
   gpphTmlUwb_Context->tWriteInfo.bThreadBusy = false;
   gpphTmlUwb_Context->tWriteInfo.bThreadShouldStop = true;
 
-  sem_post(&gpphTmlUwb_Context->txSemaphore);
+  if (gpphTmlUwb_Context->tWriteInfo.bThreadRunning) {
+    sem_post(&gpphTmlUwb_Context->txSemaphore);
 
-  pthread_join(gpphTmlUwb_Context->writerThread, NULL);
+    pthread_join(gpphTmlUwb_Context->writerThread, NULL);
+  }
 }
 
 /*******************************************************************************
