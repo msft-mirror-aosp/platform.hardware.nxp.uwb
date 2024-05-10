@@ -53,6 +53,9 @@ static void phTmlUwb_SignalWriteComplete(void);
 static int phTmlUwb_WaitReadInit(void);
 static int phTmlUwb_ReadAbortInit(void);
 
+static void phTmlUwb_ReadAbort(void);
+static void phTmlUwb_WriteAbort(void);
+
 /* Function definitions */
 
 /*******************************************************************************
@@ -100,8 +103,6 @@ tHAL_UWB_STATUS phTmlUwb_Init(const char* pDevName, std::shared_ptr<MessageQueue
       /* Initialise all the internal TML variables */
       memset(gpphTmlUwb_Context, PH_TMLUWB_RESET_VALUE,
              sizeof(phTmlUwb_Context_t));
-      /* Make sure that the thread runs once it is created */
-      gpphTmlUwb_Context->bThreadDone = 1;
 
       /* Open the device file to which data is read/written */
       wInitStatus = phTmlUwb_spi_open_and_configure(pDevName, &(gpphTmlUwb_Context->pDevHandle));
@@ -165,6 +166,9 @@ static tHAL_UWB_STATUS phTmlUwb_StartThread(void) {
   void* h_threadsEvent = 0x00;
   int pthread_create_status = 0;
 
+  gpphTmlUwb_Context->tReadInfo.bThreadShouldStop = false;
+  gpphTmlUwb_Context->tWriteInfo.bThreadShouldStop = false;
+
   /* Create Reader and Writer threads */
   pthread_create_status =
       pthread_create(&gpphTmlUwb_Context->readerThread, NULL,
@@ -209,7 +213,7 @@ static void* phTmlUwb_TmlReaderThread(void* pParam) {
   NXPLOG_TML_D("SRxxx - Tml Reader Thread Started");
 
   /* Writer thread loop shall be running till shutdown is invoked */
-  while (gpphTmlUwb_Context->bThreadDone) {
+  while (!gpphTmlUwb_Context->tReadInfo.bThreadShouldStop) {
     /* If Tml write is requested */
     /* Set the variable to success initially */
     wStatus = UWBSTATUS_SUCCESS;
@@ -230,8 +234,9 @@ static void* phTmlUwb_TmlReaderThread(void* pParam) {
         NXPLOG_TML_D("SRxxx - Invoking SPI Read");
         dwNoBytesWrRd =
             phTmlUwb_spi_read(gpphTmlUwb_Context->pDevHandle, temp, UCI_MAX_DATA_LEN);
-        if(gpphTmlUwb_Context->bThreadDone == 0) {
-          return NULL;
+
+        if(gpphTmlUwb_Context->tReadInfo.bThreadShouldStop) {
+          break;
         }
 
         if (-1 == dwNoBytesWrRd) {
@@ -332,7 +337,7 @@ static void* phTmlUwb_TmlWriterThread(void* pParam) {
   NXPLOG_TML_D("SRxxx - Tml Writer Thread Started");
 
   /* Writer thread loop shall be running till shutdown is invoked */
-  while (gpphTmlUwb_Context->bThreadDone) {
+  while (!gpphTmlUwb_Context->tWriteInfo.bThreadShouldStop) {
     NXPLOG_TML_D("SRxxx - Tml Writer Thread Running");
     if (sem_wait(&gpphTmlUwb_Context->txSemaphore) != 0) {
       NXPLOG_TML_E("Failed to wait txSemaphore");
@@ -427,8 +432,8 @@ static void phTmlUwb_CleanUp(void) {
   }
   if (NULL != gpphTmlUwb_Context->pDevHandle) {
     (void)phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_ControlCode_t::SetPower, 0);
-    gpphTmlUwb_Context->bThreadDone = 0;
   }
+
   sem_destroy(&gpphTmlUwb_Context->rxSemaphore);
   sem_destroy(&gpphTmlUwb_Context->txSemaphore);
   pthread_mutex_destroy(&gpphTmlUwb_Context->wait_busy_lock);
@@ -478,33 +483,20 @@ void phTmlUwb_eSE_Reset(void) {
 **                                     to close interface)
 **
 *******************************************************************************/
-tHAL_UWB_STATUS phTmlUwb_Shutdown(void) {
-  tHAL_UWB_STATUS wShutdownStatus = UWBSTATUS_SUCCESS;
-
-  /* Check whether TML is Initialized */
-  if (NULL != gpphTmlUwb_Context) {
-    /* Reset thread variable to terminate the thread */
-    gpphTmlUwb_Context->bThreadDone = 0;
-    /* Clear All the resources allocated during initialization */
-    phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_ControlCode_t::SetPower, ABORT_READ_PENDING);
-    sem_post(&gpphTmlUwb_Context->rxSemaphore);
-    usleep(1000);
-    sem_post(&gpphTmlUwb_Context->txSemaphore);
-    usleep(1000);
-    if (0 != pthread_join(gpphTmlUwb_Context->readerThread, (void**)NULL)) {
-      NXPLOG_TML_E("Fail to kill reader thread!");
-    }
-    if (0 != pthread_join(gpphTmlUwb_Context->writerThread, (void**)NULL)) {
-      NXPLOG_TML_E("Fail to kill writer thread!");
-    }
-    NXPLOG_TML_D("bThreadDone == 0");
-
-    phTmlUwb_CleanUp();
-  } else {
-    wShutdownStatus = PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_NOT_INITIALISED);
+tHAL_UWB_STATUS phTmlUwb_Shutdown(void)
+{
+  if (!gpphTmlUwb_Context) {
+    return PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_NOT_INITIALISED);
   }
 
-  return wShutdownStatus;
+  // Abort io threads
+  phTmlUwb_ReadAbort();
+
+  phTmlUwb_WriteAbort();
+
+  phTmlUwb_CleanUp();
+
+  return UWBSTATUS_SUCCESS;
 }
 
 /*******************************************************************************
@@ -657,12 +649,17 @@ tHAL_UWB_STATUS phTmlUwb_Read(uint8_t* pBuffer, uint16_t wLength,
 **                                                        operation
 **
 *******************************************************************************/
-tHAL_UWB_STATUS phTmlUwb_ReadAbort(void) {
+static void phTmlUwb_ReadAbort(void)
+{
   gpphTmlUwb_Context->tReadInfo.bEnable = 0;
-
-  /*Reset the flag to accept another Read Request */
   gpphTmlUwb_Context->tReadInfo.bThreadBusy = false;
-  return UWBSTATUS_SUCCESS;
+  gpphTmlUwb_Context->tReadInfo.bThreadShouldStop = true;
+
+  // to wakeup from blocking read()
+  phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_ControlCode_t::SetPower, ABORT_READ_PENDING);
+  sem_post(&gpphTmlUwb_Context->rxSemaphore);
+
+  pthread_join(gpphTmlUwb_Context->readerThread, NULL);
 }
 
 /*******************************************************************************
@@ -682,13 +679,15 @@ tHAL_UWB_STATUS phTmlUwb_ReadAbort(void) {
 **                                                        operation
 **
 *******************************************************************************/
-tHAL_UWB_STATUS phTmlUwb_WriteAbort(void) {
-
+static void phTmlUwb_WriteAbort(void)
+{
   gpphTmlUwb_Context->tWriteInfo.bEnable = 0;
-
-  /* Reset the flag to accept another Write Request */
   gpphTmlUwb_Context->tWriteInfo.bThreadBusy = false;
-  return UWBSTATUS_SUCCESS;
+  gpphTmlUwb_Context->tWriteInfo.bThreadShouldStop = true;
+
+  sem_post(&gpphTmlUwb_Context->txSemaphore);
+
+  pthread_join(gpphTmlUwb_Context->writerThread, NULL);
 }
 
 /*******************************************************************************

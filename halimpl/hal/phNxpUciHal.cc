@@ -644,15 +644,11 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
     phTmlUwb_DeferredCall(std::make_shared<phLibUwb_Message>(UCI_HAL_CLOSE_CPLT_MSG));
     nxpucihal_ctrl.client_thread.join();
 
-    /* Abort any pending read and write */
-    status = phTmlUwb_ReadAbort();
-    status = phTmlUwb_WriteAbort();
-
-    phOsalUwb_Timer_Cleanup();
-
     status = phTmlUwb_Shutdown();
 
     phNxpUciHal_rx_handler_destroy();
+
+    phOsalUwb_Timer_Cleanup();
 
     NXPLOG_UCIHAL_D("phNxpUciHal_close - phOsalUwb_DeInit completed");
   }
