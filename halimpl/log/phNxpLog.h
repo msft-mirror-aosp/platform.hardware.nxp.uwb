@@ -229,6 +229,11 @@ extern const char* NXPLOG_ITEM_HCPR; /* Android logging tag for NxpHcpR   */
 
 /* Logging APIs used by NxpTml module */
 #if (ENABLE_TML_TRACES == TRUE)
+#define NXPLOG_TML_V(...)                                        \
+  {                                                              \
+    if ((gLog_level.tml_log_level >= NXPLOG_LOG_VERBOSE_LOGLEVEL)) \
+      LOG_PRI(ANDROID_LOG_VERBOSE, NXPLOG_ITEM_TML, __VA_ARGS__);  \
+  }
 #define NXPLOG_TML_D(...)                                        \
   {                                                              \
     if ((gLog_level.tml_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL)) \
@@ -245,6 +250,7 @@ extern const char* NXPLOG_ITEM_HCPR; /* Android logging tag for NxpHcpR   */
       LOG_PRI(ANDROID_LOG_ERROR, NXPLOG_ITEM_TML, __VA_ARGS__); \
   }
 #else
+#define NXPLOG_TML_V(...)
 #define NXPLOG_TML_D(...)
 #define NXPLOG_TML_W(...)
 #define NXPLOG_TML_E(...)

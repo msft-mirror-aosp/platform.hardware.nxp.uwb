@@ -82,8 +82,8 @@ typedef void (*pphTmlUwb_TransactCompletionCb_t)(
  *
  */
 typedef struct phTmlUwb_ReadWriteInfo {
-  volatile uint8_t bEnable; /*This flag shall decide whether to perform
-                               Write/Read operation */
+  volatile bool bThreadShouldStop;
+  volatile bool bThreadRunning;
   uint8_t
       bThreadBusy; /*Flag to indicate thread is busy on respective operation */
   /* Transaction completion Callback function */
@@ -101,22 +101,17 @@ typedef struct phTmlUwb_Context {
   pthread_t readerThread; /*Handle to the thread which handles write and read
                              operations */
   pthread_t writerThread;
-  volatile uint8_t
-      bThreadDone; /*Flag to decide whether to run or abort the thread */
+
   phTmlUwb_ReadWriteInfo_t tReadInfo;  /*Pointer to Reader Thread Structure */
   phTmlUwb_ReadWriteInfo_t tWriteInfo; /*Pointer to Writer Thread Structure */
   void* pDevHandle;                    /* Pointer to Device Handle */
   std::shared_ptr<MessageQueue<phLibUwb_Message>> pClientMq; /* Pointer to Client thread message queue */
-  uint8_t bEnableCrc;           /*Flag to validate/not CRC for input buffer */
   sem_t rxSemaphore;
   sem_t txSemaphore;      /* Lock/Acquire txRx Semaphore */
 
   pthread_cond_t wait_busy_condition; /*Condition to wait reader thread*/
   pthread_mutex_t wait_busy_lock;     /*Condition lock to wait reader thread*/
-  pthread_mutex_t read_abort_lock;    /*Condition lock to wait read abort*/
-  pthread_cond_t read_abort_condition;  /*Condition to wait read abort*/
   volatile uint8_t wait_busy_flag;    /*Condition flag to wait reader thread*/
-  volatile uint8_t is_read_abort;    /*Condition flag for read abort*/
   volatile uint8_t gWriterCbflag;    /* flag to indicate write callback message is pushed to
                            queue*/
 } phTmlUwb_Context_t;
@@ -139,16 +134,19 @@ tHAL_UWB_STATUS phTmlUwb_Init(const char* pDevName, std::shared_ptr<MessageQueue
 tHAL_UWB_STATUS phTmlUwb_Shutdown(void);
 void phTmlUwb_Suspend(void);
 void phTmlUwb_Resume(void);
+
+// Writer: caller should call this for every write io
 tHAL_UWB_STATUS phTmlUwb_Write(uint8_t* pBuffer, uint16_t wLength,
                          pphTmlUwb_TransactCompletionCb_t pTmlWriteComplete,
                          void* pContext);
-tHAL_UWB_STATUS phTmlUwb_Read(uint8_t* pBuffer, uint16_t wLength,
+
+// Reader: caller calls this once, callback will be called for every received packet.
+//         and call StopRead() to unscribe RX packet.
+tHAL_UWB_STATUS phTmlUwb_StartRead(uint8_t* pBuffer, uint16_t wLength,
                         pphTmlUwb_TransactCompletionCb_t pTmlReadComplete,
                         void* pContext);
-tHAL_UWB_STATUS phTmlUwb_WriteAbort(void);
-tHAL_UWB_STATUS phTmlUwb_ReadAbort(void);
-void phTmlUwb_eSE_Reset(void);
-void phTmlUwb_Spi_Reset(void);
+void phTmlUwb_StopRead();
+
 void phTmlUwb_Chip_Reset(void);
 void phTmlUwb_DeferredCall(std::shared_ptr<phLibUwb_Message> msg);
 #endif /*  PHTMLUWB_H  */
