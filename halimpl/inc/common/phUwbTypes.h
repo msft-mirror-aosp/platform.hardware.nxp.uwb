@@ -97,14 +97,6 @@ typedef enum {
 typedef void (*pphLibUwb_DeferredCallback_t)(void*);
 
 /*
- * Deferred parameter declaration.
- * This type of data is passed as parameter from ClientApplication (main thread)
- * to the
- * callback.
- */
-typedef void* pphLibUwb_DeferredParameter_t;
-
-/*
  * UWB Message structure contains message specific details like
  * message type, message specific data block details, etc.
  */
@@ -136,7 +128,7 @@ typedef struct phLibUwb_sConfig {
  */
 typedef struct phLibUwb_DeferredCall {
   pphLibUwb_DeferredCallback_t pCallback;   /* pointer to Deferred callback */
-  pphLibUwb_DeferredParameter_t pParameter; /* pointer to Deferred parameter */
+  void *pParameter; /* pointer to Deferred parameter */
 } phLibUwb_DeferredCall_t;
 
 /*
