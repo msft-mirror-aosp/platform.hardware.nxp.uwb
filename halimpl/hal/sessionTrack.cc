@@ -89,6 +89,7 @@ private:
   };
   static constexpr unsigned long kAutoSuspendTimeoutDefaultMs_ = (30 * 1000);
   static constexpr long kQueueTimeoutMs = 500;
+  static constexpr long kUrskDeleteNtfTimeoutMs = 500;
 
 private:
   std::shared_ptr<phNxpUciHal_RxHandler> rx_handler_session_status_ntf_;
@@ -333,6 +334,9 @@ private:
     if (!session_info)
       return;
 
+    phNxpUciHal_Sem_t urskDeleteNtfWait;
+    phNxpUciHal_init_cb_data(&urskDeleteNtfWait, NULL);
+
     phNxpUciHal_rx_handler_add(UCI_MT_RSP, UCI_GID_PROPRIETARY_0X0F,
       UCI_MSG_URSK_DELETE, true, true,
       [](size_t packet_len, const uint8_t *packet) {
@@ -345,24 +349,37 @@ private:
     );
     phNxpUciHal_rx_handler_add(UCI_MT_NTF, UCI_GID_PROPRIETARY_0X0F,
       UCI_MSG_URSK_DELETE, true, true,
-      [](size_t packet_len, const uint8_t *packet) {
+      [&urskDeleteNtfWait](size_t packet_len, const uint8_t *packet) {
         if (packet_len < 6)
           return;
         uint8_t status = packet[4];
         uint8_t nr = packet[5];
-        if (packet_len != (6 + 5 * nr)) {
+
+        // We always issue URSK_DELETE_CMD with one Session ID and wait for it,
+        // Number of entries should be 1.
+        if (nr != 1 || packet_len != (6 + 5 * nr)) {
           NXPLOG_UCIHAL_E("SessionTrack: unrecognized packet type of URSK_DELETE_NTF");
+          urskDeleteNtfWait.status = UWB_DEVICE_ERROR;
         } else {
-          for (auto i = 6; i < packet_len; i += 5) {
-            uint32_t session_id = le_bytes_to_cpu<uint32_t>(&packet[i]);
-            uint8_t del_status = packet[i + 4];
-            if (status != UWBSTATUS_SUCCESS) {
-              NXPLOG_UCIHAL_E("SessionTrack: URSK_DELETE failed, ntf status=0x%x", status);
+          if (status != UWBSTATUS_SUCCESS) {
+            NXPLOG_UCIHAL_E("SessionTrack: URSK_DELETE failed, ntf status=0x%x", status);
+            urskDeleteNtfWait.status = status;
+          } else {
+            uint32_t session_id = le_bytes_to_cpu<uint32_t>(&packet[6]);
+            uint8_t del_status = packet[10];
+            NXPLOG_UCIHAL_D("SessionTrack: URSK_DELETE done, deletion_status=%u", del_status);
+
+            // 0: RDS removed successfully
+            // 1: RDS not found
+            // 2: Interface error encountered
+            if (del_status == 0 || del_status == 1) {
+              urskDeleteNtfWait.status = status;
             } else {
-              NXPLOG_UCIHAL_D("SessionTrack: URSK_DELETE done");
+              urskDeleteNtfWait.status = UWB_DEVICE_ERROR;
             }
           }
         }
+        SEM_POST(&urskDeleteNtfWait);
       }
     );
 
@@ -382,6 +399,13 @@ private:
       NXPLOG_UCIHAL_E("SessionTrack: Failed to delete URSK for session id 0x%08x",
         session_info->session_id_);
     }
+
+    if (phNxpUciHal_sem_timed_wait_msec(&urskDeleteNtfWait, kUrskDeleteNtfTimeoutMs)) {
+      NXPLOG_UCIHAL_E("SessionTrack: Failed(timeout) to delete URSK for session id 0x%08x",
+        session_info->session_id_);
+    }
+
+    phNxpUciHal_cleanup_cb_data(&urskDeleteNtfWait);
   }
 
   std::pair<bool, uint32_t> GetAppConfLe32(uint32_t session_handle, uint8_t tag)
@@ -509,7 +533,7 @@ private:
         if (delete_ursk_ccc_enabled_ && pSessionInfo &&
             pSessionInfo->session_type_ == kSessionType_CCCRanging) {
           // If this CCC ranging session, issue DELETE_URSK_CMD for this session.
-          auto msg = std::make_shared<SessionTrackMsg>(SessionTrackWorkType::DELETE_URSK, pSessionInfo, false);
+          auto msg = std::make_shared<SessionTrackMsg>(SessionTrackWorkType::DELETE_URSK, pSessionInfo, true);
           QueueSessionTrackWork(msg);
         }
         sessions_.erase(session_handle);
