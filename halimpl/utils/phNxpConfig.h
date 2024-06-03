@@ -61,7 +61,6 @@ int NxpConfig_GetStrArrayVal(const char* name, int index, char* pValue, unsigned
 #define NAME_NXP_UWB_EXT_APP_SR1XX_T_CONFIG "NXP_UWB_EXT_APP_SR1XX_T_CONFIG"
 #define NAME_NXP_UWB_EXT_APP_SR1XX_S_CONFIG "NXP_UWB_EXT_APP_SR1XX_S_CONFIG"
 #define NAME_UWB_USER_FW_BOOT_MODE_CONFIG "UWB_USER_FW_BOOT_MODE_CONFIG"
-#define NAME_NXP_COUNTRY_CODE_CONFIG "NXP_COUNTRY_CODE_CONFIG"
 #define NAME_NXP_UWB_COUNTRY_CODE_CAPS "UWB_COUNTRY_CODE_CAPS"
 
 #define NAME_NXP_SECURE_CONFIG_BLK "NXP_SECURE_CONFIG_BLK_"
@@ -76,6 +75,14 @@ int NxpConfig_GetStrArrayVal(const char* name, int index, char* pValue, unsigned
 
 /* libuwb-countrycode.conf parameters */
 #define NAME_NXP_COUNTRY_CODE_VERSION "VERSION"
+
+#define NAME_AUTO_SUSPEND_ENABLE        "AUTO_SUSPEND_ENABLE"
+#define NAME_AUTO_SUSPEND_TIMEOUT_MS    "AUTO_SUSPEND_TIMEOUT_MS"
+
+#define NAME_DELETE_URSK_FOR_CCC_SESSION    "DELETE_URSK_FOR_CCC_SESSION"
+
+/* In case the HAL has to set STS index for CCC */
+#define NAME_OVERRIDE_STS_INDEX_FOR_CCC_SESSION    "OVERRIDE_STS_INDEX_FOR_CCC_SESSION"
 
 /* default configuration */
 #define default_storage_location "/data/vendor/uwb"
