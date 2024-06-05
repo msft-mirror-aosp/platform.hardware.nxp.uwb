@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2020 NXP
+ * Copyright 2012-2020, 2023 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +20,10 @@
 #include <phNxpLog.h>
 #include <phNxpUciHal.h>
 #include <phNxpUciHal_utils.h>
+
+using namespace std;
+map<uint16_t, vector<uint16_t>> input_map;
+map<uint16_t, vector<uint16_t>> conf_map;
 
 /*********************** Link list functions **********************************/
 
@@ -317,10 +321,9 @@ void phNxpUciHal_cleanup_monitor(void) {
     pthread_mutex_destroy(&nxpucihal_monitor->reentrance_mutex);
     phNxpUciHal_releaseall_cb_data();
     listDestroy(&nxpucihal_monitor->sem_list);
+    free(nxpucihal_monitor);
+    nxpucihal_monitor = NULL;
   }
-
-  free(nxpucihal_monitor);
-  nxpucihal_monitor = NULL;
 
   return;
 }
@@ -390,27 +393,35 @@ void phNxpUciHal_cleanup_cb_data(phNxpUciHal_Sem_t* pCallbackData) {
   return;
 }
 
-void phNxpUciHal_sem_timed_wait(phNxpUciHal_Sem_t* pCallbackData) {
+int phNxpUciHal_sem_timed_wait_msec(phNxpUciHal_Sem_t* pCallbackData, long msec)
+{
   int ret;
   struct timespec absTimeout;
   if (clock_gettime(CLOCK_MONOTONIC, &absTimeout) == -1) {
     NXPLOG_UCIHAL_E("clock_gettime failed");
-    pCallbackData->status = UWBSTATUS_FAILED;
-    return;
+    return -1;
   }
-  absTimeout.tv_sec += 1; /*1 second timeout*/
+
+  if (msec > 1000L) {
+    absTimeout.tv_sec += msec / 1000L;
+    msec = msec % 1000L;
+  }
+  absTimeout.tv_nsec += msec * 1000000L;
+  if (absTimeout.tv_nsec > 1000000000L) {
+    absTimeout.tv_nsec -= 1000000000L;
+    absTimeout.tv_sec += 1;
+  }
+
   while ((ret = sem_timedwait_monotonic_np(&pCallbackData->sem, &absTimeout)) == -1 && errno == EINTR) {
     continue;
   }
   if (ret == -1 && errno == ETIMEDOUT) {
-    NXPLOG_UCIHAL_E("wait semaphore timed out");
     pCallbackData->status = UWBSTATUS_RESPONSE_TIMEOUT;
-    return;
+    NXPLOG_UCIHAL_E("wait semaphore timed out");
+    return -1;
   }
-  pCallbackData->status = UWBSTATUS_SUCCESS;
-  return;
+  return 0;
 }
-
 
 /*******************************************************************************
 **
@@ -446,19 +457,49 @@ void phNxpUciHal_releaseall_cb_data(void) {
 ** Returns          None
 **
 *******************************************************************************/
-void phNxpUciHal_print_packet(const char* pString, const uint8_t* p_data,
+void phNxpUciHal_print_packet(enum phNxpUciHal_Pkt_Type what, const uint8_t* p_data,
                               uint16_t len) {
   uint32_t i;
   char print_buffer[len * 3 + 1];
+
+  if ((gLog_level.ucix_log_level >= NXPLOG_LOG_DEBUG_LOGLEVEL)) {
+    /* OK to print */
+  }
+  else
+  {
+    /* Nothing to print...
+     * Why prepare buffer without printing?
+     */
+    return;
+  }
 
   memset(print_buffer, 0, sizeof(print_buffer));
   for (i = 0; i < len; i++) {
     snprintf(&print_buffer[i * 2], 3, "%02X", p_data[i]);
   }
-  if (0 == memcmp(pString, "SEND", 0x04)) {
-    NXPLOG_UCIX_D("len = %3d > %s", len, print_buffer);
-  } else if (0 == memcmp(pString, "RECV", 0x04)) {
-    NXPLOG_UCIR_D("len = %3d > %s", len, print_buffer);
+  switch(what) {
+    case NXP_TML_UCI_CMD_AP_2_UWBS:
+    {
+      NXPLOG_UCIX_D("len = %3d > %s", len, print_buffer);
+    }
+    break;
+    case NXP_TML_UCI_RSP_NTF_UWBS_2_AP:
+    {
+      NXPLOG_UCIR_D("len = %3d < %s", len, print_buffer);
+    }
+    break;
+    case NXP_TML_FW_DNLD_CMD_AP_2_UWBS:
+    {
+      // TODO: Should be NXPLOG_FWDNLD_D
+      NXPLOG_UCIX_D("len = %3d > (FW)%s", len, print_buffer);
+    }
+    break;
+    case NXP_TML_FW_DNLD_RSP_UWBS_2_AP:
+    {
+      // TODO: Should be NXPLOG_FWDNLD_D
+      NXPLOG_UCIR_D("len = %3d < (FW)%s", len, print_buffer);
+    }
+    break;
   }
 
   return;
@@ -498,4 +539,59 @@ double phNxpUciHal_byteArrayToDouble(const uint8_t* p_data) {
   }
   memcpy(&d, &ptr_1, sizeof(d));
   return d;                                                       \
+}
+
+std::map<uint16_t, std::vector<uint8_t>>
+decodeTlvBytes(const std::vector<uint8_t> &ext_ids, const uint8_t *tlv_bytes, size_t tlv_len)
+{
+  std::map<uint16_t, std::vector<uint8_t>> ret;
+
+  size_t i = 0;
+  while ((i + 1) < tlv_len) {
+    uint16_t tag;
+    uint8_t len;
+
+    uint8_t byte0 = tlv_bytes[i++];
+    uint8_t byte1 = tlv_bytes[i++];
+    if (std::find(ext_ids.begin(), ext_ids.end(), byte0) != ext_ids.end()) {
+      if (i >= tlv_len) {
+        NXPLOG_UCIHAL_E("Failed to decode TLV bytes (offset=%zu).", i);
+        break;
+      }
+      tag = (byte0 << 8) | byte1; // 2 bytes tag as big endiann
+      len = tlv_bytes[i++];
+    } else {
+      tag = byte0;
+      len = byte1;
+    }
+    if ((i + len) > tlv_len) {
+      NXPLOG_UCIHAL_E("Failed to decode TLV bytes (offset=%zu).", i);
+      break;
+    }
+    ret[tag] = std::vector(&tlv_bytes[i], &tlv_bytes[i + len]);
+    i += len;
+  }
+
+  return ret;
+}
+
+std::vector<uint8_t> encodeTlvBytes(const std::map<uint16_t, std::vector<uint8_t>> &tlvs)
+{
+  std::vector<uint8_t> bytes;
+
+  for (auto const & [tag, val] : tlvs) {
+    // Tag
+    if (tag > 0xff) {
+      bytes.push_back(tag >> 8);
+    }
+    bytes.push_back(tag & 0xff);
+
+    // Length
+    bytes.push_back(val.size());
+
+    // Value
+    bytes.insert(bytes.end(), val.begin(), val.end());
+  }
+
+  return bytes;
 }

@@ -13,15 +13,60 @@ license {
     // large-scale-change unable to identify any license_text files
 }
 
+soong_config_string_variable {
+    name: "chip",
+    values: [
+        "SR1XX",
+        "SR200",
+    ],
+}
+
+soong_config_module_type {
+    name: "uwb_cc_defaults",
+    module_type: "cc_defaults",
+    config_namespace: "nxp_uwb",
+    variables: ["chip"],
+    properties: [
+        "cflags",
+        "srcs",
+        "local_include_dirs",
+    ],
+}
+
+uwb_cc_defaults {
+    name: "uwb_defaults",
+    soong_config_variables: {
+        chip: {
+            SR200: {
+                cflags: ["-DSR200=TRUE"],
+                srcs: [
+                    "halimpl/hal/sr200/*.cc",
+                ],
+                local_include_dirs: [
+                    "halimpl/hal/sr200",
+                ],
+            },
+            conditions_default: {
+                cflags: ["-DSR1XX=TRUE"],
+                srcs: [
+                    "halimpl/hal/sr1xx/*.cc",
+                ],
+                local_include_dirs: [
+                    "halimpl/hal/sr1xx",
+                ],
+            },
+        },
+    },
+}
+
 cc_library_shared {
     name: "uwb_uci.helios",
     defaults: [
         "hidl_defaults",
+        "uwb_defaults",
     ],
     proprietary: true,
     srcs: [
-        "halimpl/fwd/sr1xx/*.cc",
-        "halimpl/inc/common/*.cc",
         "halimpl/hal/*.cc",
         "halimpl/log/*.cc",
         "halimpl/tml/*.cc",
@@ -36,10 +81,9 @@ cc_library_shared {
         "libchrome",
         "libutils",
         "libdl",
-        "libhidlbase"
+        "libhidlbase",
     ],
     local_include_dirs: [
-        "halimpl/fwd/sr1xx",
         "halimpl/inc",
         "halimpl/inc/common",
         "halimpl/hal",
@@ -48,10 +92,13 @@ cc_library_shared {
         "halimpl/utils",
         "extns/inc",
     ],
-
+    required: [
+        "libuwb-uci.conf",
+        "libuwb-nxp.conf",
+        "libuwb-countrycode.conf",
+    ],
     cflags: [
         "-DGENERIC",
-        "-DSOC_DEFAULT",
         "-DBUILDCFG=1",
         "-Wno-deprecated-register",
         "-Wno-unused-parameter",

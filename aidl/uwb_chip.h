@@ -1,6 +1,8 @@
 /*
  * Copyright 2021, The Android Open Source Project
  *
+ * Copyright 2023 NXP
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -67,6 +69,8 @@ class UwbChip : public BnUwbChip {
 
   private:
     std::string name_;
+
+  public:
     static std::shared_ptr<IUwbClientCallback> mClientCallback;
 };
 }  // namespace impl
