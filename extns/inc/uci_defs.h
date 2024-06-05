@@ -143,6 +143,11 @@
 
 #define UCI_MSG_SESSION_SET_APP_CONFIG                3
 #define UCI_MSG_SESSION_SET_APP_CONFIG_HANDLE_OFFSET  4
+#define UCI_MSG_SESSION_GET_APP_CONFIG                4
+
+// Parameter Tags
+#define UCI_APP_CONFIG_FIRA_STS_INDEX                 0x0A
+#define UCI_APP_CONFIG_CCC_LAST_STS_INDEX_USED        0xA8
 
 #define UCI_MSG_SESSION_QUERY_DATA_SIZE               0x0B
 #define UCI_MSG_SESSION_QUERY_DATA_SIZE_STATUS_OFFSET 8
@@ -155,6 +160,10 @@ constexpr uint8_t kSessionType_CCCRanging = 0xA0;
 /*********************************************************
  * UCI session config Group-2: Opcodes and size of command
  ********************************************************/
+#define UCI_MSG_SESSION_START                         0x00
+#define UCI_MSG_SESSION_START_CMD_LENGTH              (8)
+#define UCI_MSG_SESSION_START_HANDLE_OFFSET           (4)
+
 #define UCI_MSG_SESSION_STOP                          0x01
 
 /**********************************************************
