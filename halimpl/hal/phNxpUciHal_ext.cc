@@ -64,6 +64,14 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
   // PBF=1 or DATA packet: don't check RSP
   bool isRetryNotRequired = phNxpUciHal_is_retry_not_required(p_cmd[0]) || (cmd_len < 4);
 
+  const uint8_t mt = (p_cmd[0] & UCI_MT_MASK) >> UCI_MT_SHIFT;
+  const uint8_t gid = p_cmd[0] & UCI_GID_MASK;
+  const uint8_t oid = p_cmd[1] & UCI_OID_MASK;
+
+  if (mt == UCI_MT_CMD && gid == UCI_GID_SESSION_CONTROL && oid == UCI_MSG_SESSION_START) {
+    SessionTrack_onSessionStart(cmd_len, p_cmd);
+  }
+
   // upper-layer should handle the case of UWBSTATUS_COMMAND_RETRANSMIT && isRetryNotRequired
   if (isRetryNotRequired) {
     *data_written = phNxpUciHal_write_unlocked(cmd_len, p_cmd);
