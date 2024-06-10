@@ -81,6 +81,9 @@ int NxpConfig_GetStrArrayVal(const char* name, int index, char* pValue, unsigned
 
 #define NAME_DELETE_URSK_FOR_CCC_SESSION    "DELETE_URSK_FOR_CCC_SESSION"
 
+/* In case the HAL has to set STS index for CCC */
+#define NAME_OVERRIDE_STS_INDEX_FOR_CCC_SESSION    "OVERRIDE_STS_INDEX_FOR_CCC_SESSION"
+
 /* default configuration */
 #define default_storage_location "/data/vendor/uwb"
 
