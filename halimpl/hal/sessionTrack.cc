@@ -1,7 +1,8 @@
 #include <bit>
 #include <mutex>
-#include <unordered_map>
+#include <random>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "phNxpConfig.h"
@@ -38,6 +39,11 @@ extern phNxpUciHal_Control_t nxpucihal_ctrl;
 // and resumes the device before sending any commands.
 // SessionTracks detects UWBS is in idle when there's no session created.
 //
+//
+// For CCC Session, in case `OVERRIDE_STS_INDEX_FOR_CCC_SESSION` is set,
+// 1) Set STS Index as as non Zero in case new ranging session
+// 2) Set STS Index to Last CCC STS Index + 1 in case of restarting a session.
+//
 
 class SessionTrack {
 private:
@@ -47,11 +53,13 @@ private:
     uint8_t   session_type_;
     uint8_t   session_state_;
     uint8_t   channel_;
+    bool      ranging_started_;
     SessionInfo(uint32_t session_id, uint8_t session_type) :
       session_id_(session_id),
       session_type_(session_type),
       session_state_(UCI_MSG_SESSION_STATE_UNDEFINED),
-      channel_(0) {
+      channel_(0),
+      ranging_started_(false) {
     }
   };
   enum class SessionTrackWorkType {
@@ -81,6 +89,7 @@ private:
   };
   static constexpr unsigned long kAutoSuspendTimeoutDefaultMs_ = (30 * 1000);
   static constexpr long kQueueTimeoutMs = 500;
+  static constexpr long kUrskDeleteNtfTimeoutMs = 500;
 
 private:
   std::shared_ptr<phNxpUciHal_RxHandler> rx_handler_session_status_ntf_;
@@ -93,6 +102,7 @@ private:
   std::atomic<PowerState> power_state_;
   bool idle_timer_started_;
   unsigned long idle_timeout_ms_;
+  bool override_sts_index_for_ccc_;
 
   std::thread worker_thread_;
   std::mutex sync_mutex_;
@@ -106,7 +116,8 @@ public:
     calibration_delayed_(false),
     power_state_(PowerState::IDLE),
     idle_timer_started_(false),
-    idle_timeout_ms_(kAutoSuspendTimeoutDefaultMs_)
+    idle_timeout_ms_(kAutoSuspendTimeoutDefaultMs_),
+    override_sts_index_for_ccc_(true)
   {
     sessions_.clear();
 
@@ -117,6 +128,11 @@ public:
 
     if (NxpConfig_GetNum(NAME_DELETE_URSK_FOR_CCC_SESSION, &numval, sizeof(numval)) && numval) {
       delete_ursk_ccc_enabled_ = true;
+    }
+
+    // Default on
+    if (NxpConfig_GetNum(NAME_OVERRIDE_STS_INDEX_FOR_CCC_SESSION, &numval, sizeof(numval)) && !numval) {
+      override_sts_index_for_ccc_ = false;
     }
 
     if (NxpConfig_GetNum(NAME_AUTO_SUSPEND_ENABLE, &numval, sizeof(numval)) && numval) {
@@ -245,6 +261,58 @@ public:
     QueueSessionTrackWork(msg);
   }
 
+  void OnSessionStart(size_t packet_len, const uint8_t *packet) {
+    if (packet_len != UCI_MSG_SESSION_START_CMD_LENGTH)
+      return;
+
+    if (!override_sts_index_for_ccc_) {
+      return; /* Not needed / used... */
+    }
+
+    uint32_t session_handle = le_bytes_to_cpu<uint32_t>(&packet[UCI_MSG_SESSION_START_HANDLE_OFFSET]);
+
+    std::shared_ptr<SessionInfo> pSessionInfo;
+    {
+      std::lock_guard<std::mutex> lock(sessions_lock_);
+      pSessionInfo = GetSessionInfo(session_handle);
+    }
+
+    // Check STS_INDEX and fetch if it was not set by upper-layer
+    if (!pSessionInfo || pSessionInfo->session_type_ != kSessionType_CCCRanging)
+      return;
+
+    auto result = QueryStsIndex(session_handle);
+    if (!result.first) {
+      NXPLOG_UCIHAL_E("SessionTrack: failed to query sts index, session_handle=0x%x", session_handle);
+      return;
+    }
+
+    // When it's resuming session, FW gives 0xFFFFFFFF when STS_INDEX was not set (SR100 D50.21)
+    if (result.second != 0 && result.second != 0xFFFFFFFF) {
+      NXPLOG_UCIHAL_D("SessionTrack: sts_index0 already set, skip fetching it");
+      return;
+    }
+
+    if (!pSessionInfo->ranging_started_) {
+      // first ranging
+      NXPLOG_UCIHAL_D("SessionTrack: session handle 0x%x has zero sts_index0, fetch it", session_handle);
+      uint32_t new_sts_index = PickRandomStsIndex();
+      SetStsIndex(session_handle, new_sts_index);
+    } else {
+      // resuming ranging, sts_index0 should be incremented
+      NXPLOG_UCIHAL_D("SessionTrack: session handle 0x%x doesn't have valid sts_index0, increment it", session_handle);
+
+      result = QueryLastStsIndexUsed(session_handle);
+      if (!result.first) {
+        NXPLOG_UCIHAL_E("SessionTrack: failed to query last sts index used, session_handle=0x%x", session_handle);
+        return;
+      }
+      // increment it from last sts_index (just +1)
+      uint32_t new_sts_index = (result.second + 1) & ((1 << 30) - 1);
+      SetStsIndex(session_handle, new_sts_index);
+    }
+  }
+
 private:
   // Send SESSION_STOP_CMD
   void StopRanging(uint32_t session_handle) {
@@ -266,6 +334,9 @@ private:
     if (!session_info)
       return;
 
+    phNxpUciHal_Sem_t urskDeleteNtfWait;
+    phNxpUciHal_init_cb_data(&urskDeleteNtfWait, NULL);
+
     phNxpUciHal_rx_handler_add(UCI_MT_RSP, UCI_GID_PROPRIETARY_0X0F,
       UCI_MSG_URSK_DELETE, true, true,
       [](size_t packet_len, const uint8_t *packet) {
@@ -278,24 +349,37 @@ private:
     );
     phNxpUciHal_rx_handler_add(UCI_MT_NTF, UCI_GID_PROPRIETARY_0X0F,
       UCI_MSG_URSK_DELETE, true, true,
-      [](size_t packet_len, const uint8_t *packet) {
+      [&urskDeleteNtfWait](size_t packet_len, const uint8_t *packet) {
         if (packet_len < 6)
           return;
         uint8_t status = packet[4];
         uint8_t nr = packet[5];
-        if (packet_len != (6 + 5 * nr)) {
+
+        // We always issue URSK_DELETE_CMD with one Session ID and wait for it,
+        // Number of entries should be 1.
+        if (nr != 1 || packet_len != (6 + 5 * nr)) {
           NXPLOG_UCIHAL_E("SessionTrack: unrecognized packet type of URSK_DELETE_NTF");
+          urskDeleteNtfWait.status = UWB_DEVICE_ERROR;
         } else {
-          for (auto i = 6; i < packet_len; i += 5) {
-            uint32_t session_id = le_bytes_to_cpu<uint32_t>(&packet[i]);
-            uint8_t del_status = packet[i + 4];
-            if (status != UWBSTATUS_SUCCESS) {
-              NXPLOG_UCIHAL_E("SessionTrack: URSK_DELETE failed, ntf status=0x%x", status);
+          if (status != UWBSTATUS_SUCCESS) {
+            NXPLOG_UCIHAL_E("SessionTrack: URSK_DELETE failed, ntf status=0x%x", status);
+            urskDeleteNtfWait.status = status;
+          } else {
+            uint32_t session_id = le_bytes_to_cpu<uint32_t>(&packet[6]);
+            uint8_t del_status = packet[10];
+            NXPLOG_UCIHAL_D("SessionTrack: URSK_DELETE done, deletion_status=%u", del_status);
+
+            // 0: RDS removed successfully
+            // 1: RDS not found
+            // 2: Interface error encountered
+            if (del_status == 0 || del_status == 1) {
+              urskDeleteNtfWait.status = status;
             } else {
-              NXPLOG_UCIHAL_D("SessionTrack: URSK_DELETE done");
+              urskDeleteNtfWait.status = UWB_DEVICE_ERROR;
             }
           }
         }
+        SEM_POST(&urskDeleteNtfWait);
       }
     );
 
@@ -315,6 +399,112 @@ private:
       NXPLOG_UCIHAL_E("SessionTrack: Failed to delete URSK for session id 0x%08x",
         session_info->session_id_);
     }
+
+    if (phNxpUciHal_sem_timed_wait_msec(&urskDeleteNtfWait, kUrskDeleteNtfTimeoutMs)) {
+      NXPLOG_UCIHAL_E("SessionTrack: Failed(timeout) to delete URSK for session id 0x%08x",
+        session_info->session_id_);
+    }
+
+    phNxpUciHal_cleanup_cb_data(&urskDeleteNtfWait);
+  }
+
+  std::pair<bool, uint32_t> GetAppConfLe32(uint32_t session_handle, uint8_t tag)
+  {
+    uint32_t val = 0;
+    bool result = false;
+
+    phNxpUciHal_rx_handler_add(UCI_MT_RSP, UCI_GID_SESSION_MANAGE,
+      UCI_MSG_SESSION_GET_APP_CONFIG, true, true,
+      [&val, &result, tag](size_t packet_len, const uint8_t *packet) {
+        if (packet_len != 12)
+          return;
+
+        if (packet[4] != UWBSTATUS_SUCCESS) {
+          NXPLOG_UCIHAL_E("SessionTrack: GetAppConfig failed, status=0x%02x", packet[4]);
+          return;
+        }
+        if (packet[5] != 1) {
+          NXPLOG_UCIHAL_E("SessionTrack: GetAppConfig failed, nr=%u", packet[5]);
+          return;
+        }
+        if (packet[6] != tag) {
+          NXPLOG_UCIHAL_E("SessionTrack: GetAppConfig failed, tag=0x%02x, expected=0x%02x", packet[6], tag);
+          return;
+        }
+        if (packet[7] != 4) {
+          NXPLOG_UCIHAL_E("SessionTrack: GetAppConfig failed, len=%u", packet[7]);
+          return;
+        }
+        val = le_bytes_to_cpu<uint32_t>(&packet[8]);
+        result = true;
+      }
+    );
+
+    std::vector<uint8_t> packet{(UCI_MT_CMD << UCI_MT_SHIFT) | UCI_GID_SESSION_MANAGE,
+      UCI_MSG_SESSION_GET_APP_CONFIG, 0,  0};
+
+    uint8_t session_handle_bytes[4];
+    cpu_to_le_bytes(session_handle_bytes, session_handle);
+
+    packet.insert(packet.end(), std::begin(session_handle_bytes), std::end(session_handle_bytes));
+    packet.push_back(1);  // Num of Prameters
+    packet.push_back(tag);  // The parameter. STS Index
+    packet[UCI_PAYLOAD_LENGTH_OFFSET] = packet.size() - UCI_MSG_HDR_SIZE;
+
+    auto ret = phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
+    if (ret != UWBSTATUS_SUCCESS) {
+      return std::pair(false, 0);
+    } else {
+      return std::pair(result, val);
+    }
+  }
+
+  std::pair<bool, uint32_t> QueryStsIndex(uint32_t session_handle)
+  {
+    return GetAppConfLe32(session_handle, UCI_APP_CONFIG_FIRA_STS_INDEX);
+  }
+
+  std::pair<bool, uint32_t> QueryLastStsIndexUsed(uint32_t session_handle)
+  {
+    return GetAppConfLe32(session_handle, UCI_APP_CONFIG_CCC_LAST_STS_INDEX_USED);
+  }
+
+  bool SetStsIndex(uint32_t session_handle, uint32_t sts_index)
+  {
+    NXPLOG_UCIHAL_D("SessionTrack: SetStsIndex 0x%x for session handle 0x%x", sts_index, session_handle);
+
+    uint8_t session_handle_bytes[4];
+    uint8_t sts_index_bytes[4];
+
+    cpu_to_le_bytes(session_handle_bytes, session_handle);
+    cpu_to_le_bytes(sts_index_bytes, sts_index);
+
+    std::vector<uint8_t> packet{(UCI_MT_CMD << UCI_MT_SHIFT) | UCI_GID_SESSION_MANAGE,
+      UCI_MSG_SESSION_SET_APP_CONFIG, 0,  0};
+
+    packet.insert(packet.end(), std::begin(session_handle_bytes), std::end(session_handle_bytes));
+    packet.push_back(1);  // Num of Prameters
+    packet.push_back(UCI_APP_CONFIG_FIRA_STS_INDEX);  // The parameter. STS Index
+    packet.push_back(4);  // Sts Index Size...
+    packet.insert(packet.end(), std::begin(sts_index_bytes), std::end(sts_index_bytes));
+    packet[UCI_PAYLOAD_LENGTH_OFFSET] = packet.size() - UCI_MSG_HDR_SIZE;
+
+    auto ret = phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
+    if (ret != UWBSTATUS_SUCCESS) {
+      NXPLOG_UCIHAL_E("SessionTrack: Failed to SetStsIndex");
+      return false;
+    }
+    return true;
+  }
+
+  uint32_t PickRandomStsIndex()
+  {
+    std::random_device rdev;
+    std::mt19937 rng(rdev());
+
+    // valid range is [0, 2~30), but use half of it to prevent roll over
+    std::uniform_int_distribution<std::mt19937::result_type> sts_index(0, (1 << 16) - 1);
+    return sts_index(rng);
   }
 
   // UCI_MSG_SESSION_STATUS_NTF rx handler
@@ -331,24 +521,26 @@ private:
     {
       std::lock_guard<std::mutex> lock(sessions_lock_);
 
+      auto pSessionInfo = GetSessionInfo(session_handle);
+      if (pSessionInfo) {
+        NXPLOG_UCIHAL_D("SessionTrack: update session handle 0x%08x state %u", session_handle, session_state);
+        pSessionInfo->session_state_ = session_state;
+      }
+
       if (session_state == UCI_MSG_SESSION_STATE_DEINIT) {
         NXPLOG_UCIHAL_D("SessionTrack: remove session handle 0x%08x", session_handle);
-        auto pSessionInfo = GetSessionInfo(session_handle);
 
         if (delete_ursk_ccc_enabled_ && pSessionInfo &&
             pSessionInfo->session_type_ == kSessionType_CCCRanging) {
           // If this CCC ranging session, issue DELETE_URSK_CMD for this session.
-          auto msg = std::make_shared<SessionTrackMsg>(SessionTrackWorkType::DELETE_URSK, pSessionInfo, false);
+          auto msg = std::make_shared<SessionTrackMsg>(SessionTrackWorkType::DELETE_URSK, pSessionInfo, true);
           QueueSessionTrackWork(msg);
         }
         sessions_.erase(session_handle);
         is_idle = IsDeviceIdle();
-      } else {
-        NXPLOG_UCIHAL_D("SessionTrack: update session handle 0x%08x state %u", session_handle, session_state);
-        auto pSessionInfo = GetSessionInfo(session_handle);
-        if (pSessionInfo) {
-          pSessionInfo->session_state_ = session_state;
-        }
+      } else if (session_state == UCI_MSG_SESSION_STATE_ACTIVE) {
+        // mark this session has been started at
+        pSessionInfo->ranging_started_ = true;
       }
     }
 
@@ -526,4 +718,10 @@ void SessionTrack_onSessionInit(size_t packet_len, const uint8_t *packet)
 {
   if (gSessionTrack)
     gSessionTrack->OnSessionInit(packet_len, packet);
+}
+
+void SessionTrack_onSessionStart(size_t packet_len, const uint8_t *packet)
+{
+  if (gSessionTrack)
+    gSessionTrack->OnSessionStart(packet_len, packet);
 }
