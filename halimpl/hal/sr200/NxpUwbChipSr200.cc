@@ -152,7 +152,19 @@ tHAL_UWB_STATUS
 NxpUwbChipSr200::apply_calibration(extcal_param_id_t id, const uint8_t ch,
                                    const uint8_t *data, size_t data_len)
 {
-  return phNxpUwbCalib_apply_calibration(id, ch, data, data_len);
+  switch (id) {
+  case EXTCAL_PARAM_TX_POWER:
+  case EXTCAL_PARAM_TX_BASE_BAND_CONTROL:
+  case EXTCAL_PARAM_DDFS_TONE_CONFIG:
+  case EXTCAL_PARAM_TX_PULSE_SHAPE:
+    return sr1xx_apply_calibration(id, ch, data, data_len);
+  case EXTCAL_PARAM_CLK_ACCURACY:
+  case EXTCAL_PARAM_RX_ANT_DELAY:
+    /* break through */
+  default:
+    NXPLOG_UCIHAL_E("Unsupported parameter: 0x%x", id);
+    return UWBSTATUS_FAILED;
+  }
 }
 
 int16_t NxpUwbChipSr200::extra_group_delay(void) {
