@@ -28,7 +28,6 @@ private:
   void on_binding_status_ntf(size_t packet_len, const uint8_t* packet);
 
   tHAL_UWB_STATUS check_binding_done();
-  int16_t extra_group_delay(void);
 
   UciHalRxHandler bindingStatusNtfHandler_;
   UciHalSemaphore bindingStatusNtfWait_;
@@ -165,11 +164,6 @@ NxpUwbChipSr200::apply_calibration(extcal_param_id_t id, const uint8_t ch,
     NXPLOG_UCIHAL_E("Unsupported parameter: 0x%x", id);
     return UWBSTATUS_FAILED;
   }
-}
-
-int16_t NxpUwbChipSr200::extra_group_delay(void) {
-  // Only for SR100. Not for SR2XX
-  return 0;
 }
 
 std::unique_ptr<NxpUwbChip> GetUwbChip()
