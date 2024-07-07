@@ -323,6 +323,7 @@ public:
   device_type_t get_device_type(const uint8_t *param, size_t param_len);
   tHAL_UWB_STATUS read_otp(extcal_param_id_t id, uint8_t *data, size_t data_len, size_t *retlen);
   tHAL_UWB_STATUS apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len);
+  tHAL_UWB_STATUS get_supported_channels(const uint8_t **cal_channels, uint8_t *nr);
 
 private:
   tHAL_UWB_STATUS check_binding();
@@ -560,6 +561,15 @@ tHAL_UWB_STATUS NxpUwbChipSr1xx::apply_calibration(extcal_param_id_t id, const u
   }
 
   return sr1xx_apply_calibration(id, ch, data, data_len);
+}
+
+tHAL_UWB_STATUS
+NxpUwbChipSr1xx::get_supported_channels(const uint8_t **cal_channels, uint8_t *nr)
+{
+  static const uint8_t sr100_cal_channels[] = {5, 6, 8, 9};
+  *cal_channels = sr100_cal_channels;
+  *nr = std::size(sr100_cal_channels);
+  return UWBSTATUS_SUCCESS;
 }
 
 std::unique_ptr<NxpUwbChip> GetUwbChip()
