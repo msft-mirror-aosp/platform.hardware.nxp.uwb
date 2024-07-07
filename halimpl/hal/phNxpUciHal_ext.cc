@@ -552,13 +552,6 @@ static void extcal_do_ant_delay(void)
   // parameter: cal.ant<N>.ch<N>.ant_delay=X
   // N(1) + N * {AntennaID(1), Rxdelay(Q14.2)}
   if (n_rx_antennas) {
-
-    const int16_t extra_delay = nxpucihal_ctrl.uwb_chip->extra_group_delay();
-
-    if (extra_delay) {
-      NXPLOG_UCIHAL_D("RX_ANT_DELAY_CALIB: Extra compensation '%d'", extra_delay);
-    }
-
     for (auto ch : cal_channels) {
       std::vector<uint8_t> entries;
       uint8_t n_entries = 0;
@@ -575,7 +568,6 @@ static void extcal_do_ant_delay(void)
         if (!NxpConfig_GetNum(key, &delay_value, 2))
           continue;
 
-        delay_value = delay_value + extra_delay;
         NXPLOG_UCIHAL_D("Apply RX_ANT_DELAY_CALIB: %s = %u", key, delay_value);
         entries.push_back(ant_id);
         // Little Endian
