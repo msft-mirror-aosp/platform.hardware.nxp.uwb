@@ -15,10 +15,9 @@
  * limitations under the License.
  */
 
-
+#include "phNxpUciHal_ext.h"
 #include "phNxpUwbCalib.h"
 #include "phUwbStatus.h"
-#include "phNxpUciHal_ext.h"
 
 //
 // SR1XX Device Calibrations:
@@ -84,6 +83,11 @@ tHAL_UWB_STATUS sr1xx_apply_calibration(extcal_param_id_t id, const uint8_t ch, 
     }
   case EXTCAL_PARAM_RX_ANT_DELAY:
     {
+      // [0] = number of entries
+      // {
+      //   [0] = rx antenna id
+      //   [1,2] = rx delay
+      // }
       if (!ch || data_len < 1 || !data[0] || (data[0] * 3) != (data_len - 1)) {
         return UWBSTATUS_FAILED;
       }
