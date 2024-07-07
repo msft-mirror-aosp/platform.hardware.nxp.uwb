@@ -20,16 +20,6 @@
 #include "phUwbStatus.h"
 #include "phNxpUciHal_ext.h"
 
-/* SR1XX is same as SR2XX */
-static tHAL_UWB_STATUS sr1xx_apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len);
-static tHAL_UWB_STATUS sr1xx_set_conf(const std::vector<uint8_t> &tlv);
-static tHAL_UWB_STATUS sr1xx_set_calibration(uint8_t channel, const std::vector<uint8_t> &tlv);
-
-
-tHAL_UWB_STATUS phNxpUwbCalib_apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len) {
-  return sr1xx_apply_calibration(id, ch, data, data_len);
-}
-
 //
 // SR1XX Device Calibrations:
 //
@@ -62,7 +52,7 @@ static tHAL_UWB_STATUS sr1xx_set_conf(const std::vector<uint8_t> &tlv)
   return phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
 }
 
-static tHAL_UWB_STATUS sr1xx_apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len)
+tHAL_UWB_STATUS sr1xx_apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len)
 {
   // Device Calibration
   const uint8_t UCI_PARAM_ID_RF_CLK_ACCURACY_CALIB    = 0x01;
