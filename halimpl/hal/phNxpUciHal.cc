@@ -491,7 +491,7 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
     return;
   }
 
-  NXPLOG_UCIHAL_D("read successful status = 0x%x", pInfo->wStatus);
+  NXPLOG_UCIHAL_V("read successful status = 0x%x", pInfo->wStatus);
 
   for (int32_t index = 0; index < pInfo->wLength; )
   {
