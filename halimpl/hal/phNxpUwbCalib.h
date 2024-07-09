@@ -18,4 +18,4 @@
 
 #include "NxpUwbChip.h"
 
-tHAL_UWB_STATUS phNxpUwbCalib_apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len);
+tHAL_UWB_STATUS sr1xx_apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len);
