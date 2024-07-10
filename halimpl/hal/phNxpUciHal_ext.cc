@@ -508,9 +508,6 @@ static bool CountryCodeCapsApplyTxPower(void)
   return true;
 }
 
-// Channels
-const static uint8_t cal_channels[] = {5, 6, 8, 9};
-
 static void extcal_do_xtal(void)
 {
   int ret;
@@ -548,11 +545,16 @@ static void extcal_do_ant_delay(void)
   std::bitset<8> rx_antenna_mask(nxpucihal_ctrl.cal_rx_antenna_mask);
   const uint8_t n_rx_antennas = rx_antenna_mask.size();
 
+  const uint8_t *cal_channels = NULL;
+  uint8_t nr_cal_channels = 0;
+  nxpucihal_ctrl.uwb_chip->get_supported_channels(&cal_channels, &nr_cal_channels);
+
   // RX_ANT_DELAY_CALIB
   // parameter: cal.ant<N>.ch<N>.ant_delay=X
   // N(1) + N * {AntennaID(1), Rxdelay(Q14.2)}
   if (n_rx_antennas) {
-    for (auto ch : cal_channels) {
+    for (int i = 0; i < nr_cal_channels; i++) {
+      uint8_t ch = cal_channels[i];
       std::vector<uint8_t> entries;
       uint8_t n_entries = 0;
 
@@ -593,10 +595,15 @@ static void extcal_do_tx_power(void)
   std::bitset<8> tx_antenna_mask(nxpucihal_ctrl.cal_tx_antenna_mask);
   const uint8_t n_tx_antennas = tx_antenna_mask.size();
 
+  const uint8_t *cal_channels = NULL;
+  uint8_t nr_cal_channels = 0;
+  nxpucihal_ctrl.uwb_chip->get_supported_channels(&cal_channels, &nr_cal_channels);
+
   // TX_POWER
   // parameter: cal.ant<N>.ch<N>.tx_power={...}
   if (n_tx_antennas) {
-    for (auto ch : cal_channels) {
+    for (int i = 0; i < nr_cal_channels; i++) {
+      uint8_t ch = cal_channels[i];
       std::vector<uint8_t> entries;
       uint8_t n_entries = 0;
 
