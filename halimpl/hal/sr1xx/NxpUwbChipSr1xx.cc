@@ -477,7 +477,7 @@ tHAL_UWB_STATUS NxpUwbChipSr1xx::read_otp(extcal_param_id_t id, uint8_t *data, s
 
 tHAL_UWB_STATUS NxpUwbChipSr1xx::apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len)
 {
-  return phNxpUwbCalib_apply_calibration(id, ch, data, data_len);
+  return sr1xx_apply_calibration(id, ch, data, data_len);
 }
 
 int16_t NxpUwbChipSr1xx::extra_group_delay(void) {
