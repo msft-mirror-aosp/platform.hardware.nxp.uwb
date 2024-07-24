@@ -27,6 +27,8 @@
 #define PWR_DISABLE               0
 #define PWR_ENABLE                1
 #define ABORT_READ_PENDING        2
+#define PWR_SUSPEND               3
+#define PWR_RESUME                4
 
 #define NORMAL_MODE_HEADER_LEN    4
 #define NORMAL_MODE_LEN_OFFSET    3
@@ -45,8 +47,7 @@
 
 /* Function declarations */
 void phTmlUwb_spi_close(void* pDevHandle);
-tHAL_UWB_STATUS phTmlUwb_spi_open_and_configure(pphTmlUwb_Config_t pConfig,
-                                          void** pLinkHandle);
-int phTmlUwb_spi_read(void* pDevHandle, uint8_t* pBuffer, int nNbBytesToRead);
-int phTmlUwb_spi_write(void* pDevHandle, uint8_t* pBuffer, int nNbBytesToWrite);
+tHAL_UWB_STATUS phTmlUwb_spi_open_and_configure(const char* pDevName, void** pLinkHandle);
+int phTmlUwb_spi_read(void* pDevHandle, uint8_t* pBuffer, size_t nNbBytesToRead);
+int phTmlUwb_spi_write(void* pDevHandle, uint8_t* pBuffer, size_t nNbBytesToWrite);
 int phTmlUwb_Spi_Ioctl(void* pDevHandle, phTmlUwb_ControlCode_t cmd, long arg);

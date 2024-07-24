@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019 NXP
+ * Copyright 2024 Google
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,17 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef PHDAL4UWB_MESSAGEQUEUE_H
-#define PHDAL4UWB_MESSAGEQUEUE_H
+#pragma once
 
-#include <linux/ipc.h>
-#include <phUwbTypes.h>
+#include "NxpUwbChip.h"
 
-intptr_t phDal4Uwb_msgget(key_t key, int msgflg);
-void phDal4Uwb_msgrelease(intptr_t msqid);
-int phDal4Uwb_msgctl(intptr_t msqid, int cmd, void* buf);
-intptr_t phDal4Uwb_msgsnd(intptr_t msqid, phLibUwb_Message_t* msg, int msgflg);
-int phDal4Uwb_msgrcv(intptr_t msqid, phLibUwb_Message_t* msg, long msgtyp,
-                     int msgflg);
-
-#endif /*  PHDAL4UWB_MESSAGEQUEUE_H  */
+tHAL_UWB_STATUS sr1xx_apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len);

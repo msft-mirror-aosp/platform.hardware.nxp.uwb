@@ -20,6 +20,9 @@
 /*
 ************************* Include Files ****************************************
 */
+#include <cstdint>
+
+#include "phUwbTypes.h"
 
 /*
  * Timer callback interface which will be called once registered timer
