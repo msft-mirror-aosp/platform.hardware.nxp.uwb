@@ -542,11 +542,11 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
 
         if (status_code == UCI_STATUS_COMMAND_RETRY) {
           // Handle retransmissions
-          // TODO: Do not retransmit it when !nxpucihal_ctrl.hal_ext_enabled,
-          // Upper layer should take care of it.
-          nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_COMMAND_RETRANSMIT;
-          nxpucihal_ctrl.isSkipPacket = 1;
-          bWakeupExtCmd = true;
+          if (nxpucihal_ctrl.hal_ext_enabled) {
+            nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_COMMAND_RETRANSMIT;
+            nxpucihal_ctrl.isSkipPacket = 1;
+            bWakeupExtCmd = true;
+          }
         }
       }
     }
