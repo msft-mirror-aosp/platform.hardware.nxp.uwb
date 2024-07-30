@@ -491,7 +491,7 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
     return;
   }
 
-  NXPLOG_UCIHAL_D("read successful status = 0x%x", pInfo->wStatus);
+  NXPLOG_UCIHAL_V("read successful status = 0x%x", pInfo->wStatus);
 
   for (int32_t index = 0; index < pInfo->wLength; )
   {
@@ -542,11 +542,11 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
 
         if (status_code == UCI_STATUS_COMMAND_RETRY) {
           // Handle retransmissions
-          // TODO: Do not retransmit it when !nxpucihal_ctrl.hal_ext_enabled,
-          // Upper layer should take care of it.
-          nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_COMMAND_RETRANSMIT;
-          nxpucihal_ctrl.isSkipPacket = 1;
-          bWakeupExtCmd = true;
+          if (nxpucihal_ctrl.hal_ext_enabled) {
+            nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_COMMAND_RETRANSMIT;
+            nxpucihal_ctrl.isSkipPacket = 1;
+            bWakeupExtCmd = true;
+          }
         }
       }
     }
@@ -991,48 +991,11 @@ tHAL_UWB_STATUS phNxpUciHal_coreInitialization()
  ******************************************************************************/
 tHAL_UWB_STATUS phNxpUciHal_sessionInitialization(uint32_t sessionId) {
   NXPLOG_UCIHAL_D(" %s: Enter", __func__);
-  std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
-  uint8_t vendorConfig[NXP_MAX_CONFIG_STRING_LEN] = {0x2F, 0x00, 0x00};
   tHAL_UWB_STATUS status = UWBSTATUS_SUCCESS;
-  buffer.fill(0);
-  int max_config_length = NXP_MAX_CONFIG_STRING_LEN - UCI_MSG_HDR_SIZE
-                            - sizeof(sessionId);
-  long retlen = 0, cmdlen = 0;
-  bool appConfigStatus = false;
 
   if (nxpucihal_ctrl.halStatus != HAL_STATUS_OPEN) {
     NXPLOG_UCIHAL_E("HAL not initialized");
     return UWBSTATUS_FAILED;
-  }
-  if(nxpucihal_ctrl.device_type == DEVICE_TYPE_SR1xxT) {
-    appConfigStatus = NxpConfig_GetByteArray(NAME_NXP_UWB_EXT_APP_SR1XX_T_CONFIG,
-                                   buffer.data(), buffer.size(),
-                                   &retlen);
-  } else if (nxpucihal_ctrl.device_type == DEVICE_TYPE_SR1xxS) {
-    appConfigStatus = NxpConfig_GetByteArray(NAME_NXP_UWB_EXT_APP_SR1XX_S_CONFIG,
-                                   buffer.data(), buffer.size(),
-                                   &retlen);
-  } else {
-    appConfigStatus = NxpConfig_GetByteArray(NAME_NXP_UWB_EXT_APP_DEFAULT_CONFIG,
-                                   buffer.data(), buffer.size(),
-                                   &retlen);
-  }
-
-  if (appConfigStatus) {
-    if ((retlen > 0) && (retlen <= max_config_length)) {
-      vendorConfig[3] = sizeof(sessionId) + retlen;
-      memcpy(vendorConfig + 4, &sessionId, sizeof(sessionId));
-      memcpy(vendorConfig + 8, buffer.data(), retlen);
-      cmdlen = UCI_MSG_HDR_SIZE + sizeof(sessionId) + retlen;
-      status = phNxpUciHal_send_ext_cmd(cmdlen, vendorConfig);
-      if (status != UWBSTATUS_SUCCESS) {
-        NXPLOG_UCIHAL_D(" %s: Apply vendor App Config Failed", __func__);
-        return UWBSTATUS_SUCCESS;
-      }
-    } else {
-      NXPLOG_UCIHAL_D(" %s: Invalid retlen", __func__);
-      return UWBSTATUS_SUCCESS;
-    }
   }
   return status;
 }
