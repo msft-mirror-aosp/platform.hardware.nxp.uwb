@@ -491,7 +491,7 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
     return;
   }
 
-  NXPLOG_UCIHAL_D("read successful status = 0x%x", pInfo->wStatus);
+  NXPLOG_UCIHAL_V("read successful status = 0x%x", pInfo->wStatus);
 
   for (int32_t index = 0; index < pInfo->wLength; )
   {
@@ -542,12 +542,21 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
 
         if (status_code == UCI_STATUS_COMMAND_RETRY) {
           // Handle retransmissions
-          // TODO: Do not retransmit it when !nxpucihal_ctrl.hal_ext_enabled,
-          // Upper layer should take care of it.
-          nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_COMMAND_RETRANSMIT;
-          nxpucihal_ctrl.isSkipPacket = 1;
-          bWakeupExtCmd = true;
+          if (nxpucihal_ctrl.hal_ext_enabled) {
+            nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_COMMAND_RETRANSMIT;
+            nxpucihal_ctrl.isSkipPacket = 1;
+          }
+        } else if (status_code == UCI_STATUS_BUFFER_UNDERFLOW) {
+          if (nxpucihal_ctrl.hal_ext_enabled) {
+            nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_COMMAND_RETRANSMIT;
+            nxpucihal_ctrl.isSkipPacket = 1;
+          } else {
+            // uci to handle retransmission
+            nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] =
+                UCI_STATUS_COMMAND_RETRY;
+          }
         }
+        bWakeupExtCmd = true;
       }
     }
 
