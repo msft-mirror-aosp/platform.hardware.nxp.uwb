@@ -276,6 +276,10 @@ static void* phTmlUwb_TmlWriterThread(void* pParam)
       break;
     }
 
+    if (gpphTmlUwb_Context->tWriteInfo.bThreadShouldStop) {
+      break;
+    }
+
     tHAL_UWB_STATUS wStatus = UWBSTATUS_SUCCESS;
 
     if (!gpphTmlUwb_Context->pDevHandle) {
