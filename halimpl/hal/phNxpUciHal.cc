@@ -545,9 +545,18 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
           if (nxpucihal_ctrl.hal_ext_enabled) {
             nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_COMMAND_RETRANSMIT;
             nxpucihal_ctrl.isSkipPacket = 1;
-            bWakeupExtCmd = true;
+          }
+        } else if (status_code == UCI_STATUS_BUFFER_UNDERFLOW) {
+          if (nxpucihal_ctrl.hal_ext_enabled) {
+            nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_COMMAND_RETRANSMIT;
+            nxpucihal_ctrl.isSkipPacket = 1;
+          } else {
+            // uci to handle retransmission
+            nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] =
+                UCI_STATUS_COMMAND_RETRY;
           }
         }
+        bWakeupExtCmd = true;
       }
     }
 
