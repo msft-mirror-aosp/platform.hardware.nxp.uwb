@@ -24,11 +24,11 @@ public:
   device_type_t get_device_type(const uint8_t *param, size_t param_len);
   tHAL_UWB_STATUS read_otp(extcal_param_id_t id, uint8_t *data, size_t data_len, size_t *retlen);
   tHAL_UWB_STATUS apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len);
+  tHAL_UWB_STATUS get_supported_channels(const uint8_t **cal_channels, uint8_t *nr);
 private:
   void on_binding_status_ntf(size_t packet_len, const uint8_t* packet);
 
   tHAL_UWB_STATUS check_binding_done();
-  int16_t extra_group_delay(void);
 
   UciHalRxHandler bindingStatusNtfHandler_;
   UciHalSemaphore bindingStatusNtfWait_;
@@ -152,12 +152,28 @@ tHAL_UWB_STATUS
 NxpUwbChipSr200::apply_calibration(extcal_param_id_t id, const uint8_t ch,
                                    const uint8_t *data, size_t data_len)
 {
-  return phNxpUwbCalib_apply_calibration(id, ch, data, data_len);
+  switch (id) {
+  case EXTCAL_PARAM_TX_POWER:
+  case EXTCAL_PARAM_TX_BASE_BAND_CONTROL:
+  case EXTCAL_PARAM_DDFS_TONE_CONFIG:
+  case EXTCAL_PARAM_TX_PULSE_SHAPE:
+    return sr1xx_apply_calibration(id, ch, data, data_len);
+  case EXTCAL_PARAM_CLK_ACCURACY:
+  case EXTCAL_PARAM_RX_ANT_DELAY:
+    /* break through */
+  default:
+    NXPLOG_UCIHAL_E("Unsupported parameter: 0x%x", id);
+    return UWBSTATUS_FAILED;
+  }
 }
 
-int16_t NxpUwbChipSr200::extra_group_delay(void) {
-  // Only for SR100. Not for SR2XX
-  return 0;
+tHAL_UWB_STATUS
+NxpUwbChipSr200::get_supported_channels(const uint8_t **cal_channels, uint8_t *nr)
+{
+  static const uint8_t sr200_cal_channels[] = {5, 9, 10};
+  *cal_channels = sr200_cal_channels;
+  *nr = std::size(sr200_cal_channels);
+  return UWBSTATUS_SUCCESS;
 }
 
 std::unique_ptr<NxpUwbChip> GetUwbChip()
