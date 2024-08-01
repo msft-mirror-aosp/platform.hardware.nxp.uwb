@@ -127,8 +127,17 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
       nr_retries++;
       break;
     default:
-      status = nxpucihal_ctrl.ext_cb_data.status;
-      exit_loop = true;
+      // Check CMD/RSP gid/oid matching
+      uint8_t rsp_gid = nxpucihal_ctrl.p_rx_data[0] & UCI_GID_MASK;
+      uint8_t rsp_oid = nxpucihal_ctrl.p_rx_data[1] & UCI_OID_MASK;
+      if (gid != rsp_gid || oid != rsp_oid) {
+        NXPLOG_UCIHAL_E("Received incorrect response of GID:%x OID:%x, expected GID:%x OID:%x",
+            rsp_gid, rsp_oid, gid, oid);
+        nr_retries++;
+      } else {
+        status = nxpucihal_ctrl.ext_cb_data.status;
+        exit_loop = true;
+      }
       break;
     }
 
