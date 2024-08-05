@@ -57,6 +57,8 @@ static void phNxpUciHal_write_complete(void* pContext,
                                        phTmlUwb_TransactInfo_t* pInfo);
 extern int phNxpUciHal_fw_download();
 static void phNxpUciHal_getVersionInfo();
+static tHAL_UWB_STATUS phNxpUciHal_sendCoreConfig(const uint8_t *p_cmd,
+                                                  long buffer_size);
 
 /*******************************************************************************
  * RX packet handler
@@ -542,10 +544,10 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
 
         if (status_code == UCI_STATUS_COMMAND_RETRY) {
           // Handle retransmissions
-          if (nxpucihal_ctrl.hal_ext_enabled) {
-            nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_COMMAND_RETRANSMIT;
-            nxpucihal_ctrl.isSkipPacket = 1;
-          }
+          // TODO: Do not retransmit it when !nxpucihal_ctrl.hal_ext_enabled,
+          // Upper layer should take care of it.
+          nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_COMMAND_RETRANSMIT;
+          nxpucihal_ctrl.isSkipPacket = 1;
         } else if (status_code == UCI_STATUS_BUFFER_UNDERFLOW) {
           if (nxpucihal_ctrl.hal_ext_enabled) {
             nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_COMMAND_RETRANSMIT;
@@ -687,7 +689,7 @@ static void parseAntennaConfig(const char *configName)
   const uint16_t dataLength = retlen;
   const uint8_t *data = buffer.data();
 
-  uint8_t index = UCI_MSG_HDR_SIZE + 1; // Excluding the header and number of params
+  uint8_t index = 1; // Excluding number of params
   uint8_t tagId, subTagId;
   int length;
   while (index < dataLength) {
@@ -715,7 +717,10 @@ static void parseAntennaConfig(const char *configName)
  ******************************************************************************/
 tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig()
 {
-  std::vector<const char*> vendorParamNames;
+  std::vector<const char *> vendorParamNames;
+  std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
+  long retlen = 0;
+  tHAL_UWB_STATUS status = UWBSTATUS_FAILED;
 
   // Base parameter names
   if (nxpucihal_ctrl.fw_boot_mode == USER_FW_BOOT_MODE) {
@@ -730,7 +735,18 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig()
   } else if (nxpucihal_ctrl.device_type == DEVICE_TYPE_SR1xxS) {
     per_chip_param = NAME_UWB_CORE_EXT_DEVICE_SR1XX_S_CONFIG;
   }
-  vendorParamNames.push_back(per_chip_param);
+
+  if (NxpConfig_GetByteArray(per_chip_param, buffer.data(), buffer.size(),
+                             &retlen)) {
+    if (retlen > 0 && retlen < UCI_MAX_DATA_LEN) {
+      NXPLOG_UCIHAL_D("VendorConfig: apply %s", per_chip_param);
+      status = phNxpUciHal_sendCoreConfig(buffer.data(), retlen);
+      if (status != UWBSTATUS_SUCCESS) {
+        NXPLOG_UCIHAL_E("VendorConfig: failed to apply %s", per_chip_param);
+        return status;
+      }
+    }
+  }
 
   // Parse Antenna config from chip-parameter
   parseAntennaConfig(per_chip_param);
@@ -750,12 +766,10 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig()
 
   // Execute
   for (const auto paramName : vendorParamNames) {
-    std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
-    long retlen = 0;
     if (NxpConfig_GetByteArray(paramName, buffer.data(), buffer.size(), &retlen)) {
       if (retlen > 0 && retlen < UCI_MAX_DATA_LEN) {
         NXPLOG_UCIHAL_D("VendorConfig: apply %s", paramName);
-        tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(retlen, buffer.data());
+        status = phNxpUciHal_send_ext_cmd(retlen, buffer.data());
         if (status != UWBSTATUS_SUCCESS) {
           NXPLOG_UCIHAL_E("VendorConfig: failed to apply %s", paramName);
           return status;
@@ -1059,6 +1073,43 @@ void phNxpUciHal_getVersionInfo() {
     ALOGI("FW Version: %02x.%02x", nxpucihal_ctrl.fw_version.major_version,
           nxpucihal_ctrl.fw_version.minor_version);
   }
+}
+
+/******************************************************************************
+ * Function         phNxpUciHal_sendCoreConfig
+ *
+ * Description      This function send set core config command in chunks when
+ *                  config size greater than 255 bytes.
+ *
+ * Returns          status
+ *
+ ******************************************************************************/
+tHAL_UWB_STATUS phNxpUciHal_sendCoreConfig(const uint8_t *p_cmd,
+                                           long buffer_size) {
+  std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> payload_data;
+  tHAL_UWB_STATUS status = UWBSTATUS_FAILED;
+  uint16_t i = 0;
+
+  while (buffer_size > 0) {
+    uint16_t chunk_size = (buffer_size <= UCI_MAX_CONFIG_PAYLOAD_LEN)
+                              ? buffer_size
+                              : UCI_MAX_CONFIG_PAYLOAD_LEN;
+
+    payload_data[0] = (buffer_size <= UCI_MAX_CONFIG_PAYLOAD_LEN) ? 0x20 : 0x30;
+    payload_data[1] = 0x04;
+    payload_data[2] = 0x00;
+    payload_data[3] = chunk_size;
+
+    std::memcpy(&payload_data[UCI_PKT_HDR_LEN], &p_cmd[i], chunk_size);
+
+    status = phNxpUciHal_send_ext_cmd(chunk_size + UCI_PKT_HDR_LEN,
+                                      payload_data.data());
+
+    i += chunk_size;
+    buffer_size -= chunk_size;
+  }
+
+  return status;
 }
 
 /*******************************************************************************
