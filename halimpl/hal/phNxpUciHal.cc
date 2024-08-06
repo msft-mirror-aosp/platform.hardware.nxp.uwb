@@ -924,8 +924,8 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
 
   // Wait for the first Device Status Notification
   devStatusNtfWait.wait();
-  if(dev_status != UWB_DEVICE_INIT) {
-    NXPLOG_UCIHAL_E("UWB_DEVICE_INIT not received uwbc_device_state = %x", dev_status);
+  if(dev_status != UWB_DEVICE_INIT && dev_status != UWB_DEVICE_READY) {
+    NXPLOG_UCIHAL_E("First Device Status NTF was not received or it's invalid state. 0x%x", dev_status);
     return UWBSTATUS_FAILED;
   }
 
