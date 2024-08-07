@@ -493,7 +493,8 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
     return;
   }
 
-  NXPLOG_UCIHAL_V("read successful status = 0x%x", pInfo->wStatus);
+  NXPLOG_UCIHAL_V("read successful status = 0x%x , total len = 0x%x",
+                  pInfo->wStatus, pInfo->wLength);
 
   for (int32_t index = 0; index < pInfo->wLength; )
   {
@@ -516,7 +517,8 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
 
     nxpucihal_ctrl.isSkipPacket = 0;
 
-    phNxpUciHal_rx_handler_check(pInfo->wLength, pInfo->pBuff);
+    phNxpUciHal_rx_handler_check(nxpucihal_ctrl.rx_data_len,
+                                 nxpucihal_ctrl.p_rx_data);
 
     // mapping device caps according to Fira 2.0
     if (mt == UCI_MT_RSP && gid == UCI_GID_CORE && oid == UCI_MSG_CORE_GET_CAPS_INFO) {
@@ -896,16 +898,12 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
 
   uwb_device_initialized = false;
 
-  // FW download and enter UCI operating mode
-  status = nxpucihal_ctrl.uwb_chip->chip_init();
-  if (status != UWBSTATUS_SUCCESS) {
-    return status;
-  }
-
   // Device Status Notification
   UciHalSemaphore devStatusNtfWait;
   uint8_t dev_status = UWB_DEVICE_ERROR;
-  auto dev_status_ntf_cb = [&dev_status, &devStatusNtfWait](size_t packet_len, const uint8_t *packet) mutable {
+  auto dev_status_ntf_cb = [&dev_status,
+                            &devStatusNtfWait](size_t packet_len,
+                                               const uint8_t *packet) mutable {
     if (packet_len >= 5) {
       dev_status = packet[UCI_RESPONSE_STATUS_OFFSET];
       devStatusNtfWait.post();
@@ -913,6 +911,12 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
   };
   UciHalRxHandler devStatusNtfHandler(UCI_MT_NTF, UCI_GID_CORE, UCI_MSG_CORE_DEVICE_STATUS_NTF,
                                       true, dev_status_ntf_cb);
+
+  // FW download and enter UCI operating mode
+  status = nxpucihal_ctrl.uwb_chip->chip_init();
+  if (status != UWBSTATUS_SUCCESS) {
+    return status;
+  }
 
   // Initiate UCI packet read
   status = phTmlUwb_StartRead( Rx_data, UCI_MAX_DATA_LEN,
@@ -923,8 +927,8 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
   }
 
   // Wait for the first Device Status Notification
-  devStatusNtfWait.wait();
-  if(dev_status != UWB_DEVICE_INIT && dev_status != UWB_DEVICE_READY) {
+  devStatusNtfWait.wait_timeout_msec(3000);
+  if(dev_status != UWB_DEVICE_INIT) {
     NXPLOG_UCIHAL_E("First Device Status NTF was not received or it's invalid state. 0x%x", dev_status);
     return UWBSTATUS_FAILED;
   }
@@ -935,7 +939,7 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
     NXPLOG_UCIHAL_E("%s: Set Board Config Failed", __func__);
     return status;
   }
-  devStatusNtfWait.wait();
+  devStatusNtfWait.wait_timeout_msec(3000);
   if (dev_status != UWB_DEVICE_READY) {
     NXPLOG_UCIHAL_E("Cannot receive UWB_DEVICE_READY");
     return UWBSTATUS_FAILED;
@@ -948,7 +952,7 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
     NXPLOG_UCIHAL_E("%s: device reset Failed", __func__);
     return status;
   }
-  devStatusNtfWait.wait();
+  devStatusNtfWait.wait_timeout_msec(3000);
   if(dev_status != UWB_DEVICE_READY) {
     NXPLOG_UCIHAL_E("UWB_DEVICE_READY not received uwbc_device_state = %x", dev_status);
     return UWBSTATUS_FAILED;
