@@ -30,6 +30,7 @@
 #define MAX_RETRY_COUNT 0x05
 #define UCI_MAX_DATA_LEN 4200 // maximum data packet size
 #define UCI_MAX_PAYLOAD_LEN 4200
+#define UCI_MAX_CONFIG_PAYLOAD_LEN 0xFF
 // #define UCI_RESPONSE_STATUS_OFFSET 0x04
 #define UCI_PKT_HDR_LEN 0x04
 #define UCI_PKT_PAYLOAD_STATUS_LEN 0x01
@@ -99,7 +100,7 @@
 const char debug_log_path[] = "/data/vendor/uwb/";
 
 /* UCI Data */
-#define NXP_MAX_CONFIG_STRING_LEN 260
+#define NXP_MAX_CONFIG_STRING_LEN 2052
 typedef struct uci_data {
   uint16_t len;
   uint8_t p_data[UCI_MAX_DATA_LEN];
