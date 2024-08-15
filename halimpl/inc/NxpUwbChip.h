@@ -72,10 +72,8 @@ public:
                                            const uint8_t *data,
                                            size_t data_len) = 0;
 
-  // Group Delay Compensation, if any
-  // SR1XX needs this, because it has
-  // different handling during calibration with D48/D49 vs D50
-  virtual int16_t extra_group_delay() = 0;
+  // Get supported channels
+  virtual tHAL_UWB_STATUS get_supported_channels(const uint8_t **cal_channels, uint8_t *nr) = 0;
 };
 
 std::unique_ptr<NxpUwbChip> GetUwbChip();
