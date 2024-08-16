@@ -79,13 +79,17 @@ private:
     SessionTrackWorkType type_;
     std::shared_ptr<SessionInfo> session_info_;
     bool sync_;
+    bool cond_flag;
     std::condition_variable cond_;
 
-    SessionTrackMsg(SessionTrackWorkType type, bool sync) : type_(type), sync_(sync) { }
+    SessionTrackMsg(SessionTrackWorkType type, bool sync)
+        : type_(type), sync_(sync), cond_flag(false) {}
 
     // Per-session work item
-    SessionTrackMsg(SessionTrackWorkType type, std::shared_ptr<SessionInfo> session_info, bool sync) :
-      type_(type), session_info_(session_info), sync_(sync) { }
+    SessionTrackMsg(SessionTrackWorkType type,
+                    std::shared_ptr<SessionInfo> session_info, bool sync)
+        : type_(type), session_info_(session_info), sync_(sync),
+          cond_flag(false) {}
   };
   static constexpr unsigned long kAutoSuspendTimeoutDefaultMs_ = (30 * 1000);
   static constexpr long kQueueTimeoutMs = 500;
@@ -649,8 +653,10 @@ private:
         NXPLOG_UCIHAL_E("SessionTrack: worker thread received a bad message!");
         break;
       }
-      if (msg->sync_)
+      if (msg->sync_) {
+        msg->cond_flag = true;
         msg->cond_.notify_one();
+      }
     }
     if (idle_timer_started_) {
       PowerIdleTimerStop();
@@ -664,7 +670,8 @@ private:
 
     if (msg->sync_) {
       std::unique_lock<std::mutex> lock(sync_mutex_);
-      if (msg->cond_.wait_for(lock, std::chrono::milliseconds(kQueueTimeoutMs)) == std::cv_status::timeout) {
+      if (!msg->cond_.wait_for(lock, std::chrono::milliseconds(kQueueTimeoutMs),
+                               [msg] { return msg->cond_flag; })) {
         NXPLOG_UCIHAL_E("SessionTrack: timeout to process %d", static_cast<int>(msg->type_));
       }
     }
