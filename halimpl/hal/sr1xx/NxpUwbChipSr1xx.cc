@@ -266,51 +266,59 @@ exit_check_binding_status:
 // Group Delay Compensation, if any
 // SR1XX needs this, because it has
 // different handling during calibration with D48/D49 vs D50
-static int16_t sr1xx_extra_group_delay(void)
+static int16_t sr1xx_extra_group_delay(const uint8_t ch)
 {
-  bool need_7cm_offset = FALSE;
-  // + Compensation for D48/D49 calibration
-  // If calibration was done with D48 / D49
+  int16_t required_compensation = 0;
   char calibrated_with_fw[15] = {0};
+
+  /* Calibrated with D4X and we are on D5X or later */
+  bool is_calibrated_with_d4x = false;
 
   int has_calibrated_with_fw_config = NxpConfig_GetStr(
     "cal.fw_version", calibrated_with_fw, sizeof(calibrated_with_fw) - 1);
 
   if ( has_calibrated_with_fw_config ) {
     // Conf file has entry of `cal.fw_version`
-    if (
-      ( 0 == memcmp("48.", calibrated_with_fw, 3)) ||
-      ( 0 == memcmp("49.", calibrated_with_fw, 3))) {
-      // Calibrated with D48 / D49.
-      if (nxpucihal_ctrl.fw_version.major_version == 0xFF) {
-        // Current FW seems to be Test FW
-        NXPLOG_UCIHAL_W("For Test FW, D49 -> D50+ 7cm Compensation is applied");
-        need_7cm_offset = TRUE;
-      }
-      else if (nxpucihal_ctrl.fw_version.major_version >= 0x50) {
-        // D50 and later fix is needed.
-        need_7cm_offset = TRUE;
-      }
+    if ( ( 0 == memcmp("48.", calibrated_with_fw, 3)) ||
+         ( 0 == memcmp("49.", calibrated_with_fw, 3))) {
+      is_calibrated_with_d4x = true;
+    }
+  }
+  else
+  {
+    NXPLOG_UCIHAL_W("Could not get cal.fw_version. Assuming D48 used for calibration.");
+    is_calibrated_with_d4x = true;
+  }
+
+  if (is_calibrated_with_d4x) {
+    if (nxpucihal_ctrl.fw_version.major_version >= 0x50) {
+      required_compensation += (7*4); /*< 7 CM offset required... */
     }
     else
     {
-      // Not calibrated with D48/D49
+      /* Running with D49. For testing purpose. +7cm Not needed */
+    }
+
+    // Calibrated with D49
+    // Required extra negative offset, Channel specific, but antenna agnostic.
+    unsigned short cal_chx_extra_d49_offset_n = 0;
+    char key[32];
+    std::snprintf(key, sizeof(key), "cal.ch%u.extra_d49_offset_n", ch);
+    int has_extra_d49_offset_n = NxpConfig_GetNum(
+      key, &cal_chx_extra_d49_offset_n, sizeof(cal_chx_extra_d49_offset_n));
+
+    if (has_extra_d49_offset_n) { /*< Extra correction from conf file ... */
+      required_compensation -= cal_chx_extra_d49_offset_n;
     }
   }
   else
   {
-    // Missing Entry cal.fw_version
-    NXPLOG_UCIHAL_W("Could not get cal.fw_version. Assuming D48 used for calibration.");
-    need_7cm_offset = TRUE;
+    // calibrated with D50 or later.
+    // No compensation.
   }
-  if (need_7cm_offset) {
-    /* Its Q14.2 format, hence << 2 */
-    return (7 << 2);
-  }
-  else
-  {
-    return 0;
-  }
+
+  /* Its Q14.2 format, Actual CM impact is //4  */
+  return required_compensation;
 }
 
 class NxpUwbChipSr1xx final : public NxpUwbChip {
@@ -527,40 +535,44 @@ tHAL_UWB_STATUS NxpUwbChipSr1xx::read_otp(extcal_param_id_t id, uint8_t *data, s
   return sr1xx_read_otp(id, data, data_len, retlen);
 }
 
+tHAL_UWB_STATUS sr1xx_apply_calibration_ant_delay(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len) {
+
+  std::vector<uint8_t> patched_data;
+  std::copy(&data[0], &data[data_len], std::back_inserter(patched_data));
+
+  const int16_t delay_compensation = sr1xx_extra_group_delay(ch);
+  const uint8_t nr_entries = patched_data[0];
+  for (uint8_t i = 0; i < nr_entries; i++) {
+    // Android ABI & UCI both are Little endian
+    int32_t rx_delay32 = patched_data[2 + i * 3] | (patched_data[3 + i * 3] << 8);
+    if ( 0 != delay_compensation ) {
+      NXPLOG_UCIHAL_D("RX_ANT_DELAY_CALIB: Extra compensation '%d'", delay_compensation);
+      rx_delay32 += delay_compensation;
+    }
+
+    // clamp to 0 ~ 0xffff
+    if (rx_delay32 >= 0xFFFF) {
+      rx_delay32 = 0xFFFF;
+    } else if (rx_delay32 < 0) {
+      rx_delay32 = 0;
+    }
+
+    const uint16_t rx_delay = rx_delay32;
+    patched_data[2 + i * 3] = rx_delay & 0xff;
+    patched_data[3 + i * 3] = rx_delay >> 8;
+  }
+  return sr1xx_apply_calibration(id, ch, patched_data.data(), data_len);
+}
+
 tHAL_UWB_STATUS NxpUwbChipSr1xx::apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len)
 {
   if (id == EXTCAL_PARAM_RX_ANT_DELAY) {
-    const int16_t extra_delay = sr1xx_extra_group_delay();
-
-    // patch rx antenna delay if extra group delay was given
-    if (extra_delay) {
-      std::vector<uint8_t> patched_data;
-      std::copy(&data[0], &data[data_len], std::back_inserter(patched_data));
-
-      NXPLOG_UCIHAL_D("RX_ANT_DELAY_CALIB: Extra compensation '%d'", extra_delay);
-
-      const uint8_t nr_entries = patched_data[0];
-      for (uint8_t i = 0; i < nr_entries; i++) {
-        // Android ABI & UCI both are Little endian
-        int32_t rx_delay32 = patched_data[2 + i * 3] | (patched_data[3 + i * 3] << 8);
-        rx_delay32 += extra_delay;
-
-        // clamp to 0 ~ 0xffff
-        if (rx_delay32 >= 0xFFFF) {
-          rx_delay32 = 0xFFFF;
-        } else if (rx_delay32 < 0) {
-          rx_delay32 = 0;
-        }
-
-        const uint16_t rx_delay = rx_delay32;
-        patched_data[2 + i * 3] = rx_delay & 0xff;
-        patched_data[3 + i * 3] = rx_delay >> 8;
-      }
-      return sr1xx_apply_calibration(id, ch, patched_data.data(), data_len);
-    }
+    return sr1xx_apply_calibration_ant_delay(id, ch, data, data_len);
   }
-
-  return sr1xx_apply_calibration(id, ch, data, data_len);
+  else
+  {
+    return sr1xx_apply_calibration(id, ch, data, data_len);
+  }
 }
 
 tHAL_UWB_STATUS
