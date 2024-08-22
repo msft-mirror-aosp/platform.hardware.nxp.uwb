@@ -134,9 +134,33 @@ Load the Crystal calibration value from OTP when it's 1. *cal.xtal* will be igno
 
 e.g. `cal.xtal={11 00 11 00 3f 00}`
 
-##### *cal.ant`<antenna-id>`.ch`<channel-number>`.ant_delay*`=<16bit unsigned>`
+##### RX antenna delay
 
-Per-country, RX antenna delay value in Q14.2. e.g. `cal.ant1.ch5.ant_delay=2000`
+* *cal.ant`<antenna-id>`.ch`<channel-number>`.ant_delay*`=<16bit unsigned>`
+
+  Default RX antenna delay value in Q14.2.
+
+* *cal.ant`<antenna-id>`.ch`<channel-number>`.ant_delay.force_version*`=<16bit unsigned>`
+
+  Forcefully override *...ant_delay* value by specifying version number.
+  Platform can specify multiple version numbers for selecting alternate delay values
+  using *...ant_delay.force_value.`<version>`* property.
+
+* *cal.ant`<antenna-id>`.ch`<channel-number>`.ant_delay.force_value.`<version>`*`=<16bit unsigned>`
+
+  Alternate RX antenna delay value in Q14.2.
+  HAL will take this value if *...ant_delay.force_version=`<version>`* and
+  and *ant_delay.force_value.`<version>`* are provided.
+
+e.g.
+```
+cal.ant1.ch5.ant_delay=2000
+cal.ant1.ch5.ant_delay.force_version=2
+cal.ant1.cht.ant_delay.force_value.1=2100
+cal.ant1.cht.ant_delay.force_value.2=2200
+```
+
+In the above example, HAL applies 2200 for the antenna delay.
 
 ##### *cal.ant`<antenna-id>`.ch`<channel-number>`.tx_power*`=<byte array>`
 
