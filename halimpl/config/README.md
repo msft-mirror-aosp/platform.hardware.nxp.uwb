@@ -70,6 +70,8 @@ Main configuration can specifies additional extra calibrations with *EXTRA_CONF_
 * if the file path has `<country>` in it, `<country>` part will be replaced with country code (or region string)
 * if the file path has `<sku>` in it, `<sku>` part will be replace with the 'persist.vendor.uwb.cal.sku' property value.
   if `persist.vendor.uwb.cal.sku` is unspecified, HAL will try to use `defaultsku` as a default.
+* if the file path has `<revision>` in it, `<revision>` part will be replace with the 'persist.vendor.uwb.cal.revision' property value.
+  if `persist.vendor.uwb.cal.revision` is unspecified, HAL will try to use `defaultrevision` as a default.
 
 Example:
 
@@ -79,7 +81,8 @@ Example:
 EXTRA_CONF_PATH_1="/vendor/etc/uwb/cal-base.conf"
 EXTRA_CONF_PATH_2="/vendor/etc/uwb/cal-<sku>.conf"
 EXTRA_CONF_PATH_3="/vendor/etc/uwb/cal-<country>.conf"
-EXTRA_CONF_PATH_4="/mnt/vendor/persist/uwb/cal-factory.conf"
+EXTRA_CONF_PATH_4="/vendor/etc/uwb/cal-<revision>.conf"
+EXTRA_CONF_PATH_5="/mnt/vendor/persist/uwb/cal-factory.conf"
 ```
 
 #### Region mapping
@@ -131,9 +134,33 @@ Load the Crystal calibration value from OTP when it's 1. *cal.xtal* will be igno
 
 e.g. `cal.xtal={11 00 11 00 3f 00}`
 
-##### *cal.ant`<antenna-id>`.ch`<channel-number>`.ant_delay*`=<16bit unsigned>`
+##### RX antenna delay
 
-Per-country, RX antenna delay value in Q14.2. e.g. `cal.ant1.ch5.ant_delay=2000`
+* *cal.ant`<antenna-id>`.ch`<channel-number>`.ant_delay*`=<16bit unsigned>`
+
+  Default RX antenna delay value in Q14.2.
+
+* *cal.ant`<antenna-id>`.ch`<channel-number>`.ant_delay.force_version*`=<16bit unsigned>`
+
+  Forcefully override *...ant_delay* value by specifying version number.
+  Platform can specify multiple version numbers for selecting alternate delay values
+  using *...ant_delay.force_value.`<version>`* property.
+
+* *cal.ant`<antenna-id>`.ch`<channel-number>`.ant_delay.force_value.`<version>`*`=<16bit unsigned>`
+
+  Alternate RX antenna delay value in Q14.2.
+  HAL will take this value if *...ant_delay.force_version=`<version>`* and
+  and *ant_delay.force_value.`<version>`* are provided.
+
+e.g.
+```
+cal.ant1.ch5.ant_delay=2000
+cal.ant1.ch5.ant_delay.force_version=2
+cal.ant1.cht.ant_delay.force_value.1=2100
+cal.ant1.cht.ant_delay.force_value.2=2200
+```
+
+In the above example, HAL applies 2200 for the antenna delay.
 
 ##### *cal.ant`<antenna-id>`.ch`<channel-number>`.tx_power*`=<byte array>`
 
@@ -165,7 +192,8 @@ REGION_MAP_PATH="/vendor/etc/uwb/regions.conf"
 EXTRA_CONF_PATH_1="/vendor/etc/uwb/cal-base.conf"
 EXTRA_CONF_PATH_2="/vendor/etc/uwb/cal-<sku>.conf"
 EXTRA_CONF_PATH_3="/vendor/etc/uwb/cal-<country>.conf"
-EXTRA_CONF_PATH_4="/mnt/vendor/persist/uwb/cal-factory.conf"
+EXTRA_CONF_PATH_4="/vendor/etc/uwb/cal-<sku>-<revision>.conf"
+EXTRA_CONF_PATH_5="/mnt/vendor/persist/uwb/cal-factory.conf"
 
 # /vendor/etc/uwb/cal-base.conf:
 cal.rx_antenna_mask=0x03
@@ -205,4 +233,9 @@ cal.restricted_channels=0xffff
 CE="AT BE BG CH CY CZ DE DK EE ES FI FR GB GR HR HU IE IS IT LI LV LT LU MT NI NL NO PL PT RO SE SK SI"
 FCC="US CA"
 RESTRICTED="AR AM AZ BY ID KZ KG NP PK PY RU SB TJ TM UA UZ"
+
+# /vendor/etc/uwb/cal-modelA-EVT.conf:
+# effective when persist.vendor.uwb.cal.sku=modelA && persist.vendor.uwb.cal.revision=EVT
+cal.ant1.ch5.tx_power={02, 00, 11, 00}
+cal.ant1.ch9.tx_power={02, 00, 12, 00}
 ```

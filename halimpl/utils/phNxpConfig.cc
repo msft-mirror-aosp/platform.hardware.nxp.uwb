@@ -50,11 +50,16 @@ static const char default_uci_config_path[] = "/vendor/etc/";
 static const char country_code_specifier[] = "<country>";
 static const char sku_specifier[] = "<sku>";
 static const char extid_specifier[] = "<extid>";
+static const char revision_specifier[] = "<revision>";
+
 static const char extid_config_name[] = "cal.extid";
 static const char extid_default_value[] = "defaultextid";
 
 static const char prop_name_calsku[] = "persist.vendor.uwb.cal.sku";
 static const char prop_default_calsku[] = "defaultsku";
+
+static const char prop_name_revision[] = "persist.vendor.uwb.cal.revision";
+static const char prop_default_revision[] = "defaultrevision";
 
 using namespace::std;
 
@@ -660,10 +665,12 @@ private:
         string mCurSku;
         string mCurExtid;
         string mCurRegionCode;
+        string mCurRevision;
         void reset() {
             mCurSku.clear();
             mCurExtid.clear();
             mCurRegionCode.clear();
+            mCurRevision.clear();
         }
     };
     ExtraConfPathSpecifiers mExtraConfSpecifiers;
@@ -693,25 +700,26 @@ bool CascadeConfig::evaluateExtraConfPaths()
     bool updated = false;
 
     for (auto& [filename, config] : mExtraConfig) {
-        auto posSku = filename.find(sku_specifier);
-        auto posExtid = filename.find(extid_specifier);
-        auto posCountry = filename.find(country_code_specifier);
-
-        if (posSku == std::string::npos && posExtid == std::string::npos && posCountry == std::string::npos)
-            continue;
-
         std::string new_filename(filename);
 
+        auto posSku = filename.find(sku_specifier);
         if (posSku != std::string::npos && !mExtraConfSpecifiers.mCurSku.empty()) {
             new_filename.replace(posSku, strlen(sku_specifier), mExtraConfSpecifiers.mCurSku);
         }
+
+        auto posExtid = filename.find(extid_specifier);
         if (posExtid != std::string::npos && !mExtraConfSpecifiers.mCurExtid.empty()) {
-            posExtid = new_filename.find(extid_specifier);
             new_filename.replace(posExtid, strlen(extid_specifier), mExtraConfSpecifiers.mCurExtid);
         }
+
+        auto posCountry = filename.find(country_code_specifier);
         if (posCountry != std::string::npos && !mExtraConfSpecifiers.mCurRegionCode.empty()) {
-            posCountry = new_filename.find(country_code_specifier);
             new_filename.replace(posCountry, strlen(country_code_specifier), mExtraConfSpecifiers.mCurRegionCode);
+        }
+
+        auto posRevision = filename.find(revision_specifier);
+        if (posRevision != std::string::npos && !mExtraConfSpecifiers.mCurRevision.empty()) {
+            new_filename.replace(posRevision, strlen(revision_specifier), mExtraConfSpecifiers.mCurRevision);
         }
 
         // re-open the file if filepath got re-evaluated.
@@ -750,7 +758,9 @@ void CascadeConfig::init(const char *main_config)
     }
 
     char sku_value[PROPERTY_VALUE_MAX];
+    char revision_value[PROPERTY_VALUE_MAX];
     property_get(prop_name_calsku, sku_value, prop_default_calsku);
+    property_get(prop_name_revision, revision_value, prop_default_revision);
 
     // Read EXTRA_CONF_PATH[N]
     for (int i = 1; i <= 10; i++) {
@@ -766,8 +776,9 @@ void CascadeConfig::init(const char *main_config)
         mExtraConfig.emplace_back(std::move(entry));
     }
 
-    // evaluate <sku>
+    // evaluate <sku> and <revision>
     mExtraConfSpecifiers.mCurSku = sku_value;
+    mExtraConfSpecifiers.mCurRevision = revision_value;
     evaluateExtraConfPaths();
 
     // re-evaluate with "<extid>"
@@ -777,6 +788,8 @@ void CascadeConfig::init(const char *main_config)
     }
     mExtraConfSpecifiers.mCurExtid = extid_value;
     evaluateExtraConfPaths();
+
+    ALOGI("Provided specifiers: sku=[%s] revision=[%s] extid=[%s]", sku_value, revision_value, extid_value);
 
     // Pick one libuwb-countrycode.conf with the highest VERSION number
     // from multiple directories specified by COUNTRY_CODE_CAP_FILE_LOCATION
