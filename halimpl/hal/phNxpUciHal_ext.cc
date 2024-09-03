@@ -127,8 +127,17 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
       nr_retries++;
       break;
     default:
-      status = nxpucihal_ctrl.ext_cb_data.status;
-      exit_loop = true;
+      // Check CMD/RSP gid/oid matching
+      uint8_t rsp_gid = nxpucihal_ctrl.p_rx_data[0] & UCI_GID_MASK;
+      uint8_t rsp_oid = nxpucihal_ctrl.p_rx_data[1] & UCI_OID_MASK;
+      if (gid != rsp_gid || oid != rsp_oid) {
+        NXPLOG_UCIHAL_E("Received incorrect response of GID:%x OID:%x, expected GID:%x OID:%x",
+            rsp_gid, rsp_oid, gid, oid);
+        nr_retries++;
+      } else {
+        status = nxpucihal_ctrl.ext_cb_data.status;
+        exit_loop = true;
+      }
       break;
     }
 
@@ -563,14 +572,35 @@ static void extcal_do_ant_delay(void)
           continue;
 
         const uint8_t ant_id = i + 1;
-        uint16_t delay_value;
-        char key[32];
-        std::snprintf(key, sizeof(key), "cal.ant%u.ch%u.ant_delay", ant_id, ch);
 
-        if (!NxpConfig_GetNum(key, &delay_value, 2))
+        uint16_t delay_value, version_value;
+        bool value_provided = false;
+
+        const std::string key_ant_delay = std::format("cal.ant{}.ch{}.ant_delay", ant_id, ch);
+        const std::string key_force_version = key_ant_delay + std::format(".force_version", ant_id, ch);
+
+        // 1) try cal.ant{N}.ch{N}.ant_delay.force_value.{N}
+        if (NxpConfig_GetNum(key_force_version.c_str(), &version_value, 2)) {
+          const std::string key_force_value = key_ant_delay + std::format(".force_value.{}", ant_id, ch, version_value);
+          if (NxpConfig_GetNum(key_force_value.c_str(), &delay_value, 2)) {
+            value_provided = true;
+            NXPLOG_UCIHAL_D("Apply RX_ANT_DELAY_CALIB %s = %u", key_force_value.c_str(), delay_value);
+          }
+        }
+
+        // 2) try cal.ant{N}.ch{N}.ant_delay
+        if (!value_provided) {
+          if (NxpConfig_GetNum(key_ant_delay.c_str(), &delay_value, 2)) {
+            value_provided = true;
+            NXPLOG_UCIHAL_D("Apply RX_ANT_DELAY_CALIB: %s = %u", key_ant_delay.c_str(), delay_value);
+          }
+        }
+
+        if (!value_provided) {
+          NXPLOG_UCIHAL_V("%s was not provided from configuration files.", key_ant_delay.c_str());
           continue;
+        }
 
-        NXPLOG_UCIHAL_D("Apply RX_ANT_DELAY_CALIB: %s = %u", key, delay_value);
         entries.push_back(ant_id);
         // Little Endian
         entries.push_back(delay_value & 0xff);
