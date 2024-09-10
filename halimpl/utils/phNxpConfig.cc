@@ -19,13 +19,13 @@
 //#define LOG_NDEBUG 0
 #define LOG_TAG "NxpUwbConf"
 
+#include <limits.h>
 #include <sys/stat.h>
 
 #include <iomanip>
+#include <list>
 #include <memory>
 #include <sstream>
-#include <limits.h>
-#include <stdio.h>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -49,9 +49,17 @@ static const char default_uci_config_path[] = "/vendor/etc/";
 
 static const char country_code_specifier[] = "<country>";
 static const char sku_specifier[] = "<sku>";
+static const char extid_specifier[] = "<extid>";
+static const char revision_specifier[] = "<revision>";
+
+static const char extid_config_name[] = "cal.extid";
+static const char extid_default_value[] = "defaultextid";
 
 static const char prop_name_calsku[] = "persist.vendor.uwb.cal.sku";
 static const char prop_default_calsku[] = "defaultsku";
+
+static const char prop_name_revision[] = "persist.vendor.uwb.cal.revision";
+static const char prop_default_revision[] = "defaultrevision";
 
 using namespace::std;
 
@@ -99,8 +107,8 @@ public:
     virtual ~CUwbNxpConfig();
     CUwbNxpConfig& operator=(CUwbNxpConfig&& config);
 
+    bool open(const char *filepath);
     bool isValid() const { return mValidFile; }
-    bool isCountrySpecific() const { return mCountrySpecific; }
     void reset() {
         m_map.clear();
         mValidFile = false;
@@ -108,6 +116,9 @@ public:
 
     const uwbParam*    find(const char* p_name) const;
     void    setCountry(const string& strCountry);
+    const char* getFilePath() const {
+        return mFilePath.c_str();
+    }
 
     void    dump() const;
 
@@ -120,8 +131,6 @@ private:
     unordered_map<string, uwbParam> m_map;
     bool    mValidFile;
     string  mFilePath;
-    string  mCurrentFile;
-    bool    mCountrySpecific;
 };
 
 /*******************************************************************************
@@ -223,7 +232,7 @@ bool CUwbNxpConfig::readConfig()
     vector<string> arrStr;
     int     base = 0;
     int     c;
-    const char *name = mCurrentFile.c_str();
+    const char *name = mFilePath.c_str();
     unsigned long state = BEGIN_LINE;
 
     mValidFile = false;
@@ -232,7 +241,7 @@ bool CUwbNxpConfig::readConfig()
     /* open config file, read it into a buffer */
     if ((fd = fopen(name, "r")) == NULL)
     {
-        ALOGD("%s Cannot open config file %s\n", __func__, name);
+        ALOGV("Extra calibration file %s failed to open.", name);
         return false;
     }
     ALOGV("%s Opened config %s\n", __func__, name);
@@ -372,6 +381,7 @@ bool CUwbNxpConfig::readConfig()
 
     if (m_map.size() > 0) {
         mValidFile = true;
+        ALOGI("Extra calibration file %s opened.", name);
     }
 
     return mValidFile;
@@ -387,8 +397,7 @@ bool CUwbNxpConfig::readConfig()
 **
 *******************************************************************************/
 CUwbNxpConfig::CUwbNxpConfig() :
-    mValidFile(false),
-    mCountrySpecific(false)
+    mValidFile(false)
 {
 }
 
@@ -405,26 +414,9 @@ CUwbNxpConfig::~CUwbNxpConfig()
 {
 }
 
-CUwbNxpConfig::CUwbNxpConfig(const char *filepath) :
-    mValidFile(false),
-    mFilePath(filepath),
-    mCountrySpecific(false)
+CUwbNxpConfig::CUwbNxpConfig(const char *filepath)
 {
-    auto pos = mFilePath.find(sku_specifier);
-    if (pos != string::npos) {
-        char prop_str[PROPERTY_VALUE_MAX];
-        property_get(prop_name_calsku, prop_str,prop_default_calsku);
-        mFilePath.replace(pos, strlen(sku_specifier), prop_str);
-    }
-
-    // country specifier will be evaluated later in setCountry() path
-    pos = mFilePath.find(country_code_specifier);
-    if (pos == string::npos) {
-        mCurrentFile = mFilePath;
-        readConfig();
-    } else {
-        mCountrySpecific = true;
-    }
+    open(filepath);
 }
 
 CUwbNxpConfig::CUwbNxpConfig(CUwbNxpConfig&& config)
@@ -432,8 +424,6 @@ CUwbNxpConfig::CUwbNxpConfig(CUwbNxpConfig&& config)
     m_map = move(config.m_map);
     mValidFile = config.mValidFile;
     mFilePath = move(config.mFilePath);
-    mCurrentFile = move(config.mCurrentFile);
-    mCountrySpecific = config.mCountrySpecific;
 
     config.mValidFile = false;
 }
@@ -443,26 +433,17 @@ CUwbNxpConfig& CUwbNxpConfig::operator=(CUwbNxpConfig&& config)
     m_map = move(config.m_map);
     mValidFile = config.mValidFile;
     mFilePath = move(config.mFilePath);
-    mCurrentFile = move(config.mCurrentFile);
-    mCountrySpecific = config.mCountrySpecific;
 
     config.mValidFile = false;
     return *this;
 }
 
-void CUwbNxpConfig::setCountry(const string& strCountry)
+bool CUwbNxpConfig::open(const char *filepath)
 {
-    if (!isCountrySpecific())
-        return;
+    mValidFile = false;
+    mFilePath = filepath;
 
-    mCurrentFile = mFilePath;
-    auto pos = mCurrentFile.find(country_code_specifier);
-    if (pos == string::npos) {
-        return;
-    }
-
-    mCurrentFile.replace(pos, strlen(country_code_specifier), strCountry);
-    readConfig();
+    return readConfig();
 }
 
 /*******************************************************************************
@@ -495,7 +476,7 @@ const uwbParam* CUwbNxpConfig::find(const char* p_name) const
 *******************************************************************************/
 void CUwbNxpConfig::dump() const
 {
-    ALOGV("Dump configuration file %s : %s, %zu entries", mCurrentFile.c_str(),
+    ALOGV("Dump configuration file %s : %s, %zu entries", mFilePath.c_str(),
         mValidFile ? "valid" : "invalid", m_map.size());
 
     for (auto &it : m_map) {
@@ -671,7 +652,7 @@ private:
     CUwbNxpConfig mUciConfig;
 
     // EXTRA_CONF_PATH[N]
-    vector<CUwbNxpConfig> mExtraConfig;
+    std::vector<std::pair<string, CUwbNxpConfig>> mExtraConfig;
 
     // [COUNTRY_CODE_CAP_FILE_LOCATION]/country_code_config_name
     CUwbNxpConfig mCapsConfig;
@@ -679,14 +660,30 @@ private:
     // Region Code mapping
     RegionCodeMap mRegionMap;
 
-    // Current region code
-    string mCurRegionCode;
+    // current set of specifiers for EXTRA_CONF_PATH[]
+    struct ExtraConfPathSpecifiers {
+        string mCurSku;
+        string mCurExtid;
+        string mCurRegionCode;
+        string mCurRevision;
+        void reset() {
+            mCurSku.clear();
+            mCurExtid.clear();
+            mCurRegionCode.clear();
+            mCurRevision.clear();
+        }
+    };
+    ExtraConfPathSpecifiers mExtraConfSpecifiers;
+
+    // Re-evaluate filepaths of mExtraConfig with mExtraConfSpecifiers, and re-load them.
+    // returns true if any of entries were updated.
+    bool evaluateExtraConfPaths();
 
     void dump() {
         mMainConfig.dump();
         mUciConfig.dump();
 
-        for (const auto &config : mExtraConfig)
+        for (const auto &[filename, config] : mExtraConfig)
             config.dump();
 
         mCapsConfig.dump();
@@ -696,6 +693,42 @@ private:
 
 CascadeConfig::CascadeConfig()
 {
+}
+
+bool CascadeConfig::evaluateExtraConfPaths()
+{
+    bool updated = false;
+
+    for (auto& [filename, config] : mExtraConfig) {
+        std::string new_filename(filename);
+
+        auto posSku = filename.find(sku_specifier);
+        if (posSku != std::string::npos && !mExtraConfSpecifiers.mCurSku.empty()) {
+            new_filename.replace(posSku, strlen(sku_specifier), mExtraConfSpecifiers.mCurSku);
+        }
+
+        auto posExtid = filename.find(extid_specifier);
+        if (posExtid != std::string::npos && !mExtraConfSpecifiers.mCurExtid.empty()) {
+            new_filename.replace(posExtid, strlen(extid_specifier), mExtraConfSpecifiers.mCurExtid);
+        }
+
+        auto posCountry = filename.find(country_code_specifier);
+        if (posCountry != std::string::npos && !mExtraConfSpecifiers.mCurRegionCode.empty()) {
+            new_filename.replace(posCountry, strlen(country_code_specifier), mExtraConfSpecifiers.mCurRegionCode);
+        }
+
+        auto posRevision = filename.find(revision_specifier);
+        if (posRevision != std::string::npos && !mExtraConfSpecifiers.mCurRevision.empty()) {
+            new_filename.replace(posRevision, strlen(revision_specifier), mExtraConfSpecifiers.mCurRevision);
+        }
+
+        // re-open the file if filepath got re-evaluated.
+        if (new_filename != config.getFilePath()) {
+            config.open(new_filename.c_str());
+            updated = true;
+        }
+    }
+    return updated;
 }
 
 void CascadeConfig::init(const char *main_config)
@@ -724,6 +757,11 @@ void CascadeConfig::init(const char *main_config)
         }
     }
 
+    char sku_value[PROPERTY_VALUE_MAX];
+    char revision_value[PROPERTY_VALUE_MAX];
+    property_get(prop_name_calsku, sku_value, prop_default_calsku);
+    property_get(prop_name_revision, revision_value, prop_default_revision);
+
     // Read EXTRA_CONF_PATH[N]
     for (int i = 1; i <= 10; i++) {
         char key[32];
@@ -731,12 +769,27 @@ void CascadeConfig::init(const char *main_config)
         const uwbParam *param = mMainConfig.find(key);
         if (!param)
             continue;
-        CUwbNxpConfig config(param->str_value());
-        ALOGD("Extra calibration file %s : %svalid", param->str_value(), config.isValid() ? "" : "in");
-        if (config.isValid() || config.isCountrySpecific()) {
-            mExtraConfig.emplace_back(move(config));
-        }
+
+        std::string filename(param->str_value());
+
+        auto entry = std::make_pair(param->str_value(), CUwbNxpConfig(filename.c_str()));
+        mExtraConfig.emplace_back(std::move(entry));
     }
+
+    // evaluate <sku> and <revision>
+    mExtraConfSpecifiers.mCurSku = sku_value;
+    mExtraConfSpecifiers.mCurRevision = revision_value;
+    evaluateExtraConfPaths();
+
+    // re-evaluate with "<extid>"
+    char extid_value[PROPERTY_VALUE_MAX];
+    if (!NxpConfig_GetStr(extid_config_name, extid_value, sizeof(extid_value))) {
+        strcpy(extid_value, extid_default_value);
+    }
+    mExtraConfSpecifiers.mCurExtid = extid_value;
+    evaluateExtraConfPaths();
+
+    ALOGI("Provided specifiers: sku=[%s] revision=[%s] extid=[%s]", sku_value, revision_value, extid_value);
 
     // Pick one libuwb-countrycode.conf with the highest VERSION number
     // from multiple directories specified by COUNTRY_CODE_CAP_FILE_LOCATION
@@ -797,28 +850,23 @@ void CascadeConfig::deinit()
     mCapsConfig.reset();
     mRegionMap.reset();
     mUciConfig.reset();
-    mCurRegionCode.clear();
+    mExtraConfSpecifiers.reset();
 }
 
 bool CascadeConfig::setCountryCode(const char country_code[2])
 {
     string strRegion = mRegionMap.xlateCountryCode(country_code);
 
-    if (strRegion == mCurRegionCode) {
+    if (strRegion == mExtraConfSpecifiers.mCurRegionCode) {
         ALOGI("Same region code(%c%c --> %s), per-country configuration not updated.",
               country_code[0], country_code[1], strRegion.c_str());
         return false;
     }
 
     ALOGI("Apply country code %c%c --> %s\n", country_code[0], country_code[1], strRegion.c_str());
-    mCurRegionCode = strRegion;
-    for (auto &x : mExtraConfig) {
-        if (x.isCountrySpecific()) {
-            x.setCountry(mCurRegionCode);
-            x.dump();
-        }
-    }
-    return true;
+    mExtraConfSpecifiers.mCurRegionCode = strRegion;
+
+    return evaluateExtraConfPaths();
 }
 
 const uwbParam* CascadeConfig::find(const char *name) const
@@ -830,7 +878,8 @@ const uwbParam* CascadeConfig::find(const char *name) const
       return param;
 
     for (auto it = mExtraConfig.rbegin(); it != mExtraConfig.rend(); it++) {
-        param = it->find(name);
+        auto &config = it->second;
+        param = config.find(name);
         if (param)
             break;
     }
