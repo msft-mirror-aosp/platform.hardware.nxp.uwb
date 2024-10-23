@@ -799,14 +799,13 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
   }
 
   // send country code response to upper layer
-  nxpucihal_ctrl.rx_data_len = 5;
   static uint8_t rsp_data[5] = { 0x4c, 0x01, 0x00, 0x01 };
   if (rt_set->uwb_enable) {
     rsp_data[4] = UWBSTATUS_SUCCESS;
   } else {
     rsp_data[4] = UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF;
   }
-  (*nxpucihal_ctrl.p_uwb_stack_data_cback)(nxpucihal_ctrl.rx_data_len, rsp_data);
+  (*nxpucihal_ctrl.p_uwb_stack_data_cback)(sizeof(rsp_data), rsp_data);
 }
 
 // TODO: support fragmented packets
@@ -884,8 +883,7 @@ bool phNxpUciHal_handle_set_app_config(uint16_t *data_len, uint8_t *p_data)
         static uint8_t rsp_data[] = { 0x41, 0x03, 0x04, 0x04,
           UCI_STATUS_FAILED, 0x01, tlv_tag, UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF
         };
-        nxpucihal_ctrl.rx_data_len = sizeof(rsp_data);
-        (*nxpucihal_ctrl.p_uwb_stack_data_cback)(nxpucihal_ctrl.rx_data_len, rsp_data);
+        (*nxpucihal_ctrl.p_uwb_stack_data_cback)(sizeof(rsp_data), rsp_data);
         return true;
       }
     }

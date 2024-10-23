@@ -241,10 +241,6 @@ typedef struct phNxpUciHal_Control {
 
   std::unique_ptr<NxpUwbChip> uwb_chip;
 
-  /* Rx data */
-  uint8_t* p_rx_data;
-  uint16_t rx_data_len;
-
   /* libuwb-uci callbacks */
   uwb_stack_callback_t* p_uwb_stack_cback;
   uwb_stack_data_callback_t* p_uwb_stack_data_cback;
@@ -258,8 +254,6 @@ typedef struct phNxpUciHal_Control {
 
   uint16_t cmd_len;
   uint8_t p_cmd_data[UCI_MAX_DATA_LEN];
-  uint16_t rsp_len;
-  uint8_t p_rsp_data[UCI_MAX_DATA_LEN];
 
   /* CORE_DEVICE_INFO_RSP cache */
   bool isDevInfoCached;

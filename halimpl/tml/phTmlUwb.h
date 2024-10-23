@@ -142,9 +142,8 @@ tHAL_UWB_STATUS phTmlUwb_Write(uint8_t* pBuffer, uint16_t wLength,
 
 // Reader: caller calls this once, callback will be called for every received packet.
 //         and call StopRead() to unscribe RX packet.
-tHAL_UWB_STATUS phTmlUwb_StartRead(uint8_t* pBuffer, uint16_t wLength,
-                        pphTmlUwb_TransactCompletionCb_t pTmlReadComplete,
-                        void* pContext);
+tHAL_UWB_STATUS phTmlUwb_StartRead(
+  pphTmlUwb_TransactCompletionCb_t pTmlReadComplete, void* pContext);
 void phTmlUwb_StopRead();
 
 void phTmlUwb_Chip_Reset(void);

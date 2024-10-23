@@ -26,7 +26,6 @@ static void report_binding_status(uint8_t binding_status)
   buffer[2] = 0x00;
   buffer[3] = 0x01;
   buffer[4] = binding_status;
-  nxpucihal_ctrl.rx_data_len = 5;
   if (nxpucihal_ctrl.p_uwb_stack_data_cback != NULL) {
     (*nxpucihal_ctrl.p_uwb_stack_data_cback)(data_len, buffer);
   }
@@ -57,7 +56,7 @@ static bool otp_read_data(const uint8_t channel, const uint8_t param_id, uint8_t
     if (plen < 2) {
       NXPLOG_UCIHAL_E("Otp read: bad payload length %u", plen);
     } else if (p[0] != UCI_STATUS_OK) {
-      NXPLOG_UCIHAL_E("Otp read: bad status=0x%x", nxpucihal_ctrl.p_rx_data[4]);
+      NXPLOG_UCIHAL_E("Otp read: bad status=0x%x", packet[4]);
     } else if (p[1] != len) {
       NXPLOG_UCIHAL_E("Otp read: size mismatch %u (expected %zu for param 0x%x)",
         p[1], len, param_id);
