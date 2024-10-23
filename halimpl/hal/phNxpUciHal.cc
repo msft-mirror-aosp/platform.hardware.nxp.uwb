@@ -363,20 +363,18 @@ clean_and_return:
  * Returns          It returns number of bytes successfully written to UWBC.
  *
  ******************************************************************************/
-tHAL_UWB_STATUS phNxpUciHal_write(uint16_t data_len, const uint8_t* p_data) {
+int32_t phNxpUciHal_write(size_t data_len, const uint8_t* p_data) {
   if (nxpucihal_ctrl.halStatus != HAL_STATUS_OPEN) {
     return UWBSTATUS_FAILED;
   }
-  uint16_t len = 0;
-
   SessionTrack_keepAlive();
 
   CONCURRENCY_LOCK();
-  phNxpUciHal_process_ext_cmd_rsp(data_len, p_data, &len);
+  auto status = phNxpUciHal_process_ext_cmd_rsp(data_len, p_data);
   CONCURRENCY_UNLOCK();
 
   /* No data written */
-  return len;
+  return (status == UWBSTATUS_SUCCESS) ? data_len : 0;
 }
 
 /******************************************************************************
@@ -386,67 +384,50 @@ tHAL_UWB_STATUS phNxpUciHal_write(uint16_t data_len, const uint8_t* p_data) {
  *                  phNxpUciHal_write. This function writes the data to UWBC.
  *                  It waits till write callback provide the result of write
  *                  process.
+ *                  Using write buffer nxpucihal_ctrl.p_cmd_data.
  *
- * Returns          It returns number of bytes successfully written to UWBC.
+ * Returns          Status code.
  *
  ******************************************************************************/
-tHAL_UWB_STATUS phNxpUciHal_write_unlocked(uint16_t data_len, const uint8_t* p_data) {
+tHAL_UWB_STATUS phNxpUciHal_write_unlocked() {
   tHAL_UWB_STATUS status;
-  uint8_t mt, pbf, gid, oid;
-
-  phNxpUciHal_Sem_t cb_data;
-  /* Create the local semaphore */
-  if (phNxpUciHal_init_cb_data(&cb_data, NULL) != UWBSTATUS_SUCCESS) {
-    NXPLOG_UCIHAL_D("phNxpUciHal_write_unlocked Create cb data failed");
-    data_len = 0;
-    goto clean_and_return;
-  }
+  uint16_t data_len = nxpucihal_ctrl.cmd_len;
+  uint8_t* p_data = nxpucihal_ctrl.p_cmd_data;
 
   if ((data_len > UCI_MAX_DATA_LEN) || (data_len < UCI_PKT_HDR_LEN)) {
     NXPLOG_UCIHAL_E("Invalid data_len");
-    data_len = 0;
-    goto clean_and_return;
+    return UWBSTATUS_INVALID_PARAMETER;
   }
 
-  /* Create local copy of cmd_data */
-  memcpy(nxpucihal_ctrl.p_cmd_data, p_data, data_len);
-  nxpucihal_ctrl.cmd_len = data_len;
-
-  data_len = nxpucihal_ctrl.cmd_len;
-  UCI_MSG_PRS_HDR0(p_data, mt, pbf, gid);
-  UCI_MSG_PRS_HDR1(p_data, oid);
-
-  nxpucihal_ctrl.gid = gid;
-  nxpucihal_ctrl.oid = oid;
-
-  /* Vendor Specific Parsing logic */
-  nxpucihal_ctrl.hal_parse_enabled =
-      phNxpUciHal_parse(nxpucihal_ctrl.cmd_len, nxpucihal_ctrl.p_cmd_data);
-  if (nxpucihal_ctrl.hal_parse_enabled) {
-    goto clean_and_return;
+  /* Create the local semaphore */
+  phNxpUciHal_Sem_t cb_data;
+  status = phNxpUciHal_init_cb_data(&cb_data, NULL);
+  if (status != UWBSTATUS_SUCCESS) {
+    NXPLOG_UCIHAL_D("phNxpUciHal_write_unlocked Create cb data failed");
+    return status;
   }
-  status = phTmlUwb_Write(
-      (uint8_t*)nxpucihal_ctrl.p_cmd_data, (uint16_t)nxpucihal_ctrl.cmd_len,
+
+  status = phTmlUwb_Write(p_data, data_len,
       (pphTmlUwb_TransactCompletionCb_t)&phNxpUciHal_write_complete,
       (void*)&cb_data);
 
-
   if (status != UWBSTATUS_PENDING) {
     NXPLOG_UCIHAL_E("write_unlocked status error");
-    data_len = 0;
     goto clean_and_return;
   }
 
   /* Wait for callback response */
   if (SEM_WAIT(&cb_data)) {
     NXPLOG_UCIHAL_E("write_unlocked semaphore error");
-    data_len = 0;
+    status = UWBSTATUS_FAILED;
     goto clean_and_return;
   }
 
+  status = UWBSTATUS_SUCCESS;
+
 clean_and_return:
   phNxpUciHal_cleanup_cb_data(&cb_data);
-  return data_len;
+  return status;
 }
 
 /******************************************************************************
