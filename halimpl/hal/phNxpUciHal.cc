@@ -50,7 +50,6 @@ bool uwb_device_initialized = false;
 bool uwb_get_platform_id = false;
 uint32_t timeoutTimerId = 0;
 char persistant_log_path[120];
-static uint8_t Rx_data[UCI_MAX_DATA_LEN];
 
 /**************** local methods used in this file only ************************/
 static void phNxpUciHal_write_complete(void* pContext,
@@ -490,23 +489,21 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
     length += UCI_MSG_HDR_SIZE;
     NXPLOG_UCIHAL_V("read successful length = %d", length);
 
-    nxpucihal_ctrl.p_rx_data = &pInfo->pBuff[index];
-    nxpucihal_ctrl.rx_data_len = length;
-    phNxpUciHal_print_packet(NXP_TML_UCI_RSP_NTF_UWBS_2_AP, nxpucihal_ctrl.p_rx_data, nxpucihal_ctrl.rx_data_len);
+    uint8_t *buffer = &pInfo->pBuff[index];
+    phNxpUciHal_print_packet(NXP_TML_UCI_RSP_NTF_UWBS_2_AP, buffer, length);
 
-    uint8_t mt = ((nxpucihal_ctrl.p_rx_data[0]) & UCI_MT_MASK) >> UCI_MT_SHIFT;
-    uint8_t gid = nxpucihal_ctrl.p_rx_data[0] & UCI_GID_MASK;
-    uint8_t oid = nxpucihal_ctrl.p_rx_data[1] & UCI_OID_MASK;
-    uint8_t pbf = (nxpucihal_ctrl.p_rx_data[0] & UCI_PBF_MASK) >> UCI_PBF_SHIFT;
+    uint8_t mt = ((buffer[0]) & UCI_MT_MASK) >> UCI_MT_SHIFT;
+    uint8_t gid = buffer[0] & UCI_GID_MASK;
+    uint8_t oid = buffer[1] & UCI_OID_MASK;
+    uint8_t pbf = (buffer[0] & UCI_PBF_MASK) >> UCI_PBF_SHIFT;
 
     nxpucihal_ctrl.isSkipPacket = 0;
 
-    phNxpUciHal_rx_handler_check(nxpucihal_ctrl.rx_data_len,
-                                 nxpucihal_ctrl.p_rx_data);
+    phNxpUciHal_rx_handler_check(length, buffer);
 
     // mapping device caps according to Fira 2.0
     if (mt == UCI_MT_RSP && gid == UCI_GID_CORE && oid == UCI_MSG_CORE_GET_CAPS_INFO) {
-      phNxpUciHal_handle_get_caps_info(nxpucihal_ctrl.rx_data_len, nxpucihal_ctrl.p_rx_data);
+      phNxpUciHal_handle_get_caps_info(length, buffer);
     }
 
     /* DBG packets not yet supported, just ignore them silently */
@@ -516,7 +513,7 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
     }
 
     if (!pbf && mt == UCI_MT_NTF && gid == UCI_GID_CORE && oid == UCI_MSG_CORE_GENERIC_ERROR_NTF) {
-      uint8_t status_code = nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET];
+      uint8_t status_code = buffer[UCI_RESPONSE_STATUS_OFFSET];
 
       if (status_code == UCI_STATUS_COMMAND_RETRY ||
           status_code == UCI_STATUS_SYNTAX_ERROR) {
@@ -531,7 +528,7 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
           nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_COMMAND_RETRANSMIT);
         } else {
           // uci to handle retransmission
-          nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] = UCI_STATUS_COMMAND_RETRY;
+          buffer[UCI_RESPONSE_STATUS_OFFSET] = UCI_STATUS_COMMAND_RETRY;
           // TODO: Why this should be treated as fail? once we already patched
           // the status code here. Write operation should be treated as success.
           nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_FAILED);
@@ -553,14 +550,14 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
         }
 
         uint8_t status_code = (length > UCI_RESPONSE_STATUS_OFFSET) ?
-          nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] : UCI_STATUS_UNKNOWN;
+          buffer[UCI_RESPONSE_STATUS_OFFSET] : UCI_STATUS_UNKNOWN;
 
         if (status_code == UCI_STATUS_OK) {
           nxpucihal_ctrl.cmdrsp.Wakeup(gid, oid);
         } else if ((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_SET_CONFIG)){
           /* check if any configurations are not supported then ignore the
             * UWBSTATUS_FEATURE_NOT_SUPPORTED status code*/
-          uint8_t status = phNxpUciHal_process_ext_rsp(length, nxpucihal_ctrl.p_rx_data);
+          uint8_t status = phNxpUciHal_process_ext_rsp(length, buffer);
           if (status == UWBSTATUS_SUCCESS) {
             nxpucihal_ctrl.cmdrsp.Wakeup(gid, oid);
           } else {
@@ -578,8 +575,8 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
 
     if (!nxpucihal_ctrl.isSkipPacket) {
       /* Read successful, send the event to higher layer */
-      if ((nxpucihal_ctrl.p_uwb_stack_data_cback != NULL) && (nxpucihal_ctrl.rx_data_len <= UCI_MAX_PAYLOAD_LEN)) {
-        (*nxpucihal_ctrl.p_uwb_stack_data_cback)(nxpucihal_ctrl.rx_data_len, nxpucihal_ctrl.p_rx_data);
+      if ((nxpucihal_ctrl.p_uwb_stack_data_cback != NULL) && (length <= UCI_MAX_PAYLOAD_LEN)) {
+        (*nxpucihal_ctrl.p_uwb_stack_data_cback)(length, buffer);
       }
     }
 
@@ -898,8 +895,7 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
   }
 
   // Initiate UCI packet read
-  status = phTmlUwb_StartRead( Rx_data, UCI_MAX_DATA_LEN,
-            (pphTmlUwb_TransactCompletionCb_t)&phNxpUciHal_read_complete, NULL);
+  status = phTmlUwb_StartRead(&phNxpUciHal_read_complete, NULL);
   if (status != UWBSTATUS_SUCCESS) {
     NXPLOG_UCIHAL_E("read status error status = %x", status);
     return status;
@@ -1107,7 +1103,6 @@ tHAL_UWB_STATUS phNxpUciHal_sendCoreConfig(const uint8_t *p_cmd,
 void phNxpUciHal_send_dev_error_status_ntf()
 {
  NXPLOG_UCIHAL_D("phNxpUciHal_send_dev_error_status_ntf ");
- nxpucihal_ctrl.rx_data_len = 5;
  static uint8_t rsp_data[5] = {0x60, 0x01, 0x00, 0x01, 0xFF};
- (*nxpucihal_ctrl.p_uwb_stack_data_cback)(nxpucihal_ctrl.rx_data_len, rsp_data);
+ (*nxpucihal_ctrl.p_uwb_stack_data_cback)(sizeof(rsp_data), rsp_data);
 }
