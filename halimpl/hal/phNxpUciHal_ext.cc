@@ -96,67 +96,45 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(size_t cmd_len,
     return UWBSTATUS_SUCCESS;
   }
 
-  nxpucihal_ctrl.gid = gid;
-  nxpucihal_ctrl.oid = oid;
-
-  /* Create the local semaphore */
-  if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.ext_cb_data, NULL) != UWBSTATUS_SUCCESS) {
-    NXPLOG_UCIHAL_D("Create ext_cb_data failed");
-    return UWBSTATUS_FAILED;
-  }
-
   tHAL_UWB_STATUS status = UWBSTATUS_FAILED;
   int nr_retries = 0;
   int nr_timedout = 0;
-  bool exit_loop = false;
 
-  while(!exit_loop) {
-    nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_FAILED;
-    nxpucihal_ctrl.ext_cb_waiting = true;
-
+  while(nr_retries < MAX_COMMAND_RETRY_COUNT) {
+    nxpucihal_ctrl.cmdrsp.StartCmd(gid, oid);
     status = phNxpUciHal_write_unlocked();
 
     if (status != UWBSTATUS_SUCCESS) {
       NXPLOG_UCIHAL_D("phNxpUciHal_write failed for hal ext");
-      goto clean_and_return;
+      nxpucihal_ctrl.cmdrsp.Cancel();
+      return status;
     }
 
     // Wait for rsp
-    phNxpUciHal_sem_timed_wait_msec(&nxpucihal_ctrl.ext_cb_data, HAL_EXTNS_WRITE_RSP_TIMEOUT_MS);
+    status = nxpucihal_ctrl.cmdrsp.Wait(HAL_EXTNS_WRITE_RSP_TIMEOUT_MS);
 
-    nxpucihal_ctrl.ext_cb_waiting = false;
-
-    switch (nxpucihal_ctrl.ext_cb_data.status) {
-    case UWBSTATUS_RESPONSE_TIMEOUT:
+    if (status == UWBSTATUS_RESPONSE_TIMEOUT) {
       nr_timedout++;
-      [[fallthrough]];
-    case UWBSTATUS_COMMAND_RETRANSMIT:
+      nr_retries++;
+    } else if (status == UWBSTATUS_COMMAND_RETRANSMIT) {
       // TODO: Do not retransmit CMD by here when !nxpucihal_ctrl.hal_ext_enabled,
       // Upper layer should take care of it.
       nr_retries++;
-      break;
-    default:
-      // Check CMD/RSP gid/oid matching
-      status = nxpucihal_ctrl.ext_cb_data.status;
-      exit_loop = true;
+    } else {
       break;
     }
+  }
 
-    if (nr_retries >= MAX_COMMAND_RETRY_COUNT) {
-      NXPLOG_UCIHAL_E("Failed to process cmd/rsp 0x%x", nxpucihal_ctrl.ext_cb_data.status);
-      status = UWBSTATUS_FAILED;
-      exit_loop = true;
-      phNxpUciHal_send_dev_error_status_ntf();
-    }
+  if (nr_retries >= MAX_COMMAND_RETRY_COUNT) {
+    NXPLOG_UCIHAL_E("Failed to process cmd/rsp 0x%x", status);
+    phNxpUciHal_send_dev_error_status_ntf();
+    return UWBSTATUS_FAILED;
   }
 
   if (nr_timedout > 0) {
     NXPLOG_UCIHAL_E("Warning: CMD/RSP retried %d times (timeout:%d)\n",
                     nr_retries, nr_timedout);
   }
-
-clean_and_return:
-  phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.ext_cb_data);
 
   return status;
 }
