@@ -245,8 +245,82 @@ void listDump(struct listHead* pList) {
 /* END Linked list source code */
 
 /****************** Semaphore and mutex helper functions **********************/
+/* Semaphore and mutex monitor */
+struct phNxpUciHal_Monitor {
+public:
+  static std::unique_ptr<phNxpUciHal_Monitor> Create() {
+    //auto monitor = std::unique_ptr<phNxpUciHal_Monitor>(new phNxpUciHal_Monitor());
+    auto monitor = std::make_unique<phNxpUciHal_Monitor>();
+    if (pthread_mutex_init(&monitor->reentrance_mutex_, NULL) == -1) {
+      return nullptr;
+    }
+    if (pthread_mutex_init(&monitor->concurrency_mutex_, NULL) == -1) {
+      pthread_mutex_destroy(&monitor->reentrance_mutex_);
+      return nullptr;
+    }
+    return monitor;
+  }
 
-static phNxpUciHal_Monitor_t* nxpucihal_monitor = NULL;
+  virtual ~phNxpUciHal_Monitor() {
+    pthread_mutex_destroy(&concurrency_mutex_);
+    ReentranceUnlock();
+    pthread_mutex_destroy(&reentrance_mutex_);
+    for (auto p : sems_) {
+      NXPLOG_UCIHAL_E("Unreleased semaphore %p", p);
+      p->status = UWBSTATUS_FAILED;
+      sem_post(&p->sem);
+    }
+    sems_.clear();
+  }
+
+  void AddSem(phNxpUciHal_Sem_t* pCallbackData) {
+    std::lock_guard<std::mutex> lock(lock_);
+    auto it = sems_.find(pCallbackData);
+    if (it == sems_.end()) {
+      sems_.insert(pCallbackData);
+    } else {
+      NXPLOG_UCIHAL_E("phNxpUciHal_init_cb_data: duplicated semaphore %p",
+        pCallbackData);
+    }
+  }
+
+  void RemoveSem(phNxpUciHal_Sem_t* pCallbackData) {
+    std::lock_guard<std::mutex> lock(lock_);
+    auto it = sems_.find(pCallbackData);
+    if (it == sems_.end()) {
+      NXPLOG_UCIHAL_E("phNxpUciHal_cleanup_cb_data: orphan semaphore %p",
+        pCallbackData);
+    } else {
+      sems_.erase(it);
+    }
+  }
+
+  void Reentrancelock() {
+    pthread_mutex_lock(&reentrance_mutex_);
+  }
+
+  void ReentranceUnlock() {
+    pthread_mutex_unlock(&reentrance_mutex_);
+  }
+
+  void Concurrencylock() {
+    pthread_mutex_lock(&concurrency_mutex_);
+  }
+
+  void ConcurrencyUnlock() {
+    pthread_mutex_unlock(&concurrency_mutex_);
+  }
+
+private:
+  std::unordered_set<phNxpUciHal_Sem_t*> sems_;
+  std::mutex lock_;
+  // Mutex protecting native library against reentrance
+  pthread_mutex_t reentrance_mutex_;
+  // Mutex protecting native library against concurrency
+  pthread_mutex_t concurrency_mutex_;
+};
+
+static std::unique_ptr<phNxpUciHal_Monitor> nxpucihal_monitor;
 
 /*******************************************************************************
 **
@@ -257,52 +331,16 @@ static phNxpUciHal_Monitor_t* nxpucihal_monitor = NULL;
 ** Returns          Pointer to monitor, otherwise NULL if failed
 **
 *******************************************************************************/
-phNxpUciHal_Monitor_t* phNxpUciHal_init_monitor(void) {
+bool phNxpUciHal_init_monitor(void) {
   NXPLOG_UCIHAL_D("Entering phNxpUciHal_init_monitor");
 
-  if (nxpucihal_monitor == NULL) {
-    nxpucihal_monitor =
-        (phNxpUciHal_Monitor_t*)malloc(sizeof(phNxpUciHal_Monitor_t));
-  }
+  nxpucihal_monitor = phNxpUciHal_Monitor::Create();
 
-  if (nxpucihal_monitor != NULL) {
-    memset(nxpucihal_monitor, 0x00, sizeof(phNxpUciHal_Monitor_t));
-
-    if (pthread_mutex_init(&nxpucihal_monitor->reentrance_mutex, NULL) == -1) {
-      NXPLOG_UCIHAL_E("reentrance_mutex creation returned 0x%08x", errno);
-      goto clean_and_return;
-    }
-
-    if (pthread_mutex_init(&nxpucihal_monitor->concurrency_mutex, NULL) == -1) {
-      NXPLOG_UCIHAL_E("concurrency_mutex creation returned 0x%08x", errno);
-      pthread_mutex_destroy(&nxpucihal_monitor->reentrance_mutex);
-      goto clean_and_return;
-    }
-
-    if (listInit(&nxpucihal_monitor->sem_list) != 1) {
-      NXPLOG_UCIHAL_E("Semaphore List creation failed");
-      pthread_mutex_destroy(&nxpucihal_monitor->concurrency_mutex);
-      pthread_mutex_destroy(&nxpucihal_monitor->reentrance_mutex);
-      goto clean_and_return;
-    }
-  } else {
+  if (nxpucihal_monitor == nullptr) {
     NXPLOG_UCIHAL_E("nxphal_monitor creation failed");
-    goto clean_and_return;
+    return false;
   }
-
-  NXPLOG_UCIHAL_D("Returning with SUCCESS");
-
-  return nxpucihal_monitor;
-
-clean_and_return:
-  NXPLOG_UCIHAL_D("Returning with FAILURE");
-
-  if (nxpucihal_monitor != NULL) {
-    free(nxpucihal_monitor);
-    nxpucihal_monitor = NULL;
-  }
-
-  return NULL;
+  return true;
 }
 
 /*******************************************************************************
@@ -315,33 +353,7 @@ clean_and_return:
 **
 *******************************************************************************/
 void phNxpUciHal_cleanup_monitor(void) {
-  if (nxpucihal_monitor != NULL) {
-    pthread_mutex_destroy(&nxpucihal_monitor->concurrency_mutex);
-    REENTRANCE_UNLOCK();
-    pthread_mutex_destroy(&nxpucihal_monitor->reentrance_mutex);
-    phNxpUciHal_releaseall_cb_data();
-    listDestroy(&nxpucihal_monitor->sem_list);
-    free(nxpucihal_monitor);
-    nxpucihal_monitor = NULL;
-  }
-
-  return;
-}
-
-/*******************************************************************************
-**
-** Function         phNxpUciHal_get_monitor
-**
-** Description      Get monitor
-**
-** Returns          Pointer to monitor
-**
-*******************************************************************************/
-phNxpUciHal_Monitor_t* phNxpUciHal_get_monitor(void) {
-  if (nxpucihal_monitor == NULL) {
-    NXPLOG_UCIHAL_E("nxpucihal_monitor is null");
-  }
-  return nxpucihal_monitor;
+  nxpucihal_monitor = nullptr;
 }
 
 /* Initialize the callback data */
@@ -360,8 +372,8 @@ tHAL_UWB_STATUS phNxpUciHal_init_cb_data(phNxpUciHal_Sem_t* pCallbackData,
   pCallbackData->pContext = pContext;
 
   /* Add to active semaphore list */
-  if (listAdd(&phNxpUciHal_get_monitor()->sem_list, pCallbackData) != 1) {
-    NXPLOG_UCIHAL_E("Failed to add the semaphore to the list");
+  if (nxpucihal_monitor != nullptr) {
+    nxpucihal_monitor->AddSem(pCallbackData);
   }
 
   return UWBSTATUS_SUCCESS;
@@ -382,15 +394,30 @@ void phNxpUciHal_cleanup_cb_data(phNxpUciHal_Sem_t* pCallbackData) {
     NXPLOG_UCIHAL_E(
         "phNxpUciHal_cleanup_cb_data: Failed to destroy semaphore");
   }
-
-  /* Remove from active semaphore list */
-  if (listRemove(&phNxpUciHal_get_monitor()->sem_list, pCallbackData) != 1) {
-    NXPLOG_UCIHAL_E(
-        "phNxpUciHal_cleanup_cb_data: Failed to remove semaphore from the "
-        "list");
+  if (nxpucihal_monitor != nullptr) {
+    nxpucihal_monitor->RemoveSem(pCallbackData);
   }
+}
 
-  return;
+void REENTRANCE_LOCK() {
+  if (nxpucihal_monitor != nullptr) {
+    nxpucihal_monitor->Reentrancelock();
+  }
+}
+void REENTRANCE_UNLOCK() {
+  if (nxpucihal_monitor != nullptr) {
+    nxpucihal_monitor->ReentranceUnlock();
+  }
+}
+void CONCURRENCY_LOCK() {
+  if (nxpucihal_monitor != nullptr) {
+    nxpucihal_monitor->Concurrencylock();
+  }
+}
+void CONCURRENCY_UNLOCK() {
+  if (nxpucihal_monitor != nullptr) {
+    nxpucihal_monitor->ConcurrencyUnlock();
+  }
 }
 
 int phNxpUciHal_sem_timed_wait_msec(phNxpUciHal_Sem_t* pCallbackData, long msec)
@@ -421,27 +448,6 @@ int phNxpUciHal_sem_timed_wait_msec(phNxpUciHal_Sem_t* pCallbackData, long msec)
     return -1;
   }
   return 0;
-}
-
-/*******************************************************************************
-**
-** Function         phNxpUciHal_releaseall_cb_data
-**
-** Description      Release all callback data
-**
-** Returns          None
-**
-*******************************************************************************/
-void phNxpUciHal_releaseall_cb_data(void) {
-  phNxpUciHal_Sem_t* pCallbackData;
-
-  while (listGetAndRemoveNext(&phNxpUciHal_get_monitor()->sem_list,
-                              (void**)&pCallbackData)) {
-    pCallbackData->status = UWBSTATUS_FAILED;
-    sem_post(&pCallbackData->sem);
-  }
-
-  return;
 }
 
 /* END Semaphore and mutex helper functions */
