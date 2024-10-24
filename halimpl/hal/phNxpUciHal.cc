@@ -295,7 +295,7 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_c
   /*Create the timer for extns write response*/
   timeoutTimerId = phOsalUwb_Timer_Create();
 
-  if (phNxpUciHal_init_monitor() == NULL) {
+  if (!phNxpUciHal_init_monitor()) {
     NXPLOG_UCIHAL_E("Init monitor failed");
     return UWBSTATUS_FAILED;
   }
