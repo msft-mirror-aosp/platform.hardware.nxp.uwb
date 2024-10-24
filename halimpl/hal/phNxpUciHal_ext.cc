@@ -88,11 +88,7 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(size_t cmd_len,
   }
 
   /* Vendor Specific Parsing logic */
-  // TODO: remove parse_enabled
-  nxpucihal_ctrl.hal_parse_enabled =
-      phNxpUciHal_parse(nxpucihal_ctrl.cmd_len, nxpucihal_ctrl.p_cmd_data);
-  if (nxpucihal_ctrl.hal_parse_enabled) {
-    NXPLOG_UCIHAL_D("hal_parse_enabled turned on");
+  if (phNxpUciHal_parse(nxpucihal_ctrl.cmd_len, nxpucihal_ctrl.p_cmd_data)) {
     return UWBSTATUS_SUCCESS;
   }
 

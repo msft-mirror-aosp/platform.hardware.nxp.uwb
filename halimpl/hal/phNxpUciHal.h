@@ -247,7 +247,6 @@ typedef struct phNxpUciHal_Control {
 
   /* HAL extensions */
   uint8_t hal_ext_enabled;
-  bool_t hal_parse_enabled;
 
   /* Waiting semaphore */
   CmdRspCheck cmdrsp;
