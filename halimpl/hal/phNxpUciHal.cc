@@ -448,10 +448,10 @@ static void handle_rx_packet(uint8_t *buffer, size_t length)
   uint8_t oid = buffer[1] & UCI_OID_MASK;
   uint8_t pbf = (buffer[0] & UCI_PBF_MASK) >> UCI_PBF_SHIFT;
 
-  nxpucihal_ctrl.isSkipPacket = 0;
+  bool isSkipPacket = false;
 
   if (phNxpUciHal_rx_handler_check(length, buffer)) {
-    nxpucihal_ctrl.isSkipPacket = true;
+    isSkipPacket = true;
   }
 
   if (mt == UCI_MT_NTF) {
@@ -468,11 +468,12 @@ static void handle_rx_packet(uint8_t *buffer, size_t length)
         // Handle retransmissions
         // TODO: Do not retransmit it when !nxpucihal_ctrl.hal_ext_enabled,
         // Upper layer should take care of it.
-        nxpucihal_ctrl.isSkipPacket = 1;
+        isSkipPacket = true;
         nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_COMMAND_RETRANSMIT);
       } else if (status_code == UCI_STATUS_BUFFER_UNDERFLOW) {
         if (nxpucihal_ctrl.hal_ext_enabled) {
-          nxpucihal_ctrl.isSkipPacket = 1;
+          NXPLOG_UCIHAL_E("Got Underflow error for ext cmd, retransmit");
+          isSkipPacket = true;
           nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_COMMAND_RETRANSMIT);
         } else {
           // uci to handle retransmission
@@ -489,8 +490,7 @@ static void handle_rx_packet(uint8_t *buffer, size_t length)
     // End of UCI_MT_NTF
   } else if (mt == UCI_MT_RSP) {
     if (nxpucihal_ctrl.hal_ext_enabled) {
-      // Check status code only for extension commands
-      nxpucihal_ctrl.isSkipPacket = 1;
+      isSkipPacket = true;
 
       if (pbf) {
         /* XXX: fix the whole logic if this really happens */
@@ -521,7 +521,7 @@ static void handle_rx_packet(uint8_t *buffer, size_t length)
     }
   } // End of UCI_MT_RSP
 
-  if (!nxpucihal_ctrl.isSkipPacket) {
+  if (!isSkipPacket) {
     /* Read successful, send the event to higher layer */
     if ((nxpucihal_ctrl.p_uwb_stack_data_cback != NULL) && (length <= UCI_MAX_PAYLOAD_LEN)) {
       (*nxpucihal_ctrl.p_uwb_stack_data_cback)(length, buffer);

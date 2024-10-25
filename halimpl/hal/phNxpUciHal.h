@@ -261,9 +261,6 @@ typedef struct phNxpUciHal_Control {
   phNxpUciHal_FW_Version_t fw_version;
   device_type_t device_type;
   uint8_t fw_boot_mode;
-
-  /* To skip sending packets to upper layer from HAL*/
-  uint8_t isSkipPacket;
   bool_t fw_dwnld_mode;
 
   // Per-country settings
