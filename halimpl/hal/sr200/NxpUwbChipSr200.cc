@@ -25,7 +25,7 @@ public:
   tHAL_UWB_STATUS read_otp(extcal_param_id_t id, uint8_t *data, size_t data_len, size_t *retlen);
   tHAL_UWB_STATUS apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len);
 private:
-  void on_binding_status_ntf(size_t packet_len, const uint8_t* packet);
+  bool on_binding_status_ntf(size_t packet_len, const uint8_t* packet);
 
   tHAL_UWB_STATUS check_binding_done();
   int16_t extra_group_delay(void);
@@ -44,13 +44,14 @@ NxpUwbChipSr200::~NxpUwbChipSr200()
 {
 }
 
-void NxpUwbChipSr200::on_binding_status_ntf(size_t packet_len, const uint8_t* packet)
+bool NxpUwbChipSr200::on_binding_status_ntf(size_t packet_len, const uint8_t* packet)
 {
   if (packet_len >= UCI_RESPONSE_STATUS_OFFSET) {
     bindingStatus_ = packet[UCI_RESPONSE_STATUS_OFFSET];
     NXPLOG_UCIHAL_D("BINDING_STATUS_NTF: 0x%x", bindingStatus_);
     bindingStatusNtfWait_.post(UWBSTATUS_SUCCESS);
   }
+  return true;
 }
 
 tHAL_UWB_STATUS NxpUwbChipSr200::check_binding_done()
@@ -119,7 +120,6 @@ tHAL_UWB_STATUS NxpUwbChipSr200::chip_init()
   // register binding status ntf handler
   bindingStatusNtfHandler_ = UciHalRxHandler(
       UCI_MT_NTF, UCI_GID_PROPRIETARY, UCI_MSG_BINDING_STATUS_NTF,
-      true,
       std::bind(&NxpUwbChipSr200::on_binding_status_ntf, this, std::placeholders::_1, std::placeholders::_2));
 
   return status;

@@ -153,7 +153,7 @@ public:
     // register SESSION_STATUS_NTF rx handler
     rx_handler_session_status_ntf_ = phNxpUciHal_rx_handler_add(
       UCI_MT_NTF, UCI_GID_SESSION_MANAGE, UCI_MSG_SESSION_STATUS_NTF,
-      false, false,
+      false,
       std::bind(&SessionTrack::OnSessionStatusNtf, this, std::placeholders::_1, std::placeholders::_2));
   }
 
@@ -179,15 +179,15 @@ public:
 
     // Check SESSION_INIT_RSP for SessionID - Handle matching
     auto session_init_rsp_cb =
-      [this, session_id, session_type](size_t packet_len, const uint8_t *packet)
+      [this, session_id, session_type](size_t packet_len, const uint8_t *packet) -> bool
     {
       if (packet_len != UCI_MSG_SESSION_STATE_INIT_RSP_LEN )
-        return;
+        return false;
 
       uint8_t status = packet[UCI_MSG_SESSION_STATE_INIT_RSP_STATUS_OFFSET];
       uint32_t handle = le_bytes_to_cpu<uint32_t>(&packet[UCI_MSG_SESSION_STATE_INIT_RSP_HANDLE_OFFSET]);
       if (status != UWBSTATUS_SUCCESS)
-        return;
+        return false;
 
       bool was_idle;
       {
@@ -203,12 +203,14 @@ public:
         auto msg = std::make_shared<SessionTrackMsg>(SessionTrackWorkType::ACTIVATE, false);
         QueueSessionTrackWork(msg);
       }
+
+      return false;
     };
 
     // XXX: This rx handler can be called multiple times on
     // UCI_STATUS_COMMAND_RETRY(0xA) from SESSION_INIT_CMD
     phNxpUciHal_rx_handler_add(UCI_MT_RSP, UCI_GID_SESSION_MANAGE,
-      UCI_MSG_SESSION_STATE_INIT, false, true, session_init_rsp_cb);
+      UCI_MSG_SESSION_STATE_INIT, true, session_init_rsp_cb);
   }
 
   // Called by upper-layer's SetAppConfig command handler
@@ -342,20 +344,21 @@ private:
     phNxpUciHal_init_cb_data(&urskDeleteNtfWait, NULL);
 
     phNxpUciHal_rx_handler_add(UCI_MT_RSP, UCI_GID_PROPRIETARY_0X0F,
-      UCI_MSG_URSK_DELETE, true, true,
-      [](size_t packet_len, const uint8_t *packet) {
+      UCI_MSG_URSK_DELETE, true,
+      [](size_t packet_len, const uint8_t *packet) -> bool {
         if (packet_len < 5)
-          return;
+          return true;
         if (packet[4] != UWBSTATUS_SUCCESS) {
           NXPLOG_UCIHAL_E("SessionTrack: URSR_DELETE failed, rsp status=0x%x", packet[4]);
         }
+        return true;
       }
     );
     phNxpUciHal_rx_handler_add(UCI_MT_NTF, UCI_GID_PROPRIETARY_0X0F,
-      UCI_MSG_URSK_DELETE, true, true,
-      [&urskDeleteNtfWait](size_t packet_len, const uint8_t *packet) {
+      UCI_MSG_URSK_DELETE, true,
+      [&urskDeleteNtfWait](size_t packet_len, const uint8_t *packet) -> bool {
         if (packet_len < 6)
-          return;
+          return true;
         uint8_t status = packet[4];
         uint8_t nr = packet[5];
 
@@ -384,6 +387,7 @@ private:
           }
         }
         SEM_POST(&urskDeleteNtfWait);
+        return true;
       }
     );
 
@@ -418,29 +422,30 @@ private:
     bool result = false;
 
     phNxpUciHal_rx_handler_add(UCI_MT_RSP, UCI_GID_SESSION_MANAGE,
-      UCI_MSG_SESSION_GET_APP_CONFIG, true, true,
-      [&val, &result, tag](size_t packet_len, const uint8_t *packet) {
+      UCI_MSG_SESSION_GET_APP_CONFIG, true,
+      [&val, &result, tag](size_t packet_len, const uint8_t *packet) -> bool {
         if (packet_len != 12)
-          return;
+          return true;
 
         if (packet[4] != UWBSTATUS_SUCCESS) {
           NXPLOG_UCIHAL_E("SessionTrack: GetAppConfig failed, status=0x%02x", packet[4]);
-          return;
+          return true;
         }
         if (packet[5] != 1) {
           NXPLOG_UCIHAL_E("SessionTrack: GetAppConfig failed, nr=%u", packet[5]);
-          return;
+          return true;
         }
         if (packet[6] != tag) {
           NXPLOG_UCIHAL_E("SessionTrack: GetAppConfig failed, tag=0x%02x, expected=0x%02x", packet[6], tag);
-          return;
+          return true;
         }
         if (packet[7] != 4) {
           NXPLOG_UCIHAL_E("SessionTrack: GetAppConfig failed, len=%u", packet[7]);
-          return;
+          return true;
         }
         val = le_bytes_to_cpu<uint32_t>(&packet[8]);
         result = true;
+        return true;
       }
     );
 
@@ -512,10 +517,10 @@ private:
   }
 
   // UCI_MSG_SESSION_STATUS_NTF rx handler
-  void OnSessionStatusNtf(size_t packet_len, const uint8_t* packet) {
+  bool OnSessionStatusNtf(size_t packet_len, const uint8_t* packet) {
     if (packet_len != UCI_MSG_SESSION_STATUS_NTF_LENGTH) {
       NXPLOG_UCIHAL_E("SessionTrack: SESSION_STATUS_NTF packet parse error");
-      return;
+      return false;
     }
 
     uint32_t session_handle = le_bytes_to_cpu<uint32_t>(&packet[UCI_MSG_SESSION_STATUS_NTF_HANDLE_OFFSET]);
@@ -553,6 +558,8 @@ private:
       auto msg = std::make_shared<SessionTrackMsg>(SessionTrackWorkType::IDLE, false);
       QueueSessionTrackWork(msg);
     }
+
+    return false;
   }
 
   static void IdleTimerCallback(uint32_t TimerId, void* pContext) {
