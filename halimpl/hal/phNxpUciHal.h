@@ -312,22 +312,28 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(size_t cmd_len, const uint8_t *p
 void phNxpUciHal_send_dev_error_status_ntf();
 bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data);
 
+// RX packet handler
+// handler should returns true if the packet is handled and
+// shouldn't report it to the upper layer.
+
+using RxHandlerCallback = std::function<bool(size_t packet_len, const uint8_t *packet)>;
+
 std::shared_ptr<phNxpUciHal_RxHandler> phNxpUciHal_rx_handler_add(
   uint8_t mt, uint8_t gid, uint8_t oid,
-  bool skip_reporting, bool run_once,
-  std::function<void(size_t packet_len, const uint8_t *packet)> callback);
+  bool run_once,
+  RxHandlerCallback callback);
 void phNxpUciHal_rx_handler_del(std::shared_ptr<phNxpUciHal_RxHandler> handler);
 
-// Helper class for rx handler with once=false
+// Helper class for rx handler with run_once=false
 // auto-unregistered from destructor
+
 class UciHalRxHandler {
 public:
   UciHalRxHandler() {
   }
   UciHalRxHandler(uint8_t mt, uint8_t gid, uint8_t oid,
-                 bool skip_reporting,
-                 std::function<void(size_t packet_len, const uint8_t *packet)> callback) {
-    handler_ = phNxpUciHal_rx_handler_add(mt, gid, oid, skip_reporting, false, callback);
+                  RxHandlerCallback callback) {
+    handler_ = phNxpUciHal_rx_handler_add(mt, gid, oid, false, callback);
   }
   UciHalRxHandler& operator=(UciHalRxHandler &&handler) {
     handler_ = std::move(handler.handler_);
