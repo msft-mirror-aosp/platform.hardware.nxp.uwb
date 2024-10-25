@@ -329,6 +329,10 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_c
   // Per-chip (SR1XX or SR200) implementation
   nxpucihal_ctrl.uwb_chip = GetUwbChip();
 
+  // Install rx packet handlers
+  phNxpUciHal_rx_handler_add(UCI_MT_RSP, UCI_GID_CORE, UCI_MSG_CORE_GET_CAPS_INFO,
+    false, phNxpUciHal_handle_get_caps_info);
+
   /* Call open complete */
   phTmlUwb_DeferredCall(std::make_shared<phLibUwb_Message>(UCI_HAL_OPEN_CPLT_MSG));
 
@@ -448,13 +452,6 @@ static void handle_rx_packet(uint8_t *buffer, size_t length)
 
   if (phNxpUciHal_rx_handler_check(length, buffer)) {
     nxpucihal_ctrl.isSkipPacket = true;
-  }
-
-  // mapping device caps according to Fira 2.0
-  if (mt == UCI_MT_RSP && gid == UCI_GID_CORE && oid == UCI_MSG_CORE_GET_CAPS_INFO) {
-    if (phNxpUciHal_handle_get_caps_info(length, buffer)) {
-      return;
-    }
   }
 
   /* DBG packets not yet supported, just ignore them silently */
