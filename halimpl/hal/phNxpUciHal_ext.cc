@@ -800,13 +800,15 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
   }
 
   // send country code response to upper layer
-  static uint8_t rsp_data[5] = { 0x4c, 0x01, 0x00, 0x01 };
   if (rt_set->uwb_enable) {
-    rsp_data[4] = UWBSTATUS_SUCCESS;
+    constexpr uint8_t rsp_data[5] = {
+      0x4c, 0x01, 0x00, 0x01, UWBSTATUS_SUCCESS };
+    report_uci_message(rsp_data, sizeof(rsp_data));
   } else {
-    rsp_data[4] = UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF;
+    constexpr uint8_t rsp_data[5] = {
+      0x4c, 0x01, 0x00, 0x01, UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF };
+    report_uci_message(rsp_data, sizeof(rsp_data));
   }
-  (*nxpucihal_ctrl.p_uwb_stack_data_cback)(sizeof(rsp_data), rsp_data);
 }
 
 // TODO: support fragmented packets
@@ -881,10 +883,10 @@ bool phNxpUciHal_handle_set_app_config(size_t *data_len, uint8_t *p_data)
         NXPLOG_UCIHAL_D("Country code blocked channel %u", ch);
 
         // send setAppConfig response with UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF response
-        static uint8_t rsp_data[] = { 0x41, 0x03, 0x04, 0x04,
+        const uint8_t rsp_data[] = { 0x41, 0x03, 0x04, 0x04,
           UCI_STATUS_FAILED, 0x01, tlv_tag, UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF
         };
-        (*nxpucihal_ctrl.p_uwb_stack_data_cback)(sizeof(rsp_data), rsp_data);
+        report_uci_message(rsp_data, sizeof(rsp_data));
         return true;
       }
     }
@@ -1024,8 +1026,7 @@ bool phNxpUciHal_handle_get_caps_info(size_t data_len, const uint8_t *p_data)
 
     phNxpUciHal_print_packet(NXP_TML_UCI_RSP_NTF_UWBS_2_AP, packet, packet_len);
 
-    // send GET CAPS INFO response to the Upper Layer
-    (*nxpucihal_ctrl.p_uwb_stack_data_cback)(packet_len, packet);
+    report_uci_message(packet, packet_len);
     // skip the incoming packet as we have send the modified response
     // already
     return true;

@@ -447,6 +447,13 @@ static void phNxpUciHal_write_complete(void* pContext,
   p_cb_data->post(pInfo->wStatus);
 }
 
+void report_uci_message(const uint8_t* buffer, size_t len)
+{
+  if ((nxpucihal_ctrl.p_uwb_stack_data_cback != NULL) && (len <= UCI_MAX_PAYLOAD_LEN)) {
+    (*nxpucihal_ctrl.p_uwb_stack_data_cback)(len, buffer);
+  }
+}
+
 static void handle_rx_packet(uint8_t *buffer, size_t length)
 {
   phNxpUciHal_print_packet(NXP_TML_UCI_RSP_NTF_UWBS_2_AP, buffer, length);
@@ -526,9 +533,7 @@ static void handle_rx_packet(uint8_t *buffer, size_t length)
 
   if (!isSkipPacket) {
     /* Read successful, send the event to higher layer */
-    if ((nxpucihal_ctrl.p_uwb_stack_data_cback != NULL) && (length <= UCI_MAX_PAYLOAD_LEN)) {
-      (*nxpucihal_ctrl.p_uwb_stack_data_cback)(length, buffer);
-    }
+    report_uci_message(buffer, length);
   }
 
   /* Disable junk data check for each UCI packet*/
@@ -971,10 +976,8 @@ tHAL_UWB_STATUS phNxpUciHal_coreInitialization()
   // report to upper-layer
   phTmlUwb_DeferredCall(std::make_shared<phLibUwb_Message>(UCI_HAL_INIT_CPLT_MSG));
 
-  if (nxpucihal_ctrl.p_uwb_stack_data_cback != NULL) {
-    uint8_t dev_ready_ntf[] = {0x60, 0x01, 0x00, 0x01, 0x01};
-    (*nxpucihal_ctrl.p_uwb_stack_data_cback)((sizeof(dev_ready_ntf)/sizeof(uint8_t)), dev_ready_ntf);
-  }
+  constexpr uint8_t dev_ready_ntf[] = {0x60, 0x01, 0x00, 0x01, 0x01};
+  report_uci_message(dev_ready_ntf, sizeof(dev_ready_ntf));
 
   return UWBSTATUS_SUCCESS;
 }
@@ -1098,7 +1101,7 @@ tHAL_UWB_STATUS phNxpUciHal_sendCoreConfig(const uint8_t *p_cmd,
  ******************************************* ***********************************/
 void phNxpUciHal_send_dev_error_status_ntf()
 {
- NXPLOG_UCIHAL_D("phNxpUciHal_send_dev_error_status_ntf ");
- static uint8_t rsp_data[5] = {0x60, 0x01, 0x00, 0x01, 0xFF};
- (*nxpucihal_ctrl.p_uwb_stack_data_cback)(sizeof(rsp_data), rsp_data);
+  NXPLOG_UCIHAL_D("phNxpUciHal_send_dev_error_status_ntf ");
+  constexpr uint8_t rsp_data[5] = {0x60, 0x01, 0x00, 0x01, 0xFF};
+  report_uci_message(rsp_data, sizeof(rsp_data));
 }
