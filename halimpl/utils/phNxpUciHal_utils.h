@@ -36,18 +36,6 @@
 #include "phUwbStatus.h"
 
 /********************* Definitions and structures *****************************/
-
-/* List structures */
-struct listNode {
-  void* pData;
-  struct listNode* pNext;
-};
-
-struct listHead {
-  struct listNode* pFirst;
-  pthread_mutex_t mutex;
-};
-
 /* Which is the direction of UWB Packet.
  *
  * Used by the @ref phNxpUciHal_print_packet API.
@@ -85,14 +73,6 @@ static inline int SEM_POST(phNxpUciHal_Sem_t* pCallbackData)
 }
 
 /************************ Exposed functions ***********************************/
-/* List functions */
-int listInit(struct listHead* pList);
-int listDestroy(struct listHead* pList);
-int listAdd(struct listHead* pList, void* pData);
-int listRemove(struct listHead* pList, void* pData);
-int listGetAndRemoveNext(struct listHead* pList, void** ppData);
-void listDump(struct listHead* pList);
-
 /* NXP UCI HAL utility functions */
 bool phNxpUciHal_init_monitor(void);
 void phNxpUciHal_cleanup_monitor(void);
