@@ -459,7 +459,9 @@ static void handle_rx_packet(uint8_t *buffer, size_t length)
 
   // mapping device caps according to Fira 2.0
   if (mt == UCI_MT_RSP && gid == UCI_GID_CORE && oid == UCI_MSG_CORE_GET_CAPS_INFO) {
-    phNxpUciHal_handle_get_caps_info(length, buffer);
+    if (phNxpUciHal_handle_get_caps_info(length, buffer)) {
+      return;
+    }
   }
 
   /* DBG packets not yet supported, just ignore them silently */
