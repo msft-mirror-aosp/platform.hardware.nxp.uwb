@@ -34,7 +34,7 @@ typedef void(uwb_stack_callback_t)(uwb_event_t event,
  * The callback passed in from the UWB stack that the HAL
  * can use to pass incomming data to the stack.
  */
-typedef void(uwb_stack_data_callback_t)(uint16_t data_len, uint8_t* p_data);
+typedef void(uwb_stack_data_callback_t)(uint16_t data_len, const uint8_t* p_data);
 
 /* NXP HAL functions */
 uint16_t phNxpUciHal_open(uwb_stack_callback_t* p_cback,

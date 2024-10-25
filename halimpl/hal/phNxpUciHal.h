@@ -302,6 +302,10 @@ struct phNxpUciHal_RxHandler;
 tHAL_UWB_STATUS phNxpUciHal_init_hw();
 tHAL_UWB_STATUS phNxpUciHal_write_unlocked();
 void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo);
+
+// Report UCI packet to upper layer
+void report_uci_message(const uint8_t* buffer, size_t len);
+
 tHAL_UWB_STATUS phNxpUciHal_uwb_reset();
 tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig();
 tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(size_t cmd_len, const uint8_t *p_cmd);
