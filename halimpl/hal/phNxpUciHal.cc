@@ -104,11 +104,13 @@ void phNxpUciHal_rx_handler_del(std::shared_ptr<phNxpUciHal_RxHandler> handler)
   rx_handlers.remove(handler);
 }
 
-static void phNxpUciHal_rx_handler_check(size_t packet_len, const uint8_t *packet)
+// Returns true when this packet is handled by one of the handler.
+static bool phNxpUciHal_rx_handler_check(size_t packet_len, const uint8_t *packet)
 {
   const uint8_t mt = ((packet[0]) & UCI_MT_MASK) >> UCI_MT_SHIFT;
   const uint8_t gid = packet[0] & UCI_GID_MASK;
   const uint8_t oid = packet[1] & UCI_OID_MASK;
+  bool skip_packet = false;
 
   std::lock_guard<std::mutex> guard(rx_handlers_lock);
 
@@ -116,13 +118,15 @@ static void phNxpUciHal_rx_handler_check(size_t packet_len, const uint8_t *packe
     if (mt == handler->mt && gid == handler->gid && oid == handler->oid) {
       handler->callback(packet_len, packet);
       if (handler->skip_reporting) {
-        nxpucihal_ctrl.isSkipPacket = 1;
+        skip_packet = true;
       }
     }
   }
   rx_handlers.remove_if([mt, gid, oid](auto& handler) {
     return mt == handler->mt && gid == handler->gid && oid == handler->oid && handler->run_once;
   });
+
+  return skip_packet;
 }
 
 static void phNxpUciHal_rx_handler_destroy(void)
@@ -456,7 +460,9 @@ static void handle_rx_packet(uint8_t *buffer, size_t length)
 
   nxpucihal_ctrl.isSkipPacket = 0;
 
-  phNxpUciHal_rx_handler_check(length, buffer);
+  if (phNxpUciHal_rx_handler_check(length, buffer)) {
+    nxpucihal_ctrl.isSkipPacket = true;
+  }
 
   // mapping device caps according to Fira 2.0
   if (mt == UCI_MT_RSP && gid == UCI_GID_CORE && oid == UCI_MSG_CORE_GET_CAPS_INFO) {
