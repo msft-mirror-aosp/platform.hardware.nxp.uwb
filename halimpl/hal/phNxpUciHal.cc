@@ -454,42 +454,42 @@ static void handle_rx_packet(uint8_t *buffer, size_t length)
     nxpucihal_ctrl.isSkipPacket = true;
   }
 
-  /* DBG packets not yet supported, just ignore them silently */
-  if ((mt == UCI_MT_NTF) && (gid == UCI_GID_INTERNAL) &&
-      (oid == UCI_EXT_PARAM_DBG_RFRAME_LOG_NTF)) {
-    return;
-  }
+  if (mt == UCI_MT_NTF) {
+    // DBG packets not yet supported, just ignore them silently
+    if (gid == UCI_GID_INTERNAL && oid == UCI_EXT_PARAM_DBG_RFRAME_LOG_NTF) {
+      return;
+    }
 
-  if (!pbf && mt == UCI_MT_NTF && gid == UCI_GID_CORE && oid == UCI_MSG_CORE_GENERIC_ERROR_NTF) {
-    uint8_t status_code = buffer[UCI_RESPONSE_STATUS_OFFSET];
+    if (!pbf && gid == UCI_GID_CORE && oid == UCI_MSG_CORE_GENERIC_ERROR_NTF) {
+      uint8_t status_code = buffer[UCI_RESPONSE_STATUS_OFFSET];
 
-    if (status_code == UCI_STATUS_COMMAND_RETRY ||
-        status_code == UCI_STATUS_SYNTAX_ERROR) {
-      // Handle retransmissions
-      // TODO: Do not retransmit it when !nxpucihal_ctrl.hal_ext_enabled,
-      // Upper layer should take care of it.
-      nxpucihal_ctrl.isSkipPacket = 1;
-      nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_COMMAND_RETRANSMIT);
-    } else if (status_code == UCI_STATUS_BUFFER_UNDERFLOW) {
-      if (nxpucihal_ctrl.hal_ext_enabled) {
+      if (status_code == UCI_STATUS_COMMAND_RETRY ||
+          status_code == UCI_STATUS_SYNTAX_ERROR) {
+        // Handle retransmissions
+        // TODO: Do not retransmit it when !nxpucihal_ctrl.hal_ext_enabled,
+        // Upper layer should take care of it.
         nxpucihal_ctrl.isSkipPacket = 1;
         nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_COMMAND_RETRANSMIT);
+      } else if (status_code == UCI_STATUS_BUFFER_UNDERFLOW) {
+        if (nxpucihal_ctrl.hal_ext_enabled) {
+          nxpucihal_ctrl.isSkipPacket = 1;
+          nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_COMMAND_RETRANSMIT);
+        } else {
+          // uci to handle retransmission
+          buffer[UCI_RESPONSE_STATUS_OFFSET] = UCI_STATUS_COMMAND_RETRY;
+          // TODO: Why this should be treated as fail? once we already patched
+          // the status code here. Write operation should be treated as success.
+          nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_FAILED);
+        }
       } else {
-        // uci to handle retransmission
-        buffer[UCI_RESPONSE_STATUS_OFFSET] = UCI_STATUS_COMMAND_RETRY;
-        // TODO: Why this should be treated as fail? once we already patched
-        // the status code here. Write operation should be treated as success.
+        // TODO: Why should we wake up the user thread here?
         nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_FAILED);
       }
-    } else {
-      // TODO: Why should we wake up the user thread here?
-      nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_FAILED);
     }
-  }
-
-  // Check status code only for extension commands
-  if (mt == UCI_MT_RSP) {
+    // End of UCI_MT_NTF
+  } else if (mt == UCI_MT_RSP) {
     if (nxpucihal_ctrl.hal_ext_enabled) {
+      // Check status code only for extension commands
       nxpucihal_ctrl.isSkipPacket = 1;
 
       if (pbf) {
@@ -519,7 +519,7 @@ static void handle_rx_packet(uint8_t *buffer, size_t length)
     } else {
       nxpucihal_ctrl.cmdrsp.Wakeup(gid, oid);
     }
-  }
+  } // End of UCI_MT_RSP
 
   if (!nxpucihal_ctrl.isSkipPacket) {
     /* Read successful, send the event to higher layer */
