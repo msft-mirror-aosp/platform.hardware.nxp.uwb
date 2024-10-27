@@ -416,6 +416,9 @@ tHAL_UWB_STATUS phNxpUciHal_write_unlocked(uint16_t data_len, const uint8_t* p_d
   UCI_MSG_PRS_HDR0(p_data, mt, pbf, gid);
   UCI_MSG_PRS_HDR1(p_data, oid);
 
+  nxpucihal_ctrl.gid = gid;
+  nxpucihal_ctrl.oid = oid;
+
   /* Vendor Specific Parsing logic */
   nxpucihal_ctrl.hal_parse_enabled =
       phNxpUciHal_parse(nxpucihal_ctrl.cmd_len, nxpucihal_ctrl.p_cmd_data);
@@ -525,6 +528,22 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
       phNxpUciHal_handle_get_caps_info(nxpucihal_ctrl.rx_data_len, nxpucihal_ctrl.p_rx_data);
     }
 
+    /**
+     *In case of response is received unexpectedly, don't send to upper layers
+     */
+    if (mt == UCI_MT_RSP) {
+      if (nxpucihal_ctrl.gid == gid && nxpucihal_ctrl.oid == oid) {
+        //received correct response. clear values.
+        if (!pbf) {
+          nxpucihal_ctrl.gid = 0xFF;
+          nxpucihal_ctrl.oid = 0xFF;
+        }
+      } else {
+        NXPLOG_UCIHAL_E("Received incorrect response for GID %x OID %x", gid, oid);
+        nxpucihal_ctrl.isSkipPacket = 1;
+      }
+    }
+
     // phNxpUciHal_process_ext_cmd_rsp() is waiting for the response packet
     // set this true to wake it up for other reasons
     bool bWakeupExtCmd = (mt == UCI_MT_RSP);
@@ -544,7 +563,10 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
       if (!pbf && mt == UCI_MT_NTF && gid == UCI_GID_CORE && oid == UCI_MSG_CORE_GENERIC_ERROR_NTF) {
         uint8_t status_code = nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET];
 
-        if (status_code == UCI_STATUS_COMMAND_RETRY) {
+        if (status_code == UCI_STATUS_COMMAND_RETRY
+            ||
+            status_code == UCI_STATUS_SYNTAX_ERROR
+        ) {
           // Handle retransmissions
           // TODO: Do not retransmit it when !nxpucihal_ctrl.hal_ext_enabled,
           // Upper layer should take care of it.
