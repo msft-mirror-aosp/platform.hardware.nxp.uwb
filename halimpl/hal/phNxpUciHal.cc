@@ -438,6 +438,106 @@ static void phNxpUciHal_write_complete(void* pContext,
   p_cb_data->post(pInfo->wStatus);
 }
 
+static void handle_rx_packet(uint8_t *buffer, size_t length)
+{
+  phNxpUciHal_print_packet(NXP_TML_UCI_RSP_NTF_UWBS_2_AP, buffer, length);
+
+  uint8_t mt = ((buffer[0]) & UCI_MT_MASK) >> UCI_MT_SHIFT;
+  uint8_t gid = buffer[0] & UCI_GID_MASK;
+  uint8_t oid = buffer[1] & UCI_OID_MASK;
+  uint8_t pbf = (buffer[0] & UCI_PBF_MASK) >> UCI_PBF_SHIFT;
+
+  nxpucihal_ctrl.isSkipPacket = 0;
+
+  phNxpUciHal_rx_handler_check(length, buffer);
+
+  // mapping device caps according to Fira 2.0
+  if (mt == UCI_MT_RSP && gid == UCI_GID_CORE && oid == UCI_MSG_CORE_GET_CAPS_INFO) {
+    phNxpUciHal_handle_get_caps_info(length, buffer);
+  }
+
+  /* DBG packets not yet supported, just ignore them silently */
+  if ((mt == UCI_MT_NTF) && (gid == UCI_GID_INTERNAL) &&
+      (oid == UCI_EXT_PARAM_DBG_RFRAME_LOG_NTF)) {
+    return;
+  }
+
+  if (!pbf && mt == UCI_MT_NTF && gid == UCI_GID_CORE && oid == UCI_MSG_CORE_GENERIC_ERROR_NTF) {
+    uint8_t status_code = buffer[UCI_RESPONSE_STATUS_OFFSET];
+
+    if (status_code == UCI_STATUS_COMMAND_RETRY ||
+        status_code == UCI_STATUS_SYNTAX_ERROR) {
+      // Handle retransmissions
+      // TODO: Do not retransmit it when !nxpucihal_ctrl.hal_ext_enabled,
+      // Upper layer should take care of it.
+      nxpucihal_ctrl.isSkipPacket = 1;
+      nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_COMMAND_RETRANSMIT);
+    } else if (status_code == UCI_STATUS_BUFFER_UNDERFLOW) {
+      if (nxpucihal_ctrl.hal_ext_enabled) {
+        nxpucihal_ctrl.isSkipPacket = 1;
+        nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_COMMAND_RETRANSMIT);
+      } else {
+        // uci to handle retransmission
+        buffer[UCI_RESPONSE_STATUS_OFFSET] = UCI_STATUS_COMMAND_RETRY;
+        // TODO: Why this should be treated as fail? once we already patched
+        // the status code here. Write operation should be treated as success.
+        nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_FAILED);
+      }
+    } else {
+      // TODO: Why should we wake up the user thread here?
+      nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_FAILED);
+    }
+  }
+
+  // Check status code only for extension commands
+  if (mt == UCI_MT_RSP) {
+    if (nxpucihal_ctrl.hal_ext_enabled) {
+      nxpucihal_ctrl.isSkipPacket = 1;
+
+      if (pbf) {
+        /* XXX: fix the whole logic if this really happens */
+        NXPLOG_UCIHAL_E("FIXME: Fragmented packets received while processing internal commands!");
+      }
+
+      uint8_t status_code = (length > UCI_RESPONSE_STATUS_OFFSET) ?
+        buffer[UCI_RESPONSE_STATUS_OFFSET] : UCI_STATUS_UNKNOWN;
+
+      if (status_code == UCI_STATUS_OK) {
+        nxpucihal_ctrl.cmdrsp.Wakeup(gid, oid);
+      } else if ((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_SET_CONFIG)){
+        /* check if any configurations are not supported then ignore the
+          * UWBSTATUS_FEATURE_NOT_SUPPORTED status code*/
+        uint8_t status = phNxpUciHal_process_ext_rsp(length, buffer);
+        if (status == UWBSTATUS_SUCCESS) {
+          nxpucihal_ctrl.cmdrsp.Wakeup(gid, oid);
+        } else {
+          nxpucihal_ctrl.cmdrsp.WakeupError(status);
+        }
+      } else {
+        NXPLOG_UCIHAL_E("Got error status code(0x%x) from internal command.", status_code);
+        usleep(1);  // XXX: not sure if it's really needed
+        nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_FAILED);
+      }
+    } else {
+      nxpucihal_ctrl.cmdrsp.Wakeup(gid, oid);
+    }
+  }
+
+  if (!nxpucihal_ctrl.isSkipPacket) {
+    /* Read successful, send the event to higher layer */
+    if ((nxpucihal_ctrl.p_uwb_stack_data_cback != NULL) && (length <= UCI_MAX_PAYLOAD_LEN)) {
+      (*nxpucihal_ctrl.p_uwb_stack_data_cback)(length, buffer);
+    }
+  }
+
+  /* Disable junk data check for each UCI packet*/
+  if(nxpucihal_ctrl.fw_dwnld_mode) {
+    if((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_DEVICE_STATUS_NTF)){
+      nxpucihal_ctrl.fw_dwnld_mode = false;
+    }
+  }
+}
+
 /******************************************************************************
  * Function         phNxpUciHal_read_complete
  *
@@ -472,105 +572,14 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
      length = (length << EXTENDED_MODE_LEN_SHIFT) | pInfo->pBuff[index + EXTENDED_MODE_LEN_OFFSET] ;
     }
     length += UCI_MSG_HDR_SIZE;
-    NXPLOG_UCIHAL_V("read successful length = %d", length);
 
-    uint8_t *buffer = &pInfo->pBuff[index];
-    phNxpUciHal_print_packet(NXP_TML_UCI_RSP_NTF_UWBS_2_AP, buffer, length);
-
-    uint8_t mt = ((buffer[0]) & UCI_MT_MASK) >> UCI_MT_SHIFT;
-    uint8_t gid = buffer[0] & UCI_GID_MASK;
-    uint8_t oid = buffer[1] & UCI_OID_MASK;
-    uint8_t pbf = (buffer[0] & UCI_PBF_MASK) >> UCI_PBF_SHIFT;
-
-    nxpucihal_ctrl.isSkipPacket = 0;
-
-    phNxpUciHal_rx_handler_check(length, buffer);
-
-    // mapping device caps according to Fira 2.0
-    if (mt == UCI_MT_RSP && gid == UCI_GID_CORE && oid == UCI_MSG_CORE_GET_CAPS_INFO) {
-      phNxpUciHal_handle_get_caps_info(length, buffer);
-    }
-
-    /* DBG packets not yet supported, just ignore them silently */
-    if ((mt == UCI_MT_NTF) && (gid == UCI_GID_INTERNAL) &&
-        (oid == UCI_EXT_PARAM_DBG_RFRAME_LOG_NTF)) {
+    if ((index + length) > pInfo->wLength) {
+      NXPLOG_UCIHAL_E("RX Packet misaligned! given length=%u, offset=%d, len=%d",
+        pInfo->wLength, index, length);
       return;
     }
+    handle_rx_packet(&pInfo->pBuff[index], length);
 
-    if (!pbf && mt == UCI_MT_NTF && gid == UCI_GID_CORE && oid == UCI_MSG_CORE_GENERIC_ERROR_NTF) {
-      uint8_t status_code = buffer[UCI_RESPONSE_STATUS_OFFSET];
-
-      if (status_code == UCI_STATUS_COMMAND_RETRY ||
-          status_code == UCI_STATUS_SYNTAX_ERROR) {
-        // Handle retransmissions
-        // TODO: Do not retransmit it when !nxpucihal_ctrl.hal_ext_enabled,
-        // Upper layer should take care of it.
-        nxpucihal_ctrl.isSkipPacket = 1;
-        nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_COMMAND_RETRANSMIT);
-      } else if (status_code == UCI_STATUS_BUFFER_UNDERFLOW) {
-        if (nxpucihal_ctrl.hal_ext_enabled) {
-          nxpucihal_ctrl.isSkipPacket = 1;
-          nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_COMMAND_RETRANSMIT);
-        } else {
-          // uci to handle retransmission
-          buffer[UCI_RESPONSE_STATUS_OFFSET] = UCI_STATUS_COMMAND_RETRY;
-          // TODO: Why this should be treated as fail? once we already patched
-          // the status code here. Write operation should be treated as success.
-          nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_FAILED);
-        }
-      } else {
-        // TODO: Why should we wake up the user thread here?
-        nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_FAILED);
-      }
-    }
-
-    // Check status code only for extension commands
-    if (mt == UCI_MT_RSP) {
-      if (nxpucihal_ctrl.hal_ext_enabled) {
-        nxpucihal_ctrl.isSkipPacket = 1;
-
-        if (pbf) {
-          /* XXX: fix the whole logic if this really happens */
-          NXPLOG_UCIHAL_E("FIXME: Fragmented packets received while processing internal commands!");
-        }
-
-        uint8_t status_code = (length > UCI_RESPONSE_STATUS_OFFSET) ?
-          buffer[UCI_RESPONSE_STATUS_OFFSET] : UCI_STATUS_UNKNOWN;
-
-        if (status_code == UCI_STATUS_OK) {
-          nxpucihal_ctrl.cmdrsp.Wakeup(gid, oid);
-        } else if ((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_SET_CONFIG)){
-          /* check if any configurations are not supported then ignore the
-            * UWBSTATUS_FEATURE_NOT_SUPPORTED status code*/
-          uint8_t status = phNxpUciHal_process_ext_rsp(length, buffer);
-          if (status == UWBSTATUS_SUCCESS) {
-            nxpucihal_ctrl.cmdrsp.Wakeup(gid, oid);
-          } else {
-            nxpucihal_ctrl.cmdrsp.WakeupError(status);
-          }
-        } else {
-          NXPLOG_UCIHAL_E("Got error status code(0x%x) from internal command.", status_code);
-          usleep(1);  // XXX: not sure if it's really needed
-          nxpucihal_ctrl.cmdrsp.WakeupError(UWBSTATUS_FAILED);
-        }
-      } else {
-        nxpucihal_ctrl.cmdrsp.Wakeup(gid, oid);
-      }
-    }
-
-    if (!nxpucihal_ctrl.isSkipPacket) {
-      /* Read successful, send the event to higher layer */
-      if ((nxpucihal_ctrl.p_uwb_stack_data_cback != NULL) && (length <= UCI_MAX_PAYLOAD_LEN)) {
-        (*nxpucihal_ctrl.p_uwb_stack_data_cback)(length, buffer);
-      }
-    }
-
-    /* Disable junk data check for each UCI packet*/
-    if(nxpucihal_ctrl.fw_dwnld_mode) {
-      if((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_DEVICE_STATUS_NTF)){
-        nxpucihal_ctrl.fw_dwnld_mode = false;
-      }
-    }
     index += length;
   } //End of loop
 }
