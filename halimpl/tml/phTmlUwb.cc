@@ -36,6 +36,7 @@ extern phNxpUciHal_Control_t nxpucihal_ctrl;
 #define PH_TMLUWB_VALUE_ONE (0x01)
 
 /* Initialize Context structure pointer used to access context structure */
+// TODO: use unique_ptr
 static phTmlUwb_Context_t* gpphTmlUwb_Context;
 
 /* Local Function prototypes */
@@ -505,16 +506,19 @@ tHAL_UWB_STATUS phTmlUwb_Write(uint8_t* pBuffer, uint16_t wLength,
 **                  UWBSTATUS_BUSY - read request is already in progress
 **
 *******************************************************************************/
-tHAL_UWB_STATUS phTmlUwb_StartRead(uint8_t* pBuffer, uint16_t wLength,
-                        pphTmlUwb_TransactCompletionCb_t pTmlReadComplete,
-                        void* pContext)
+tHAL_UWB_STATUS phTmlUwb_StartRead(
+  pphTmlUwb_TransactCompletionCb_t pTmlReadComplete,
+  void* pContext)
 {
+  // TODO: move this to gpphTmlUwb_Context
+  static uint8_t shared_rx_buffer[UCI_MAX_DATA_LEN];
+
   /* Check whether TML is Initialized */
   if (!gpphTmlUwb_Context || !gpphTmlUwb_Context->pDevHandle) {
     return PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_NOT_INITIALISED);
   }
 
-  if (!pBuffer || wLength < 1 || !pTmlReadComplete) {
+  if (!pTmlReadComplete) {
     return PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_INVALID_PARAMETER);
   }
 
@@ -523,8 +527,8 @@ tHAL_UWB_STATUS phTmlUwb_StartRead(uint8_t* pBuffer, uint16_t wLength,
   }
 
   /* Setting the flag marks beginning of a Read Operation */
-  gpphTmlUwb_Context->tReadInfo.pBuffer = pBuffer;
-  gpphTmlUwb_Context->tReadInfo.wLength = wLength;
+  gpphTmlUwb_Context->tReadInfo.pBuffer = shared_rx_buffer;
+  gpphTmlUwb_Context->tReadInfo.wLength = sizeof(shared_rx_buffer);
   gpphTmlUwb_Context->tReadInfo.pThread_Callback = pTmlReadComplete;
   gpphTmlUwb_Context->tReadInfo.pContext = pContext;
 
