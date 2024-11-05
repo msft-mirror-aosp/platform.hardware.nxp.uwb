@@ -68,46 +68,6 @@
 #define UCI_OID_MASK 0x3F
 #define UCI_OID_SHIFT 0
 
-/* builds byte0 of UCI Command and Notification packet */
-#define UCI_MSG_BLD_HDR0(p, mt, gid) \
-  *(p)++ = (uint8_t)(((mt) << UCI_MT_SHIFT) | (gid));
-
-#define UCI_MSG_PBLD_HDR0(p, mt, pbf, gid) \
-  *(p)++ = (uint8_t)(((mt) << UCI_MT_SHIFT) | ((pbf) << UCI_PBF_SHIFT) | (gid));
-
-/* builds byte1 of UCI Command and Notification packet */
-#define UCI_MSG_BLD_HDR1(p, oid) *(p)++ = (uint8_t)(((oid) << UCI_OID_SHIFT));
-
-/* parse byte0 of UCI packet */
-#define UCI_MSG_PRS_HDR0(p, mt, pbf, gid)     \
-  mt = (*(p)&UCI_MT_MASK) >> UCI_MT_SHIFT;    \
-  pbf = (*(p)&UCI_PBF_MASK) >> UCI_PBF_SHIFT; \
-  gid = *(p)++ & UCI_GID_MASK;
-
-/* parse MT and PBF bits of UCI packet */
-#define UCI_MSG_PRS_MT_PBF(p, mt, pbf)     \
-  mt = (*(p)&UCI_MT_MASK) >> UCI_MT_SHIFT; \
-  pbf = (*(p)&UCI_PBF_MASK) >> UCI_PBF_SHIFT;
-
-/* parse byte1 of UCI Cmd/Ntf */
-#define UCI_MSG_PRS_HDR1(p, oid) \
-  oid = (*(p)&UCI_OID_MASK);     \
-  (p)++;
-
-#define UINT8_TO_STREAM(p, u8) \
-  { *(p)++ = (uint8_t)(u8); }
-
-#define ARRAY_TO_STREAM(p, a, len)                                \
-  {                                                               \
-    int ijk;                                                      \
-    for (ijk = 0; ijk < (len); ijk++) *(p)++ = (uint8_t)(a)[ijk]; \
-  }
-
-/* Allocate smallest possible buffer (for platforms with limited RAM) */
-#define UCI_GET_CMD_BUF(paramlen)                                    \
-  ((UWB_HDR*)phUwb_GKI_getbuf((uint16_t)(UWB_HDR_SIZE + UCI_MSG_HDR_SIZE + \
-                                   UCI_MSG_OFFSET_SIZE + (paramlen))))
-
 /**********************************************
  * UCI Core Group-0: Opcodes and size of commands
  **********************************************/
@@ -219,6 +179,7 @@ constexpr uint8_t kSessionType_CCCRanging = 0xA0;
 /* Generic Status Codes */
 #define UCI_STATUS_OK 0x00
 #define UCI_STATUS_FAILED 0x02
+#define UCI_STATUS_SYNTAX_ERROR 0x03
 #define UCI_STATUS_INVALID_PARAM 0x04
 #define UCI_STATUS_COMMAND_RETRY 0x0A
 #define UCI_STATUS_UNKNOWN 0x0B
