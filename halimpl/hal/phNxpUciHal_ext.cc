@@ -58,11 +58,26 @@ static void phNxpUciHal_hw_reset_ntf_timeout_cb(uint32_t timerId,
  *                  returns failure.
  *
  ******************************************************************************/
-tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
-                                                const uint8_t *p_cmd,
-                                                uint16_t *data_written) {
+tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(size_t cmd_len,
+                                                const uint8_t *p_cmd) {
+  if (cmd_len > sizeof(nxpucihal_ctrl.p_cmd_data)) {
+    NXPLOG_UCIHAL_E("Packet size is too big to send: %u.", cmd_len);
+    return UWBSTATUS_FAILED;
+  }
+  if (cmd_len < 1) {
+    return UWBSTATUS_FAILED;
+  }
+
+  /* Create local copy of cmd_data */
+  memcpy(nxpucihal_ctrl.p_cmd_data, p_cmd, cmd_len);
+  nxpucihal_ctrl.cmd_len = cmd_len;
+
   // PBF=1 or DATA packet: don't check RSP
-  bool isRetryNotRequired = phNxpUciHal_is_retry_not_required(p_cmd[0]) || (cmd_len < 4);
+  // upper-layer should handle the case of UWBSTATUS_COMMAND_RETRANSMIT && isRetryNotRequired
+  if (phNxpUciHal_is_retry_not_required(p_cmd[0]) ||
+      cmd_len < UCI_MSG_HDR_SIZE) {
+    return phNxpUciHal_write_unlocked();
+  }
 
   const uint8_t mt = (p_cmd[0] & UCI_MT_MASK) >> UCI_MT_SHIFT;
   const uint8_t gid = p_cmd[0] & UCI_GID_MASK;
@@ -72,82 +87,50 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
     SessionTrack_onSessionStart(cmd_len, p_cmd);
   }
 
-  // upper-layer should handle the case of UWBSTATUS_COMMAND_RETRANSMIT && isRetryNotRequired
-  if (isRetryNotRequired) {
-    *data_written = phNxpUciHal_write_unlocked(cmd_len, p_cmd);
-
-    if (*data_written != cmd_len) {
-      NXPLOG_UCIHAL_D("phNxpUciHal_write failed for hal ext");
-      return UWBSTATUS_FAILED;
-    } else {
-      return UWBSTATUS_SUCCESS;
-    }
-  }
-
-  /* Create the local semaphore */
-  if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.ext_cb_data, NULL) != UWBSTATUS_SUCCESS) {
-    NXPLOG_UCIHAL_D("Create ext_cb_data failed");
-    return UWBSTATUS_FAILED;
+  /* Vendor Specific Parsing logic */
+  if (phNxpUciHal_parse(nxpucihal_ctrl.cmd_len, nxpucihal_ctrl.p_cmd_data)) {
+    return UWBSTATUS_SUCCESS;
   }
 
   tHAL_UWB_STATUS status = UWBSTATUS_FAILED;
   int nr_retries = 0;
   int nr_timedout = 0;
-  bool exit_loop = false;
 
-  while(!exit_loop) {
-    nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_FAILED;
-    nxpucihal_ctrl.ext_cb_waiting = true;
+  while(nr_retries < MAX_COMMAND_RETRY_COUNT) {
+    nxpucihal_ctrl.cmdrsp.StartCmd(gid, oid);
+    status = phNxpUciHal_write_unlocked();
 
-    *data_written = phNxpUciHal_write_unlocked(cmd_len, p_cmd);
-
-    if (*data_written != cmd_len) {
-      status = UWBSTATUS_FAILED;
+    if (status != UWBSTATUS_SUCCESS) {
       NXPLOG_UCIHAL_D("phNxpUciHal_write failed for hal ext");
-      goto clean_and_return;
-    }
-
-    if (nxpucihal_ctrl.hal_parse_enabled) {
-      status = UWBSTATUS_SUCCESS;
-      goto clean_and_return;
+      nxpucihal_ctrl.cmdrsp.Cancel();
+      return status;
     }
 
     // Wait for rsp
-    phNxpUciHal_sem_timed_wait_msec(&nxpucihal_ctrl.ext_cb_data, HAL_EXTNS_WRITE_RSP_TIMEOUT_MS);
+    status = nxpucihal_ctrl.cmdrsp.Wait(HAL_EXTNS_WRITE_RSP_TIMEOUT_MS);
 
-    nxpucihal_ctrl.ext_cb_waiting = false;
-
-    switch (nxpucihal_ctrl.ext_cb_data.status) {
-    case UWBSTATUS_RESPONSE_TIMEOUT:
+    if (status == UWBSTATUS_RESPONSE_TIMEOUT) {
       nr_timedout++;
-      [[fallthrough]];
-    case UWBSTATUS_COMMAND_RETRANSMIT:
+      nr_retries++;
+    } else if (status == UWBSTATUS_COMMAND_RETRANSMIT) {
       // TODO: Do not retransmit CMD by here when !nxpucihal_ctrl.hal_ext_enabled,
       // Upper layer should take care of it.
       nr_retries++;
-      break;
-    default:
-      // Check CMD/RSP gid/oid matching
-      status = nxpucihal_ctrl.ext_cb_data.status;
-      exit_loop = true;
+    } else {
       break;
     }
+  }
 
-    if (nr_retries >= MAX_COMMAND_RETRY_COUNT) {
-      NXPLOG_UCIHAL_E("Failed to process cmd/rsp 0x%x", nxpucihal_ctrl.ext_cb_data.status);
-      status = UWBSTATUS_FAILED;
-      exit_loop = true;
-      phNxpUciHal_send_dev_error_status_ntf();
-    }
+  if (nr_retries >= MAX_COMMAND_RETRY_COUNT) {
+    NXPLOG_UCIHAL_E("Failed to process cmd/rsp 0x%x", status);
+    phNxpUciHal_send_dev_error_status_ntf();
+    return UWBSTATUS_FAILED;
   }
 
   if (nr_timedout > 0) {
     NXPLOG_UCIHAL_E("Warning: CMD/RSP retried %d times (timeout:%d)\n",
                     nr_retries, nr_timedout);
   }
-
-clean_and_return:
-  phNxpUciHal_cleanup_cb_data(&nxpucihal_ctrl.ext_cb_data);
 
   return status;
 }
@@ -164,18 +147,12 @@ clean_and_return:
  *
  ******************************************************************************/
 tHAL_UWB_STATUS phNxpUciHal_send_ext_cmd(uint16_t cmd_len, const uint8_t* p_cmd) {
-  tHAL_UWB_STATUS status;
-
   if (cmd_len >= UCI_MAX_DATA_LEN) {
-    status = UWBSTATUS_FAILED;
-    return status;
+    return UWBSTATUS_FAILED;
   }
-  uint16_t data_written = 0;
+
   HAL_ENABLE_EXT();
-  nxpucihal_ctrl.cmd_len = cmd_len;
-  memcpy(nxpucihal_ctrl.p_cmd_data, p_cmd, cmd_len);
-  status = phNxpUciHal_process_ext_cmd_rsp(
-      nxpucihal_ctrl.cmd_len, nxpucihal_ctrl.p_cmd_data, &data_written);
+  tHAL_UWB_STATUS status = phNxpUciHal_process_ext_cmd_rsp(cmd_len, p_cmd);
   HAL_DISABLE_EXT();
 
   return status;
@@ -818,14 +795,15 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
   }
 
   // send country code response to upper layer
-  nxpucihal_ctrl.rx_data_len = 5;
-  static uint8_t rsp_data[5] = { 0x4c, 0x01, 0x00, 0x01 };
   if (rt_set->uwb_enable) {
-    rsp_data[4] = UWBSTATUS_SUCCESS;
+    constexpr uint8_t rsp_data[5] = {
+      0x4c, 0x01, 0x00, 0x01, UWBSTATUS_SUCCESS };
+    report_uci_message(rsp_data, sizeof(rsp_data));
   } else {
-    rsp_data[4] = UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF;
+    constexpr uint8_t rsp_data[5] = {
+      0x4c, 0x01, 0x00, 0x01, UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF };
+    report_uci_message(rsp_data, sizeof(rsp_data));
   }
-  (*nxpucihal_ctrl.p_uwb_stack_data_cback)(nxpucihal_ctrl.rx_data_len, rsp_data);
 }
 
 // TODO: support fragmented packets
@@ -900,11 +878,10 @@ bool phNxpUciHal_handle_set_app_config(uint16_t *data_len, uint8_t *p_data)
         NXPLOG_UCIHAL_D("Country code blocked channel %u", ch);
 
         // send setAppConfig response with UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF response
-        static uint8_t rsp_data[] = { 0x41, 0x03, 0x04, 0x04,
+        uint8_t rsp_data[] = { 0x41, 0x03, 0x04, 0x04,
           UCI_STATUS_FAILED, 0x01, tlv_tag, UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF
         };
-        nxpucihal_ctrl.rx_data_len = sizeof(rsp_data);
-        (*nxpucihal_ctrl.p_uwb_stack_data_cback)(nxpucihal_ctrl.rx_data_len, rsp_data);
+        report_uci_message(rsp_data, sizeof(rsp_data));
         return true;
       }
     }
@@ -950,15 +927,15 @@ bool phNxpUciHal_handle_set_app_config(uint16_t *data_len, uint8_t *p_data)
   return false;
 }
 
-void phNxpUciHal_handle_get_caps_info(uint16_t data_len, uint8_t *p_data)
+bool phNxpUciHal_handle_get_caps_info(size_t data_len, const uint8_t *p_data)
 {
   if (data_len < UCI_MSG_CORE_GET_CAPS_INFO_NR_OFFSET)
-    return;
+    return false;
 
   uint8_t status = p_data[UCI_RESPONSE_STATUS_OFFSET];
   uint8_t nr = p_data[UCI_MSG_CORE_GET_CAPS_INFO_NR_OFFSET];
   if (status != UWBSTATUS_SUCCESS || nr < 1)
-    return;
+    return false;
 
   auto tlvs = decodeTlvBytes({0xe0, 0xe1, 0xe2, 0xe3}, &p_data[UCI_MSG_CORE_GET_CAPS_INFO_TLV_OFFSET], data_len - UCI_MSG_CORE_GET_CAPS_INFO_TLV_OFFSET);
   if (tlvs.size() != nr) {
@@ -1036,6 +1013,7 @@ void phNxpUciHal_handle_get_caps_info(uint16_t data_len, uint8_t *p_data)
   auto tlv_bytes = encodeTlvBytes(tlvs);
   if ((tlv_bytes.size() + UCI_MSG_CORE_GET_CAPS_INFO_TLV_OFFSET) > sizeof(packet)) {
     NXPLOG_UCIHAL_E("DevCaps overflow!");
+    return false;
   } else {
     uint8_t packet_len = UCI_MSG_CORE_GET_CAPS_INFO_TLV_OFFSET + tlv_bytes.size();
     packet[UCI_PAYLOAD_LENGTH_OFFSET] = packet_len - UCI_MSG_HDR_SIZE;
@@ -1043,10 +1021,9 @@ void phNxpUciHal_handle_get_caps_info(uint16_t data_len, uint8_t *p_data)
 
     phNxpUciHal_print_packet(NXP_TML_UCI_RSP_NTF_UWBS_2_AP, packet, packet_len);
 
-    // send GET CAPS INFO response to the Upper Layer
-    (*nxpucihal_ctrl.p_uwb_stack_data_cback)(packet_len, packet);
+    report_uci_message(packet, packet_len);
     // skip the incoming packet as we have send the modified response
     // already
-    nxpucihal_ctrl.isSkipPacket = 1;
+    return true;
   }
 }
