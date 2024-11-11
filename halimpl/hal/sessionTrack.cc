@@ -92,7 +92,7 @@ private:
           cond_flag(false) {}
   };
   static constexpr unsigned long kAutoSuspendTimeoutDefaultMs_ = (30 * 1000);
-  static constexpr long kQueueTimeoutMs = 500;
+  static constexpr long kQueueTimeoutMs = 2000;
   static constexpr long kUrskDeleteNtfTimeoutMs = 500;
 
 private:
