@@ -755,13 +755,16 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
   NXPLOG_UCIHAL_D("Apply country code %c%c", country_code[0], country_code[1]);
 
   phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
-  phNxpUciHal_resetRuntimeSettings();
 
   if (!is_valid_country_code(country_code)) {
     NXPLOG_UCIHAL_D("Country code %c%c is invalid, UWB should be disabled", country_code[0], country_code[1]);
+    phNxpUciHal_resetRuntimeSettings();
+    rt_set->uwb_enable = false;
   }
 
   if (NxpConfig_SetCountryCode(country_code)) {
+    phNxpUciHal_resetRuntimeSettings();
+
     // Load ExtraCal restrictions
     uint16_t mask= 0;
     if (NxpConfig_GetNum("cal.restricted_channels", &mask, sizeof(mask))) {
