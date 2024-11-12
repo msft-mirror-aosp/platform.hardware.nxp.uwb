@@ -106,15 +106,22 @@ static bool phNxpUciHal_rx_handler_check(size_t packet_len, const uint8_t *packe
   const uint8_t oid = packet[1] & UCI_OID_MASK;
   bool skip_packet = false;
 
-  std::lock_guard<std::mutex> guard(rx_handlers_lock);
+  // Copy the whole list to allow rx handlers to call rx_handler_add().
+  std::list<std::shared_ptr<phNxpUciHal_RxHandler>> handlers;
+  {
+    std::lock_guard<std::mutex> guard(rx_handlers_lock);
+    handlers = rx_handlers;
+  }
 
-  for (auto handler : rx_handlers) {
+  for (auto handler : handlers) {
     if (mt == handler->mt && gid == handler->gid && oid == handler->oid) {
       if (handler->callback(packet_len, packet)) {
         skip_packet = true;
       }
     }
   }
+
+  std::lock_guard<std::mutex> guard(rx_handlers_lock);
   rx_handlers.remove_if([mt, gid, oid](auto& handler) {
     return mt == handler->mt && gid == handler->gid && oid == handler->oid && handler->run_once;
   });
