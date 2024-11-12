@@ -52,8 +52,7 @@ uint32_t timeoutTimerId = 0;
 char persistant_log_path[120];
 constexpr long HAL_WRITE_TIMEOUT_MS = 1000;
 /**************** local methods used in this file only ************************/
-static void phNxpUciHal_write_complete(void* pContext,
-                                       phTmlUwb_TransactInfo_t* pInfo);
+static void phNxpUciHal_write_complete(void* pContext, phTmlUwb_WriteTransactInfo* pInfo);
 extern int phNxpUciHal_fw_download();
 static void phNxpUciHal_getVersionInfo();
 static tHAL_UWB_STATUS phNxpUciHal_sendCoreConfig(const uint8_t *p_cmd,
@@ -227,42 +226,45 @@ static void phNxpUciHal_client_thread(phNxpUciHal_Control_t* p_nxpucihal_ctrl)
  * Returns          It returns true if the incoming command to be skipped.
  *
  ******************************************************************************/
-bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data)
+bool phNxpUciHal_parse(size_t* cmdlen, uint8_t* cmd)
 {
   bool ret = false;
 
-  if (data_len < UCI_MSG_HDR_SIZE)
+  if ((*cmdlen) < UCI_MSG_HDR_SIZE) {
     return false;
+  }
 
-  const uint8_t mt = (p_data[0] &UCI_MT_MASK) >> UCI_MT_SHIFT;
-  const uint8_t gid = p_data[0] & UCI_GID_MASK;
-  const uint8_t oid = p_data[1] & UCI_OID_MASK;
+  const uint8_t mt = (cmd[0] &UCI_MT_MASK) >> UCI_MT_SHIFT;
+  const uint8_t gid = cmd[0] & UCI_GID_MASK;
+  const uint8_t oid = cmd[1] & UCI_OID_MASK;
+  if (mt != UCI_MT_CMD) {
+    return false;
+  }
 
-  if (mt == UCI_MT_CMD) {
-    if ((gid == UCI_GID_ANDROID) && (oid == UCI_MSG_ANDROID_SET_COUNTRY_CODE)) {
-      char country_code[2];
-      if (data_len == 6) {
-        country_code[0] = (char)p_data[4];
-        country_code[1] = (char)p_data[5];
-      } else {
-        NXPLOG_UCIHAL_E("Unexpected payload length for ANDROID_SET_COUNTRY_CODE, handle this with 00 country code");
-        country_code[0] = '0';
-        country_code[1] = '0';
-      }
-      phNxpUciHal_handle_set_country_code(country_code);
-      return true;
-    } else if ((gid == UCI_GID_PROPRIETARY_0x0F) && (oid == SET_VENDOR_SET_CALIBRATION)) {
-        if (p_data[UCI_MSG_HDR_SIZE + 1] ==
-            VENDOR_CALIB_PARAM_TX_POWER_PER_ANTENNA) {
-          phNxpUciHal_handle_set_calibration(p_data, data_len);
-        }
-    } else if ((gid == UCI_GID_SESSION_MANAGE) && (oid == UCI_MSG_SESSION_SET_APP_CONFIG)) {
-      return phNxpUciHal_handle_set_app_config(&nxpucihal_ctrl.cmd_len, nxpucihal_ctrl.p_cmd_data);
-    } else if ((gid == UCI_GID_SESSION_MANAGE) && (oid == UCI_MSG_SESSION_STATE_INIT)) {
-      SessionTrack_onSessionInit(nxpucihal_ctrl.cmd_len, nxpucihal_ctrl.p_cmd_data);
+  if ((gid == UCI_GID_ANDROID) && (oid == UCI_MSG_ANDROID_SET_COUNTRY_CODE)) {
+    char country_code[2];
+    if ((*cmdlen) == 6) {
+      country_code[0] = (char)cmd[4];
+      country_code[1] = (char)cmd[5];
+    } else {
+      NXPLOG_UCIHAL_E("Unexpected payload length for ANDROID_SET_COUNTRY_CODE, handle this with 00 country code");
+      country_code[0] = '0';
+      country_code[1] = '0';
     }
-  } else {
-    ret = false;
+    phNxpUciHal_handle_set_country_code(country_code);
+    return true;
+  } else if ((gid == UCI_GID_PROPRIETARY_0x0F) && (oid == SET_VENDOR_SET_CALIBRATION)) {
+    if (cmd[UCI_MSG_HDR_SIZE + 1] == VENDOR_CALIB_PARAM_TX_POWER_PER_ANTENNA) {
+      // XXX: packet can be patched by here.
+      phNxpUciHal_handle_set_calibration(cmd, *cmdlen);
+    }
+  } else if ((gid == UCI_GID_SESSION_MANAGE) && (oid == UCI_MSG_SESSION_SET_APP_CONFIG)) {
+    // XXX: packet can be patched by here.
+    return phNxpUciHal_handle_set_app_config(cmdlen, cmd);
+  } else if ((gid == UCI_GID_SESSION_MANAGE) && (oid == UCI_MSG_SESSION_STATE_INIT)) {
+    SessionTrack_onSessionInit(*cmdlen, cmd);
+  } if (mt == UCI_MT_CMD && gid == UCI_GID_SESSION_CONTROL && oid == UCI_MSG_SESSION_START) {
+    SessionTrack_onSessionStart(*cmdlen, cmd);
   }
   return ret;
 }
@@ -391,15 +393,12 @@ int32_t phNxpUciHal_write(size_t data_len, const uint8_t* p_data) {
  *                  phNxpUciHal_write. This function writes the data to UWBC.
  *                  It waits till write callback provide the result of write
  *                  process.
- *                  Using write buffer nxpucihal_ctrl.p_cmd_data.
  *
  * Returns          Status code.
  *
  ******************************************************************************/
-tHAL_UWB_STATUS phNxpUciHal_write_unlocked() {
+tHAL_UWB_STATUS phNxpUciHal_write_unlocked(size_t data_len, const uint8_t* p_data) {
   tHAL_UWB_STATUS status;
-  uint16_t data_len = nxpucihal_ctrl.cmd_len;
-  uint8_t* p_data = nxpucihal_ctrl.p_cmd_data;
 
   if ((data_len > UCI_MAX_DATA_LEN) || (data_len < UCI_PKT_HDR_LEN)) {
     NXPLOG_UCIHAL_E("Invalid data_len");
@@ -409,9 +408,7 @@ tHAL_UWB_STATUS phNxpUciHal_write_unlocked() {
   /* Create the local semaphore */
   UciHalSemaphore cb_data;
 
-  status = phTmlUwb_Write(p_data, data_len,
-      (pphTmlUwb_TransactCompletionCb_t)&phNxpUciHal_write_complete,
-      (void*)&cb_data);
+  status = phTmlUwb_Write(p_data, data_len, phNxpUciHal_write_complete, &cb_data);
 
   if (status != UWBSTATUS_PENDING) {
     return UWBSTATUS_FAILED;
@@ -435,7 +432,7 @@ tHAL_UWB_STATUS phNxpUciHal_write_unlocked() {
  *
  ******************************************************************************/
 static void phNxpUciHal_write_complete(void* pContext,
-                                       phTmlUwb_TransactInfo_t* pInfo) {
+                                       phTmlUwb_WriteTransactInfo* pInfo) {
   UciHalSemaphore* p_cb_data = (UciHalSemaphore*)pContext;
 
   if (pInfo->wStatus == UWBSTATUS_SUCCESS) {
@@ -557,7 +554,7 @@ static void handle_rx_packet(uint8_t *buffer, size_t length)
  * Returns          void.
  *
  ******************************************************************************/
-void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
+void phNxpUciHal_read_complete(void* pContext, phTmlUwb_ReadTransactInfo* pInfo)
 {
   UNUSED(pContext);
 

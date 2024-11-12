@@ -251,9 +251,6 @@ typedef struct phNxpUciHal_Control {
   /* Waiting semaphore */
   CmdRspCheck cmdrsp;
 
-  uint16_t cmd_len;
-  uint8_t p_cmd_data[UCI_MAX_DATA_LEN];
-
   /* CORE_DEVICE_INFO_RSP cache */
   bool isDevInfoCached;
   uint8_t dev_info_resp[256];
@@ -297,13 +294,13 @@ struct phNxpUciHal_RxHandler;
 #define UWB_NXP_ANDROID_MW_DROP_VERSION (0x07) /* Android MW early drops */
 /******************** UCI HAL exposed functions *******************************/
 tHAL_UWB_STATUS phNxpUciHal_init_hw();
-tHAL_UWB_STATUS phNxpUciHal_write_unlocked();
-void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo);
+tHAL_UWB_STATUS phNxpUciHal_write_unlocked(size_t cmd_len, const uint8_t* p_cmd);
+void phNxpUciHal_read_complete(void* pContext, phTmlUwb_ReadTransactInfo* pInfo);
 tHAL_UWB_STATUS phNxpUciHal_uwb_reset();
 tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig();
 tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(size_t cmd_len, const uint8_t *p_cmd);
 void phNxpUciHal_send_dev_error_status_ntf();
-bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data);
+bool phNxpUciHal_parse(size_t* data_len, uint8_t *p_data);
 
 // RX packet handler
 // handler should returns true if the packet is handled and
