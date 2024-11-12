@@ -541,8 +541,10 @@ private:
 
         if (delete_ursk_ccc_enabled_ && pSessionInfo &&
             pSessionInfo->session_type_ == kSessionType_CCCRanging) {
+
           // If this CCC ranging session, issue DELETE_URSK_CMD for this session.
-          auto msg = std::make_shared<SessionTrackMsg>(SessionTrackWorkType::DELETE_URSK, pSessionInfo, true);
+          // This is executed on client thread, we shouldn't block the execution of this thread.
+          auto msg = std::make_shared<SessionTrackMsg>(SessionTrackWorkType::DELETE_URSK, pSessionInfo, false);
           QueueSessionTrackWork(msg);
         }
         sessions_.erase(session_handle);
