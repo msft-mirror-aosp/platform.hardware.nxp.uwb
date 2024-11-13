@@ -270,6 +270,9 @@ typedef struct phNxpUciHal_Control {
   // Antenna Definitions for extra calibration, b0=Antenna1, b1=Antenna2, ...
   uint8_t cal_rx_antenna_mask;
   uint8_t cal_tx_antenna_mask;
+
+  // Current country code
+  uint8_t country_code[2];
 } phNxpUciHal_Control_t;
 
 // RX packet handler
