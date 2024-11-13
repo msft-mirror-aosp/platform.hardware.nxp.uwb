@@ -320,6 +320,10 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_c
   nxpucihal_ctrl.gDrvCfg.pClientMq = std::make_shared<MessageQueue<phLibUwb_Message>>("Client");
   nxpucihal_ctrl.gDrvCfg.nLinkType = ENUM_LINK_TYPE_SPI;
 
+  // Default country code = '00'
+  nxpucihal_ctrl.country_code[0] = '0';
+  nxpucihal_ctrl.country_code[1] = '0';
+
   /* Initialize TML layer */
   wConfigStatus = phTmlUwb_Init(uwb_dev_node, nxpucihal_ctrl.gDrvCfg.pClientMq);
   if (wConfigStatus != UWBSTATUS_SUCCESS) {
