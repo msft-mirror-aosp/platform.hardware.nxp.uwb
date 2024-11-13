@@ -60,7 +60,7 @@ static void phNxpUciHal_hw_reset_ntf_timeout_cb(uint32_t timerId,
  ******************************************************************************/
 tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(size_t cmd_len,
                                                 const uint8_t *p_cmd) {
-  if (cmd_len > sizeof(nxpucihal_ctrl.p_cmd_data)) {
+  if (cmd_len > UCI_MAX_DATA_LEN) {
     NXPLOG_UCIHAL_E("Packet size is too big to send: %u.", cmd_len);
     return UWBSTATUS_FAILED;
   }
@@ -68,27 +68,24 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(size_t cmd_len,
     return UWBSTATUS_FAILED;
   }
 
-  /* Create local copy of cmd_data */
-  memcpy(nxpucihal_ctrl.p_cmd_data, p_cmd, cmd_len);
-  nxpucihal_ctrl.cmd_len = cmd_len;
 
   // PBF=1 or DATA packet: don't check RSP
   // upper-layer should handle the case of UWBSTATUS_COMMAND_RETRANSMIT && isRetryNotRequired
   if (phNxpUciHal_is_retry_not_required(p_cmd[0]) ||
       cmd_len < UCI_MSG_HDR_SIZE) {
-    return phNxpUciHal_write_unlocked();
+    return phNxpUciHal_write_unlocked(cmd_len, p_cmd);
   }
 
   const uint8_t mt = (p_cmd[0] & UCI_MT_MASK) >> UCI_MT_SHIFT;
   const uint8_t gid = p_cmd[0] & UCI_GID_MASK;
   const uint8_t oid = p_cmd[1] & UCI_OID_MASK;
 
-  if (mt == UCI_MT_CMD && gid == UCI_GID_SESSION_CONTROL && oid == UCI_MSG_SESSION_START) {
-    SessionTrack_onSessionStart(cmd_len, p_cmd);
-  }
+  // Create local copy of cmd_data
+  uint8_t cmd[UCI_MAX_DATA_LEN];
+  memcpy(cmd, p_cmd, cmd_len);
 
   /* Vendor Specific Parsing logic */
-  if (phNxpUciHal_parse(nxpucihal_ctrl.cmd_len, nxpucihal_ctrl.p_cmd_data)) {
+  if (phNxpUciHal_parse(&cmd_len, cmd)) {
     return UWBSTATUS_SUCCESS;
   }
 
@@ -98,7 +95,7 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(size_t cmd_len,
 
   while(nr_retries < MAX_COMMAND_RETRY_COUNT) {
     nxpucihal_ctrl.cmdrsp.StartCmd(gid, oid);
-    status = phNxpUciHal_write_unlocked();
+    status = phNxpUciHal_write_unlocked(cmd_len, cmd);
 
     if (status != UWBSTATUS_SUCCESS) {
       NXPLOG_UCIHAL_D("phNxpUciHal_write failed for hal ext");
@@ -146,7 +143,7 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(size_t cmd_len,
  *                  response is received.
  *
  ******************************************************************************/
-tHAL_UWB_STATUS phNxpUciHal_send_ext_cmd(uint16_t cmd_len, const uint8_t* p_cmd) {
+tHAL_UWB_STATUS phNxpUciHal_send_ext_cmd(size_t cmd_len, const uint8_t* p_cmd) {
   if (cmd_len >= UCI_MAX_DATA_LEN) {
     return UWBSTATUS_FAILED;
   }
@@ -203,7 +200,7 @@ tHAL_UWB_STATUS phNxpUciHal_set_board_config(){
 ** Returns          UWBSTATUS_SUCCESS if success
 **
 *******************************************************************************/
-tHAL_UWB_STATUS phNxpUciHal_process_ext_rsp(uint16_t rsp_len, uint8_t* p_buff){
+tHAL_UWB_STATUS phNxpUciHal_process_ext_rsp(size_t rsp_len, uint8_t* p_buff){
   tHAL_UWB_STATUS status;
   int NumOfTlv, index;
   uint8_t paramId, extParamId, IdStatus;
@@ -352,6 +349,7 @@ static bool phNxpUciHal_is_retry_not_required(uint8_t uci_octet0) {
   return isRetryRequired;
 }
 
+// TODO: remove this out
 /******************************************************************************
  * Function         CountryCodeCapsGenTxPowerPacket
  *
@@ -361,7 +359,7 @@ static bool phNxpUciHal_is_retry_not_required(uint8_t uci_octet0) {
  * Returns          true if packet has been updated
  *
  ******************************************************************************/
-static bool CountryCodeCapsGenTxPowerPacket(uint8_t *packet, size_t packet_len, uint16_t *out_len)
+static bool CountryCodeCapsGenTxPowerPacket(uint8_t *packet, size_t packet_len)
 {
   phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
 
@@ -371,10 +369,10 @@ static bool CountryCodeCapsGenTxPowerPacket(uint8_t *packet, size_t packet_len, 
   if (gtx_power.empty())
     return false;
 
-  if (gtx_power.size() > packet_len)
+  if (gtx_power.size() != packet_len)
     return false;
 
-  uint16_t gtx_power_len = gtx_power.size();
+  size_t gtx_power_len = gtx_power.size();
   memcpy(packet, gtx_power.data(), gtx_power_len);
   uint8_t index = UCI_MSG_HDR_SIZE + 2;  // channel + Tag
 
@@ -413,12 +411,10 @@ static bool CountryCodeCapsGenTxPowerPacket(uint8_t *packet, size_t packet_len, 
     packet[index++] = tx_power_u16 >> RMS_TX_POWER_SHIFT;
   }
 
-  if (out_len)
-    *out_len = gtx_power_len;
-
   return true;
 }
 
+// TODO: remove this out
 /*******************************************************************************
  * Function     phNxpUciHal_handle_set_calibration
  *
@@ -427,7 +423,7 @@ static bool CountryCodeCapsGenTxPowerPacket(uint8_t *packet, size_t packet_len, 
  * Returns      void
  *
  *******************************************************************************/
-void phNxpUciHal_handle_set_calibration(const uint8_t *p_data, uint16_t data_len)
+void phNxpUciHal_handle_set_calibration(uint8_t *p_data, size_t data_len)
 {
   // Only saves the SET_CALIBRATION_CMD from upper-layer
   if (nxpucihal_ctrl.hal_ext_enabled) {
@@ -453,7 +449,7 @@ void phNxpUciHal_handle_set_calibration(const uint8_t *p_data, uint16_t data_len
   gtx_power = std::move(std::vector<uint8_t> {p_data, p_data + data_len});
 
   // Patch SET_CALIBRATION_CMD per gtx_power + tx_power_offset
-  CountryCodeCapsGenTxPowerPacket(nxpucihal_ctrl.p_cmd_data, sizeof(nxpucihal_ctrl.p_cmd_data), &nxpucihal_ctrl.cmd_len);
+  CountryCodeCapsGenTxPowerPacket(p_data, data_len);
 }
 
 /******************************************************************************
@@ -472,11 +468,11 @@ static bool CountryCodeCapsApplyTxPower(void)
 
   // use whole packet as-is from upper-layer command (gtx_power[])
   std::vector<uint8_t> packet(gtx_power.size());
-  uint16_t packet_size = 0;
-  if (!CountryCodeCapsGenTxPowerPacket(packet.data(), packet.size(), &packet_size))
+  size_t packet_size = 0;
+  if (!CountryCodeCapsGenTxPowerPacket(packet.data(), packet.size()))
     return false;
 
-  tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(packet_size, packet.data());
+  tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(packet.size(), packet.data());
   if (status != UWBSTATUS_SUCCESS) {
       NXPLOG_UCIHAL_D("%s: send failed", __func__);
   }
@@ -755,13 +751,19 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
   NXPLOG_UCIHAL_D("Apply country code %c%c", country_code[0], country_code[1]);
 
   phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
-  phNxpUciHal_resetRuntimeSettings();
 
   if (!is_valid_country_code(country_code)) {
     NXPLOG_UCIHAL_D("Country code %c%c is invalid, UWB should be disabled", country_code[0], country_code[1]);
-  }
+    phNxpUciHal_resetRuntimeSettings();
+    rt_set->uwb_enable = false;
+  } else if (!(nxpucihal_ctrl.country_code[0] == country_code[0] &&
+               nxpucihal_ctrl.country_code[1] == country_code[1])) {
 
-  if (NxpConfig_SetCountryCode(country_code)) {
+    nxpucihal_ctrl.country_code[0] = country_code[0];
+    nxpucihal_ctrl.country_code[1] = country_code[1];
+    NxpConfig_SetCountryCode(country_code);
+    phNxpUciHal_resetRuntimeSettings();
+
     // Load ExtraCal restrictions
     uint16_t mask= 0;
     if (NxpConfig_GetNum("cal.restricted_channels", &mask, sizeof(mask))) {
@@ -792,6 +794,9 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
 
     // Apply per-country calibration, it's handled by SessionTrack
     SessionTrack_onCountryCodeChanged();
+  } else {
+    NXPLOG_UCIHAL_D("Country code %c%c: not changed, keep same configuration.",
+                    country_code[0], country_code[1]);
   }
 
   // send country code response to upper layer
@@ -817,7 +822,7 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
  *                  false : This packet should go to chip
  *
  *************************************************************************************/
-bool phNxpUciHal_handle_set_app_config(uint16_t *data_len, uint8_t *p_data)
+bool phNxpUciHal_handle_set_app_config(size_t *data_len, uint8_t *p_data)
 {
   const phNxpUciHal_Runtime_Settings_t *rt_set = &nxpucihal_ctrl.rt_settings;
   // Android vendor specific app configs not supported by FW
@@ -829,7 +834,7 @@ bool phNxpUciHal_handle_set_app_config(uint16_t *data_len, uint8_t *p_data)
   };
 
   // check basic validity
-  uint16_t payload_len = (p_data[UCI_CMD_LENGTH_PARAM_BYTE1] & 0xFF) |
+  size_t payload_len = (p_data[UCI_CMD_LENGTH_PARAM_BYTE1] & 0xFF) |
                          ((p_data[UCI_CMD_LENGTH_PARAM_BYTE2] & 0xFF) << 8);
   if (payload_len != (*data_len - UCI_MSG_HDR_SIZE)) {
     NXPLOG_UCIHAL_E("SESSION_SET_APP_CONFIG_CMD: payload length mismatch");
@@ -844,7 +849,7 @@ bool phNxpUciHal_handle_set_app_config(uint16_t *data_len, uint8_t *p_data)
 
   // Create local copy of cmd_data for data manipulation
   uint8_t uciCmd[UCI_MAX_DATA_LEN];
-  uint16_t packet_len = *data_len;
+  size_t packet_len = *data_len;
   if (sizeof(uciCmd) < packet_len) {
     NXPLOG_UCIHAL_E("SESSION_SET_APP_CONFIG_CMD packet size %u is too big to handle, skip patching.", packet_len);
     return false;
