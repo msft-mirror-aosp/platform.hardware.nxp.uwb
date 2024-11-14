@@ -62,59 +62,23 @@
  * file or timeout.
  */
 
-typedef struct phTmlUwb_TransactInfo {
-  tHAL_UWB_STATUS wStatus;       /* Status of the Transaction Completion*/
-  uint8_t* pBuff;          /* Response Data of the Transaction*/
-  uint16_t wLength;        /* Data size of the Transaction*/
-} phTmlUwb_TransactInfo_t; /* Instance of Transaction structure */
+struct phTmlUwb_WriteTransactInfo {
+  tHAL_UWB_STATUS wStatus;
+  const uint8_t* pBuff;
+  size_t wLength;
+};
 
-/*
- * TML transreceive completion callback to Upper Layer
- *
- * pContext - Context provided by upper layer
- * pInfo    - Transaction info. See phTmlUwb_TransactInfo
- */
-typedef void (*pphTmlUwb_TransactCompletionCb_t)(
-    void* pContext, phTmlUwb_TransactInfo_t* pInfo);
+struct phTmlUwb_ReadTransactInfo {
+  tHAL_UWB_STATUS wStatus;
+  uint8_t* pBuff;
+  size_t wLength;
+};
 
-/*
- * Structure containing details related to read and write operations
- *
- */
-typedef struct phTmlUwb_ReadWriteInfo {
-  volatile bool bThreadShouldStop;
-  volatile bool bThreadRunning;
-  uint8_t
-      bThreadBusy; /*Flag to indicate thread is busy on respective operation */
-  /* Transaction completion Callback function */
-  pphTmlUwb_TransactCompletionCb_t pThread_Callback;
-  void* pContext;        /*Context passed while invocation of operation */
-  uint8_t* pBuffer;      /*Buffer passed while invocation of operation */
-  uint16_t wLength;      /*Length of data read/written */
-  tHAL_UWB_STATUS wWorkStatus; /*Status of the transaction performed */
-} phTmlUwb_ReadWriteInfo_t;
-
-/*
- *Base Context Structure containing members required for entire session
- */
-typedef struct phTmlUwb_Context {
-  pthread_t readerThread; /*Handle to the thread which handles write and read
-                             operations */
-  pthread_t writerThread;
-
-  phTmlUwb_ReadWriteInfo_t tReadInfo;  /*Pointer to Reader Thread Structure */
-  phTmlUwb_ReadWriteInfo_t tWriteInfo; /*Pointer to Writer Thread Structure */
-  void* pDevHandle;                    /* Pointer to Device Handle */
-  std::shared_ptr<MessageQueue<phLibUwb_Message>> pClientMq; /* Pointer to Client thread message queue */
-  sem_t rxSemaphore;
-  sem_t txSemaphore;      /* Lock/Acquire txRx Semaphore */
-
-  pthread_cond_t wait_busy_condition; /*Condition to wait reader thread*/
-  pthread_mutex_t wait_busy_lock;     /*Condition lock to wait reader thread*/
-  volatile uint8_t wait_busy_flag;    /*Condition flag to wait reader thread*/
-  volatile uint8_t gWriterCbflag;    /* flag to indicate write callback message is pushed to
-                           queue*/
-} phTmlUwb_Context_t;
+// IO completion callback to Upper Layer
+// pContext - Context provided by upper layer
+// pInfo    - Transaction info. See phTmlUwb_[Read|Write]TransactInfo
+using ReadCallback = void (void *pContext, phTmlUwb_ReadTransactInfo* pInfo);
+using WriteCallback = void (void *pContext, phTmlUwb_WriteTransactInfo* pInfo);
 
 /*
  * Enum definition contains  supported ioctl control codes.
@@ -136,14 +100,13 @@ void phTmlUwb_Suspend(void);
 void phTmlUwb_Resume(void);
 
 // Writer: caller should call this for every write io
-tHAL_UWB_STATUS phTmlUwb_Write(uint8_t* pBuffer, uint16_t wLength,
-                         pphTmlUwb_TransactCompletionCb_t pTmlWriteComplete,
+tHAL_UWB_STATUS phTmlUwb_Write(const uint8_t* pBuffer, size_t wLength,
+                         WriteCallback pTmlWriteComplete,
                          void* pContext);
 
 // Reader: caller calls this once, callback will be called for every received packet.
 //         and call StopRead() to unscribe RX packet.
-tHAL_UWB_STATUS phTmlUwb_StartRead(
-  pphTmlUwb_TransactCompletionCb_t pTmlReadComplete, void* pContext);
+tHAL_UWB_STATUS phTmlUwb_StartRead(ReadCallback pTmlReadComplete, void* pContext);
 void phTmlUwb_StopRead();
 
 void phTmlUwb_Chip_Reset(void);
