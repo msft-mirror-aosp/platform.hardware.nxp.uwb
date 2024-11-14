@@ -57,14 +57,14 @@
 #define UCI_EXT_STATUS_SE_APDU_CMD_FAIL     0x74
 #define UCI_EXT_STATUS_SE_AUTH_FAIL         0x75
 
-tHAL_UWB_STATUS phNxpUciHal_send_ext_cmd(uint16_t cmd_len, const uint8_t* p_cmd);
-tHAL_UWB_STATUS phNxpUciHal_process_ext_rsp(uint16_t cmd_len, uint8_t* p_buff);
+tHAL_UWB_STATUS phNxpUciHal_send_ext_cmd(size_t cmd_len, const uint8_t* p_cmd);
+tHAL_UWB_STATUS phNxpUciHal_process_ext_rsp(size_t cmd_len, uint8_t* p_buff);
 tHAL_UWB_STATUS phNxpUciHal_set_board_config();
-void phNxpUciHal_handle_set_calibration(const uint8_t *p_data, uint16_t data_len);
+void phNxpUciHal_handle_set_calibration(uint8_t *p_data, size_t data_len);
 void phNxpUciHal_extcal_handle_coreinit(void);
 void phNxpUciHal_process_response();
 void phNxpUciHal_handle_set_country_code(const char country_code[2]);
-bool phNxpUciHal_handle_set_app_config(uint16_t *data_len, uint8_t *p_data);
+bool phNxpUciHal_handle_set_app_config(size_t *data_len, uint8_t *p_data);
 
 // Handles CORE_GET_CAPS_INFO_RSP
 // Returns true if the packet is patched / reported to upper layer.
