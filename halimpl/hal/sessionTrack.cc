@@ -83,7 +83,7 @@ private:
     std::condition_variable cond_;
 
     SessionTrackMsg(SessionTrackWorkType type, bool sync)
-        : type_(type), sync_(sync), cond_flag(false) {}
+        : type_(type), session_info_(nullptr), sync_(sync), cond_flag(false) {}
 
     // Per-session work item
     SessionTrackMsg(SessionTrackWorkType type,
@@ -92,7 +92,7 @@ private:
           cond_flag(false) {}
   };
   static constexpr unsigned long kAutoSuspendTimeoutDefaultMs_ = (30 * 1000);
-  static constexpr long kQueueTimeoutMs = 500;
+  static constexpr long kQueueTimeoutMs = 2000;
   static constexpr long kUrskDeleteNtfTimeoutMs = 500;
 
 private:
@@ -163,8 +163,7 @@ public:
     if (auto_suspend_enabled_) {
       phOsalUwb_Timer_Delete(idle_timer_);
     }
-    auto msg = std::make_shared<SessionTrackMsg>(SessionTrackWorkType::STOP, true);
-    QueueSessionTrackWork(msg);
+    QueueSessionTrackWork(SessionTrackWorkType::STOP);
     worker_thread_.join();
   }
 
@@ -200,8 +199,7 @@ public:
       }
       if (was_idle) {
         NXPLOG_UCIHAL_D("Queue Active");
-        auto msg = std::make_shared<SessionTrackMsg>(SessionTrackWorkType::ACTIVATE, false);
-        QueueSessionTrackWork(msg);
+        QueueSessionTrackWork(SessionTrackWorkType::ACTIVATE);
       }
 
       return false;
@@ -263,8 +261,7 @@ public:
   }
 
   void RefreshIdle() {
-    auto msg = std::make_shared<SessionTrackMsg>(SessionTrackWorkType::REFRESH_IDLE, true);
-    QueueSessionTrackWork(msg);
+    QueueSessionTrackWork(SessionTrackWorkType::REFRESH_IDLE);
   }
 
   void OnSessionStart(size_t packet_len, const uint8_t *packet) {
@@ -541,9 +538,10 @@ private:
 
         if (delete_ursk_ccc_enabled_ && pSessionInfo &&
             pSessionInfo->session_type_ == kSessionType_CCCRanging) {
+
           // If this CCC ranging session, issue DELETE_URSK_CMD for this session.
-          auto msg = std::make_shared<SessionTrackMsg>(SessionTrackWorkType::DELETE_URSK, pSessionInfo, true);
-          QueueSessionTrackWork(msg);
+          // This is executed on client thread, we shouldn't block the execution of this thread.
+          QueueDeleteUrsk(pSessionInfo);
         }
         sessions_.erase(session_handle);
         is_idle = IsDeviceIdle();
@@ -555,8 +553,7 @@ private:
 
     if (is_idle) { // transition to IDLE
       NXPLOG_UCIHAL_D("Queue Idle");
-      auto msg = std::make_shared<SessionTrackMsg>(SessionTrackWorkType::IDLE, false);
-      QueueSessionTrackWork(msg);
+      QueueSessionTrackWork(SessionTrackWorkType::IDLE);
     }
 
     return false;
@@ -564,8 +561,7 @@ private:
 
   static void IdleTimerCallback(uint32_t TimerId, void* pContext) {
     SessionTrack *mgr = static_cast<SessionTrack*>(pContext);
-    auto msg = std::make_shared<SessionTrackMsg>(SessionTrackWorkType::IDLE_TIMER_FIRED, false);
-    mgr->QueueSessionTrackWork(msg);
+    mgr->QueueSessionTrackWork(SessionTrackWorkType::IDLE_TIMER_FIRED);
   }
 
   void PowerIdleTimerStop() {
@@ -684,6 +680,22 @@ private:
         NXPLOG_UCIHAL_E("SessionTrack: timeout to process %d", static_cast<int>(msg->type_));
       }
     }
+  }
+
+  void QueueSessionTrackWork(SessionTrackWorkType work) {
+    // When sync is true, the job shouldn't trigger another transaction.
+    // TODO: strict checking of each job is not executing UCI transactions.
+    bool sync = (work == SessionTrackWorkType::STOP ||
+                 work == SessionTrackWorkType::REFRESH_IDLE);
+    auto msg = std::make_shared<SessionTrackMsg>(work, sync);
+    QueueSessionTrackWork(msg);
+  }
+
+  void QueueDeleteUrsk(std::shared_ptr<SessionInfo> pSessionInfo) {
+    // This job will execute another UCI transaction.
+    auto msg = std::make_shared<SessionTrackMsg>(
+      SessionTrackWorkType::DELETE_URSK, pSessionInfo, false);
+    QueueSessionTrackWork(msg);
   }
 
   std::shared_ptr<SessionInfo> GetSessionInfo(uint32_t session_handle) {
