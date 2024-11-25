@@ -17,33 +17,25 @@
 #ifndef _PHNXPUCIHAL_UTILS_H_
 #define _PHNXPUCIHAL_UTILS_H_
 
-#include <assert.h>
 #include <pthread.h>
 #include <semaphore.h>
 #include <time.h>
+#include <unordered_set>
 
-#include <cstring>
+#include <assert.h>
 #include <bit>
+#include <cstring>
 #include <map>
+#include <memory>
+#include <thread>
 #include <type_traits>
 #include <vector>
+
 
 #include "phNxpLog.h"
 #include "phUwbStatus.h"
 
 /********************* Definitions and structures *****************************/
-
-/* List structures */
-struct listNode {
-  void* pData;
-  struct listNode* pNext;
-};
-
-struct listHead {
-  struct listNode* pFirst;
-  pthread_mutex_t mutex;
-};
-
 /* Which is the direction of UWB Packet.
  *
  * Used by the @ref phNxpUciHal_print_packet API.
@@ -80,34 +72,13 @@ static inline int SEM_POST(phNxpUciHal_Sem_t* pCallbackData)
   return sem_post(&pCallbackData->sem);
 }
 
-/* Semaphore and mutex monitor */
-typedef struct phNxpUciHal_Monitor {
-  /* Mutex protecting native library against reentrance */
-  pthread_mutex_t reentrance_mutex;
-
-  /* Mutex protecting native library against concurrency */
-  pthread_mutex_t concurrency_mutex;
-
-  /* List used to track pending semaphores waiting for callback */
-  struct listHead sem_list;
-
-} phNxpUciHal_Monitor_t;
-
 /************************ Exposed functions ***********************************/
-/* List functions */
-int listInit(struct listHead* pList);
-int listDestroy(struct listHead* pList);
-int listAdd(struct listHead* pList, void* pData);
-int listRemove(struct listHead* pList, void* pData);
-int listGetAndRemoveNext(struct listHead* pList, void** ppData);
-void listDump(struct listHead* pList);
-
 /* NXP UCI HAL utility functions */
-phNxpUciHal_Monitor_t* phNxpUciHal_init_monitor(void);
+bool phNxpUciHal_init_monitor(void);
 void phNxpUciHal_cleanup_monitor(void);
-phNxpUciHal_Monitor_t* phNxpUciHal_get_monitor(void);
+
 tHAL_UWB_STATUS phNxpUciHal_init_cb_data(phNxpUciHal_Sem_t* pCallbackData,
-                                   void* pContext);
+                                         void* pContext);
 
 int phNxpUciHal_sem_timed_wait_msec(phNxpUciHal_Sem_t* pCallbackData, long msec);
 
@@ -123,7 +94,6 @@ static inline int phNxpUciHal_sem_timed_wait(phNxpUciHal_Sem_t* pCallbackData)
 }
 
 void phNxpUciHal_cleanup_cb_data(phNxpUciHal_Sem_t* pCallbackData);
-void phNxpUciHal_releaseall_cb_data(void);
 
 // helper class for Semaphore
 // phNxpUciHal_init_cb_data(), phNxpUciHal_cleanup_cb_data(),
@@ -207,18 +177,10 @@ static inline void cpu_to_le_bytes(uint8_t *p, const T num)
 }
 
 /* Lock unlock helper macros */
-#define REENTRANCE_LOCK()        \
-  if (phNxpUciHal_get_monitor()) \
-  pthread_mutex_lock(&phNxpUciHal_get_monitor()->reentrance_mutex)
-#define REENTRANCE_UNLOCK()      \
-  if (phNxpUciHal_get_monitor()) \
-  pthread_mutex_unlock(&phNxpUciHal_get_monitor()->reentrance_mutex)
-#define CONCURRENCY_LOCK()       \
-  if (phNxpUciHal_get_monitor()) \
-  pthread_mutex_lock(&phNxpUciHal_get_monitor()->concurrency_mutex)
-#define CONCURRENCY_UNLOCK()     \
-  if (phNxpUciHal_get_monitor()) \
-  pthread_mutex_unlock(&phNxpUciHal_get_monitor()->concurrency_mutex)
+void REENTRANCE_LOCK();
+void REENTRANCE_UNLOCK();
+void CONCURRENCY_LOCK();
+void CONCURRENCY_UNLOCK();
 
 // Decode bytes into map<key=T, val=LV>
 std::map<uint16_t, std::vector<uint8_t>>

@@ -26,7 +26,6 @@ static void report_binding_status(uint8_t binding_status)
   buffer[2] = 0x00;
   buffer[3] = 0x01;
   buffer[4] = binding_status;
-  nxpucihal_ctrl.rx_data_len = 5;
   if (nxpucihal_ctrl.p_uwb_stack_data_cback != NULL) {
     (*nxpucihal_ctrl.p_uwb_stack_data_cback)(data_len, buffer);
   }
@@ -48,7 +47,7 @@ static bool otp_read_data(const uint8_t channel, const uint8_t param_id, uint8_t
   // NXP_READ_CALIB_DATA_NTF
   bool received = false;
   auto read_calib_ntf_cb =
-  [&] (size_t packet_len, const uint8_t *packet) mutable
+  [&] (size_t packet_len, const uint8_t *packet) mutable -> bool
   {
     // READ_CALIB_DATA_NTF: status(1), length-of-payload(1), payload(N)
     const uint8_t plen = packet[3]; // payload-length
@@ -57,7 +56,7 @@ static bool otp_read_data(const uint8_t channel, const uint8_t param_id, uint8_t
     if (plen < 2) {
       NXPLOG_UCIHAL_E("Otp read: bad payload length %u", plen);
     } else if (p[0] != UCI_STATUS_OK) {
-      NXPLOG_UCIHAL_E("Otp read: bad status=0x%x", nxpucihal_ctrl.p_rx_data[4]);
+      NXPLOG_UCIHAL_E("Otp read: bad status=0x%x", packet[4]);
     } else if (p[1] != len) {
       NXPLOG_UCIHAL_E("Otp read: size mismatch %u (expected %zu for param 0x%x)",
         p[1], len, param_id);
@@ -66,10 +65,11 @@ static bool otp_read_data(const uint8_t channel, const uint8_t param_id, uint8_t
       received = true;
       SEM_POST(&calib_data_ntf_wait);
     }
+    return true;
   };
   auto handler = phNxpUciHal_rx_handler_add(
       UCI_MT_NTF, UCI_GID_PROPRIETARY_0X0A, UCI_MSG_READ_CALIB_DATA,
-      true, true, read_calib_ntf_cb);
+      true, read_calib_ntf_cb);
 
 
   // READ_CALIB_DATA_CMD
@@ -171,7 +171,7 @@ static tHAL_UWB_STATUS sr1xx_do_bind(uint8_t *binding_status, uint8_t *remain_co
   phNxpUciHal_init_cb_data(&binding_ntf_wait, NULL);
 
   auto binding_ntf_cb =
-    [&](size_t packet_len, const uint8_t *packet) mutable
+    [&](size_t packet_len, const uint8_t *packet) mutable -> bool
   {
       if (packet_len == UCI_MSG_UWB_ESE_BINDING_LEN) {
         uint8_t status = packet[UCI_RESPONSE_STATUS_OFFSET];
@@ -186,10 +186,11 @@ static tHAL_UWB_STATUS sr1xx_do_bind(uint8_t *binding_status, uint8_t *remain_co
       } else {
         NXPLOG_UCIHAL_E("UWB_ESE_BINDING_NTF: packet length mismatched %zu", packet_len);
       }
+      return true;
   };
   auto handler = phNxpUciHal_rx_handler_add(
       UCI_MT_NTF, UCI_GID_PROPRIETARY_0X0F, UCI_MSG_UWB_ESE_BINDING,
-      true, true, binding_ntf_cb);
+      true, binding_ntf_cb);
 
   // UWB_ESE_BINDING_CMD
   uint8_t buffer[] = {0x2F, 0x31, 0x00, 0x00};
@@ -230,16 +231,17 @@ static tHAL_UWB_STATUS sr1xx_check_binding_status(uint8_t *binding_status)
   uint8_t binding_status_got = UWB_DEVICE_UNKNOWN;
   phNxpUciHal_Sem_t binding_check_ntf_wait;
   phNxpUciHal_init_cb_data(&binding_check_ntf_wait, NULL);
-  auto binding_check_ntf_cb = [&](size_t packet_len, const uint8_t *packet) mutable {
+  auto binding_check_ntf_cb = [&](size_t packet_len, const uint8_t *packet) mutable -> bool {
     if (packet_len >= UCI_RESPONSE_STATUS_OFFSET) {
       binding_status_got = packet[UCI_RESPONSE_STATUS_OFFSET];
       NXPLOG_UCIHAL_D("Received UWB_ESE_BINDING_CHECK_NTF, binding_status=0x%x", binding_status_got);
       SEM_POST(&binding_check_ntf_wait);
     }
+    return true;
   };
   auto handler = phNxpUciHal_rx_handler_add(
       UCI_MT_NTF, UCI_GID_PROPRIETARY_0X0F, UCI_MSG_UWB_ESE_BINDING_CHECK,
-      true, true, binding_check_ntf_cb);
+      true, binding_check_ntf_cb);
 
   // UWB_ESE_BINDING_CHECK_CMD
   uint8_t lock_cmd[] = {0x2F, 0x32, 0x00, 0x00};
@@ -335,9 +337,9 @@ public:
 
 private:
   tHAL_UWB_STATUS check_binding();
-  void onDeviceStatusNtf(size_t packet_len, const uint8_t* packet);
-  void onGenericErrorNtf(size_t packet_len, const uint8_t* packet);
-  void onBindingStatusNtf(size_t packet_len, const uint8_t* packet);
+  bool onDeviceStatusNtf(size_t packet_len, const uint8_t* packet);
+  bool onGenericErrorNtf(size_t packet_len, const uint8_t* packet);
+  bool onBindingStatusNtf(size_t packet_len, const uint8_t* packet);
 
 private:
   UciHalRxHandler deviceStatusNtfHandler_;
@@ -356,7 +358,7 @@ NxpUwbChipSr1xx::~NxpUwbChipSr1xx()
 {
 }
 
-void NxpUwbChipSr1xx::onDeviceStatusNtf(size_t packet_len, const uint8_t* packet)
+bool NxpUwbChipSr1xx::onDeviceStatusNtf(size_t packet_len, const uint8_t* packet)
 {
   if(packet_len > UCI_RESPONSE_STATUS_OFFSET) {
     uint8_t status = packet[UCI_RESPONSE_STATUS_OFFSET];
@@ -364,26 +366,29 @@ void NxpUwbChipSr1xx::onDeviceStatusNtf(size_t packet_len, const uint8_t* packet
       sr1xx_clear_device_error();
     }
   }
+  return false;
 }
 
-void NxpUwbChipSr1xx::onGenericErrorNtf(size_t packet_len, const uint8_t* packet)
+bool NxpUwbChipSr1xx::onGenericErrorNtf(size_t packet_len, const uint8_t* packet)
 {
   if(packet_len > UCI_RESPONSE_STATUS_OFFSET) {
     uint8_t status = packet[UCI_RESPONSE_STATUS_OFFSET];
     if ( status == UCI_STATUS_THERMAL_RUNAWAY || status == UCI_STATUS_LOW_VBAT) {
-      nxpucihal_ctrl.isSkipPacket = 1;
       sr1xx_handle_device_error();
+      return true;
     }
   }
+  return false;
 }
 
-void NxpUwbChipSr1xx::onBindingStatusNtf(size_t packet_len, const uint8_t* packet)
+bool NxpUwbChipSr1xx::onBindingStatusNtf(size_t packet_len, const uint8_t* packet)
 {
   if (packet_len > UCI_RESPONSE_STATUS_OFFSET) {
     bindingStatus_ = packet[UCI_RESPONSE_STATUS_OFFSET];
     NXPLOG_UCIHAL_D("BINDING_STATUS_NTF: 0x%x", bindingStatus_);
     bindingStatusNtfWait_.post(UWBSTATUS_SUCCESS);
   }
+  return true;
 }
 
 tHAL_UWB_STATUS NxpUwbChipSr1xx::check_binding()
@@ -493,19 +498,19 @@ tHAL_UWB_STATUS NxpUwbChipSr1xx::chip_init()
 
   // register device status ntf handler
   deviceStatusNtfHandler_ = UciHalRxHandler(
-      UCI_MT_NTF, UCI_GID_CORE, UCI_MSG_CORE_DEVICE_STATUS_NTF, false,
+      UCI_MT_NTF, UCI_GID_CORE, UCI_MSG_CORE_DEVICE_STATUS_NTF,
       std::bind(&NxpUwbChipSr1xx::onDeviceStatusNtf, this, std::placeholders::_1, std::placeholders::_2)
   );
 
   // register device error ntf handler
   genericErrorNtfHandler_ = UciHalRxHandler(
-    UCI_MT_NTF, UCI_GID_CORE, UCI_MSG_CORE_GENERIC_ERROR_NTF, false,
+    UCI_MT_NTF, UCI_GID_CORE, UCI_MSG_CORE_GENERIC_ERROR_NTF,
     std::bind(&NxpUwbChipSr1xx::onGenericErrorNtf, this, std::placeholders::_1, std::placeholders::_2)
   );
 
   // register binding status ntf handler
   bindingStatusNtfHandler_ = UciHalRxHandler(
-      UCI_MT_NTF, UCI_GID_PROPRIETARY, UCI_MSG_BINDING_STATUS_NTF, true,
+      UCI_MT_NTF, UCI_GID_PROPRIETARY, UCI_MSG_BINDING_STATUS_NTF,
       std::bind(&NxpUwbChipSr1xx::onBindingStatusNtf, this, std::placeholders::_1, std::placeholders::_2)
   );
 
