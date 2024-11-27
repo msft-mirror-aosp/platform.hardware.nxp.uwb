@@ -150,7 +150,7 @@ static void phNxpUciHal_client_thread(phNxpUciHal_Control_t* p_nxpucihal_ctrl)
 
   while (thread_running) {
     /* Fetch next message from the UWB stack message queue */
-    auto msg = p_nxpucihal_ctrl->gDrvCfg.pClientMq->recv();
+    auto msg = p_nxpucihal_ctrl->pClientMq->recv();
 
     if (!thread_running) {
       break;
@@ -315,16 +315,15 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_c
   nxpucihal_ctrl.p_uwb_stack_data_cback = p_data_cback;
   nxpucihal_ctrl.fw_dwnld_mode = false;
 
-  /* Configure hardware link */
-  nxpucihal_ctrl.gDrvCfg.pClientMq = std::make_shared<MessageQueue<phLibUwb_Message>>("Client");
-  nxpucihal_ctrl.gDrvCfg.nLinkType = ENUM_LINK_TYPE_SPI;
+  // Create a main message queue.
+  nxpucihal_ctrl.pClientMq = std::make_shared<MessageQueue<phLibUwb_Message>>("Client");
 
   // Default country code = '00'
   nxpucihal_ctrl.country_code[0] = '0';
   nxpucihal_ctrl.country_code[1] = '0';
 
   /* Initialize TML layer */
-  wConfigStatus = phTmlUwb_Init(uwb_dev_node, nxpucihal_ctrl.gDrvCfg.pClientMq);
+  wConfigStatus = phTmlUwb_Init(uwb_dev_node, nxpucihal_ctrl.pClientMq);
   if (wConfigStatus != UWBSTATUS_SUCCESS) {
     NXPLOG_UCIHAL_E("phTmlUwb_Init Failed");
     goto clean_and_return;
@@ -346,7 +345,7 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_c
     false, phNxpUciHal_handle_get_caps_info);
 
   /* Call open complete */
-  phTmlUwb_DeferredCall(std::make_shared<phLibUwb_Message>(UCI_HAL_OPEN_CPLT_MSG));
+  nxpucihal_ctrl.pClientMq->send(std::make_shared<phLibUwb_Message>(UCI_HAL_OPEN_CPLT_MSG));
 
   return UWBSTATUS_SUCCESS;
 
@@ -610,7 +609,7 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
   SessionTrack_deinit();
 
   NXPLOG_UCIHAL_D("Terminating phNxpUciHal client thread...");
-  phTmlUwb_DeferredCall(std::make_shared<phLibUwb_Message>(UCI_HAL_CLOSE_CPLT_MSG));
+  nxpucihal_ctrl.pClientMq->send(std::make_shared<phLibUwb_Message>(UCI_HAL_CLOSE_CPLT_MSG));
   nxpucihal_ctrl.client_thread.join();
 
   status = phTmlUwb_Shutdown();
@@ -961,14 +960,14 @@ tHAL_UWB_STATUS phNxpUciHal_coreInitialization()
 {
   tHAL_UWB_STATUS status = phNxpUciHal_init_hw();
   if (status != UWBSTATUS_SUCCESS) {
-    phTmlUwb_DeferredCall(std::make_shared<phLibUwb_Message>(UCI_HAL_ERROR_MSG));
+    nxpucihal_ctrl.pClientMq->send(std::make_shared<phLibUwb_Message>(UCI_HAL_ERROR_MSG));
     return status;
   }
 
   SessionTrack_init();
 
   // report to upper-layer
-  phTmlUwb_DeferredCall(std::make_shared<phLibUwb_Message>(UCI_HAL_INIT_CPLT_MSG));
+  nxpucihal_ctrl.pClientMq->send(std::make_shared<phLibUwb_Message>(UCI_HAL_INIT_CPLT_MSG));
 
   constexpr uint8_t dev_ready_ntf[] = {0x60, 0x01, 0x00, 0x01, 0x01};
   report_uci_message(dev_ready_ntf, sizeof(dev_ready_ntf));

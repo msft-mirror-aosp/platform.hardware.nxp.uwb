@@ -110,5 +110,4 @@ tHAL_UWB_STATUS phTmlUwb_StartRead(ReadCallback pTmlReadComplete, void* pContext
 void phTmlUwb_StopRead();
 
 void phTmlUwb_Chip_Reset(void);
-void phTmlUwb_DeferredCall(std::shared_ptr<phLibUwb_Message> msg);
 #endif /*  PHTMLUWB_H  */
