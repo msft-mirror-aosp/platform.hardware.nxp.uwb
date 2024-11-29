@@ -159,6 +159,80 @@ typedef struct {
   short tx_power_offset;    // From UWB_COUNTRY_CODE_CAPS
 } phNxpUciHal_Runtime_Settings_t;
 
+// From phNxpUciHal_process_ext_cmd_rsp(),
+// For checking CMD/RSP turn around matching.
+class CmdRspCheck {
+public:
+  CmdRspCheck() { }
+
+  void StartCmd(uint8_t gid, uint8_t oid) {
+    if (sem_ != nullptr) {
+      NXPLOG_UCIHAL_E("CMD/RSP turnaround is already ongoing!");
+    } else {
+      sem_ = std::make_shared<UciHalSemaphore>();
+      gid_ = gid;
+      oid_ = oid;
+    }
+  }
+
+  // CMD writer waits for the corresponding RSP
+  tHAL_UWB_STATUS Wait(long timeout_ms) {
+    auto sem = GetSemaphore();
+    if (sem == nullptr) {
+      NXPLOG_UCIHAL_E("Wait CMD/RSP for non-existed turnaround!");
+      return UCI_STATUS_FAILED;
+    }
+    sem->wait_timeout_msec(timeout_ms);
+    auto ret = sem->getStatus();
+    ReleaseSemaphore();
+    return ret;
+  }
+
+  // Reset the state, this shouldn't be called while
+  // Someone is waiting from WaitRsp().
+  void Cancel() {
+    ReleaseSemaphore();
+  }
+
+  // Wakes up the user thread when RSP packet is matched.
+  void Wakeup(uint8_t gid, uint8_t oid) {
+    auto sem = GetSemaphore();
+    if (sem == nullptr) {
+      NXPLOG_UCIHAL_E("Wakeup CMD/RSP while no one is waiting for CMD/RSP!");
+      return;
+    }
+    if (gid_ != gid || oid_ != oid) {
+      NXPLOG_UCIHAL_E(
+        "Received incorrect response of GID:%x OID:%x, expected GID:%x OID:%x",
+        gid, oid, gid_, oid_);
+      sem->post(UWBSTATUS_COMMAND_RETRANSMIT);
+    } else {
+      sem->post(UWBSTATUS_SUCCESS);
+    }
+  }
+
+  // Wakes up the user thread with error status code.
+  void WakeupError(tHAL_UWB_STATUS status) {
+    auto sem = GetSemaphore();
+    if (sem == nullptr) {
+      NXPLOG_UCIHAL_V("Got error while no one is waiting for CMD/RSP!");
+      return;
+    }
+    sem->post(status);
+  }
+
+private:
+  std::shared_ptr<UciHalSemaphore> GetSemaphore() {
+    return sem_;
+  }
+  void ReleaseSemaphore() {
+    sem_ = nullptr;
+  }
+  std::shared_ptr<UciHalSemaphore> sem_;
+  uint8_t gid_;
+  uint8_t oid_;
+};
+
 /* UCI Control structure */
 typedef struct phNxpUciHal_Control {
   phNxpUci_HalStatus halStatus; /* Indicate if hal is open or closed */
@@ -180,11 +254,7 @@ typedef struct phNxpUciHal_Control {
   bool_t hal_parse_enabled;
 
   /* Waiting semaphore */
-  phNxpUciHal_Sem_t ext_cb_data;
-
-  // in case of fragmented response,
-  // ext_cb_data is flagged only from the 1st response packet
-  bool ext_cb_waiting;
+  CmdRspCheck cmdrsp;
 
   uint16_t cmd_len;
   uint8_t p_cmd_data[UCI_MAX_DATA_LEN];
@@ -213,9 +283,6 @@ typedef struct phNxpUciHal_Control {
   // Antenna Definitions for extra calibration, b0=Antenna1, b1=Antenna2, ...
   uint8_t cal_rx_antenna_mask;
   uint8_t cal_tx_antenna_mask;
-
-  uint8_t oid;
-  uint8_t gid;
 } phNxpUciHal_Control_t;
 
 // RX packet handler
