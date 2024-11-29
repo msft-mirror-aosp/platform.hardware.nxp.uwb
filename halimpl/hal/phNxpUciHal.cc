@@ -63,24 +63,18 @@ static tHAL_UWB_STATUS phNxpUciHal_sendCoreConfig(const uint8_t *p_cmd,
  * RX packet handler
  ******************************************************************************/
 struct phNxpUciHal_RxHandler {
+  phNxpUciHal_RxHandler(uint8_t mt, uint8_t gid, uint8_t oid,
+    bool run_once, RxHandlerCallback callback) :
+      mt(mt), gid(gid), oid(oid),
+      run_once(run_once),
+      callback(callback) { }
+
   // mt, gid, oid: packet type
   uint8_t mt;
   uint8_t gid;
   uint8_t oid;
-
-  // skip_reporting: not reports the packet to upper layer if it's true
-  bool skip_reporting;
   bool run_once;
-
-  std::function<void(size_t packet_len, const uint8_t *packet)> callback;
-
-  phNxpUciHal_RxHandler(uint8_t mt, uint8_t gid, uint8_t oid,
-    bool skip_reporting, bool run_once,
-    std::function<void(size_t packet_len, const uint8_t *packet)> callback) :
-      mt(mt), gid(gid), oid(oid),
-      skip_reporting(skip_reporting),
-      run_once(run_once),
-      callback(callback) { }
+  RxHandlerCallback callback;
 };
 
 static std::list<std::shared_ptr<phNxpUciHal_RxHandler>> rx_handlers;
@@ -88,11 +82,11 @@ static std::mutex rx_handlers_lock;
 
 std::shared_ptr<phNxpUciHal_RxHandler> phNxpUciHal_rx_handler_add(
   uint8_t mt, uint8_t gid, uint8_t oid,
-  bool skip_reporting, bool run_once,
-  std::function<void(size_t packet_len, const uint8_t *packet)> callback)
+  bool run_once,
+  RxHandlerCallback callback)
 {
-  auto handler = std::make_shared<phNxpUciHal_RxHandler>(mt, gid, oid,
-    skip_reporting, run_once, callback);
+  auto handler = std::make_shared<phNxpUciHal_RxHandler>(
+    mt, gid, oid, run_once, callback);
   std::lock_guard<std::mutex> guard(rx_handlers_lock);
   rx_handlers.push_back(handler);
   return handler;
@@ -116,8 +110,7 @@ static bool phNxpUciHal_rx_handler_check(size_t packet_len, const uint8_t *packe
 
   for (auto handler : rx_handlers) {
     if (mt == handler->mt && gid == handler->gid && oid == handler->oid) {
-      handler->callback(packet_len, packet);
-      if (handler->skip_reporting) {
+      if (handler->callback(packet_len, packet)) {
         skip_packet = true;
       }
     }
@@ -798,14 +791,14 @@ tHAL_UWB_STATUS phNxpUciHal_uwb_reset() {
 
 static bool cacheDevInfoRsp()
 {
-  auto dev_info_cb = [](size_t packet_len, const uint8_t *packet) mutable {
+  auto dev_info_cb = [](size_t packet_len, const uint8_t *packet) mutable -> bool {
     if (packet_len < 5 || packet[UCI_RESPONSE_STATUS_OFFSET] != UWBSTATUS_SUCCESS) {
       NXPLOG_UCIHAL_E("Failed to get valid CORE_DEVICE_INFO_RSP");
-      return;
+      return true;
     }
     if (packet_len > sizeof(nxpucihal_ctrl.dev_info_resp)) {
       NXPLOG_UCIHAL_E("FIXME: CORE_DEVICE_INFO_RSP buffer overflow!");
-      return;
+      return true;
     }
 
     // FIRA UCIv2.0 packet size = 14
@@ -815,7 +808,7 @@ static bool cacheDevInfoRsp()
 
     if (packet_len < firaDevInfoRspSize) {
       NXPLOG_UCIHAL_E("DEVICE_INFO_RSP packet size mismatched.");
-      return;
+      return true;
     }
 
     const uint8_t vendorSpecificLen = packet[firaDevInfoVendorLenOffset];
@@ -844,10 +837,11 @@ static bool cacheDevInfoRsp()
     memcpy(nxpucihal_ctrl.dev_info_resp, packet, packet_len);
     nxpucihal_ctrl.isDevInfoCached = true;
     NXPLOG_UCIHAL_D("Device Info cached.");
+    return true;
   };
 
   nxpucihal_ctrl.isDevInfoCached = false;
-  UciHalRxHandler devInfoRspHandler(UCI_MT_RSP, UCI_GID_CORE, UCI_MSG_CORE_DEVICE_INFO, true, dev_info_cb);
+  UciHalRxHandler devInfoRspHandler(UCI_MT_RSP, UCI_GID_CORE, UCI_MSG_CORE_DEVICE_INFO, dev_info_cb);
 
   const uint8_t CoreGetDevInfoCmd[] = {(UCI_MT_CMD << UCI_MT_SHIFT) | UCI_GID_CORE, UCI_MSG_CORE_DEVICE_INFO, 0, 0};
   tHAL_UWB_STATUS status = phNxpUciHal_send_ext_cmd(sizeof(CoreGetDevInfoCmd), CoreGetDevInfoCmd);
@@ -879,16 +873,16 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
   // Device Status Notification
   UciHalSemaphore devStatusNtfWait;
   uint8_t dev_status = UWB_DEVICE_ERROR;
-  auto dev_status_ntf_cb = [&dev_status,
-                            &devStatusNtfWait](size_t packet_len,
-                                               const uint8_t *packet) mutable {
+  auto dev_status_ntf_cb = [&dev_status, &devStatusNtfWait]
+      (size_t packet_len, const uint8_t *packet) mutable -> bool {
     if (packet_len >= 5) {
       dev_status = packet[UCI_RESPONSE_STATUS_OFFSET];
       devStatusNtfWait.post();
     }
+    return true;
   };
   UciHalRxHandler devStatusNtfHandler(UCI_MT_NTF, UCI_GID_CORE, UCI_MSG_CORE_DEVICE_STATUS_NTF,
-                                      true, dev_status_ntf_cb);
+                                      dev_status_ntf_cb);
 
   // FW download and enter UCI operating mode
   status = nxpucihal_ctrl.uwb_chip->chip_init();
