@@ -651,7 +651,9 @@ private:
         }
         break;
       case SessionTrackWorkType::DELETE_URSK:
+        CONCURRENCY_LOCK();
         DeleteUrsk(msg->session_info_);
+        CONCURRENCY_UNLOCK();
         break;
       case SessionTrackWorkType::STOP:
         stop_thread = true;
