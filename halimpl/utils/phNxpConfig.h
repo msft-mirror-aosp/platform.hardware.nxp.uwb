@@ -27,7 +27,7 @@ void NxpConfig_Deinit(void);
 bool NxpConfig_SetCountryCode(const char country_code[2]);
 
 int NxpConfig_GetStr(const char* name, char* p_value, unsigned long len);
-int NxpConfig_GetNum(const char* name, void* p_value, unsigned long len);
+bool NxpConfig_GetNum(const char* name, void* p_value, unsigned long len);
 int NxpConfig_GetByteArray(const char* name, uint8_t* pValue, long bufflen, long *len);
 
 int NxpConfig_GetStrArrayLen(const char* name, unsigned long *pLen);
