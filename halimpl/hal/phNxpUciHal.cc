@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019, 2022-2023 NXP
+ * Copyright 2012-2019, 2022-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -470,11 +470,6 @@ static void handle_rx_packet(uint8_t *buffer, size_t length)
   }
 
   if (mt == UCI_MT_NTF) {
-    // DBG packets not yet supported, just ignore them silently
-    if (gid == UCI_GID_INTERNAL && oid == UCI_EXT_PARAM_DBG_RFRAME_LOG_NTF) {
-      return;
-    }
-
     if (!pbf && gid == UCI_GID_CORE && oid == UCI_MSG_CORE_GENERIC_ERROR_NTF) {
       uint8_t status_code = buffer[UCI_RESPONSE_STATUS_OFFSET];
 
