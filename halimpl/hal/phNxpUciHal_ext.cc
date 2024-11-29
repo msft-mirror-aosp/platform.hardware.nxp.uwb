@@ -756,9 +756,12 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
     NXPLOG_UCIHAL_D("Country code %c%c is invalid, UWB should be disabled", country_code[0], country_code[1]);
     phNxpUciHal_resetRuntimeSettings();
     rt_set->uwb_enable = false;
-  }
+  } else if (!(nxpucihal_ctrl.country_code[0] == country_code[0] &&
+               nxpucihal_ctrl.country_code[1] == country_code[1])) {
 
-  if (NxpConfig_SetCountryCode(country_code)) {
+    nxpucihal_ctrl.country_code[0] = country_code[0];
+    nxpucihal_ctrl.country_code[1] = country_code[1];
+    NxpConfig_SetCountryCode(country_code);
     phNxpUciHal_resetRuntimeSettings();
 
     // Load ExtraCal restrictions
@@ -791,6 +794,9 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
 
     // Apply per-country calibration, it's handled by SessionTrack
     SessionTrack_onCountryCodeChanged();
+  } else {
+    NXPLOG_UCIHAL_D("Country code %c%c: not changed, keep same configuration.",
+                    country_code[0], country_code[1]);
   }
 
   // send country code response to upper layer
