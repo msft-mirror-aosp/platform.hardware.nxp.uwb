@@ -50,7 +50,7 @@ bool uwb_device_initialized = false;
 bool uwb_get_platform_id = false;
 uint32_t timeoutTimerId = 0;
 char persistant_log_path[120];
-
+constexpr long HAL_WRITE_TIMEOUT_MS = 1000;
 /**************** local methods used in this file only ************************/
 static void phNxpUciHal_write_complete(void* pContext,
                                        phTmlUwb_TransactInfo_t* pInfo);
@@ -399,34 +399,23 @@ tHAL_UWB_STATUS phNxpUciHal_write_unlocked() {
   }
 
   /* Create the local semaphore */
-  phNxpUciHal_Sem_t cb_data;
-  status = phNxpUciHal_init_cb_data(&cb_data, NULL);
-  if (status != UWBSTATUS_SUCCESS) {
-    NXPLOG_UCIHAL_D("phNxpUciHal_write_unlocked Create cb data failed");
-    return status;
-  }
+  UciHalSemaphore cb_data;
 
   status = phTmlUwb_Write(p_data, data_len,
       (pphTmlUwb_TransactCompletionCb_t)&phNxpUciHal_write_complete,
       (void*)&cb_data);
 
   if (status != UWBSTATUS_PENDING) {
-    NXPLOG_UCIHAL_E("write_unlocked status error");
-    goto clean_and_return;
+    return UWBSTATUS_FAILED;
   }
 
   /* Wait for callback response */
-  if (SEM_WAIT(&cb_data)) {
+  if (cb_data.wait_timeout_msec(HAL_WRITE_TIMEOUT_MS)) {
     NXPLOG_UCIHAL_E("write_unlocked semaphore error");
-    status = UWBSTATUS_FAILED;
-    goto clean_and_return;
+    return UWBSTATUS_FAILED;
   }
 
-  status = UWBSTATUS_SUCCESS;
-
-clean_and_return:
-  phNxpUciHal_cleanup_cb_data(&cb_data);
-  return status;
+  return UWBSTATUS_SUCCESS;
 }
 
 /******************************************************************************
@@ -439,18 +428,14 @@ clean_and_return:
  ******************************************************************************/
 static void phNxpUciHal_write_complete(void* pContext,
                                        phTmlUwb_TransactInfo_t* pInfo) {
-  phNxpUciHal_Sem_t* p_cb_data = (phNxpUciHal_Sem_t*)pContext;
+  UciHalSemaphore* p_cb_data = (UciHalSemaphore*)pContext;
 
   if (pInfo->wStatus == UWBSTATUS_SUCCESS) {
     NXPLOG_UCIHAL_V("write successful status = 0x%x", pInfo->wStatus);
   } else {
     NXPLOG_UCIHAL_E("write error status = 0x%x", pInfo->wStatus);
   }
-  p_cb_data->status = pInfo->wStatus;
-
-  SEM_POST(p_cb_data);
-
-  return;
+  p_cb_data->post(pInfo->wStatus);
 }
 
 /******************************************************************************
