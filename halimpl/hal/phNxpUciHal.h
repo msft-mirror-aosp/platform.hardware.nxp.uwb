@@ -240,12 +240,13 @@ struct phNxpUciHal_RxHandler;
 #define UWB_NXP_ANDROID_MW_DROP_VERSION (0x07) /* Android MW early drops */
 /******************** UCI HAL exposed functions *******************************/
 tHAL_UWB_STATUS phNxpUciHal_init_hw();
-tHAL_UWB_STATUS phNxpUciHal_write_unlocked(uint16_t data_len, const uint8_t *p_data);
+tHAL_UWB_STATUS phNxpUciHal_write_unlocked();
 void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo);
 tHAL_UWB_STATUS phNxpUciHal_uwb_reset();
 tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig();
-tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len, const uint8_t *p_cmd, uint16_t *data_written);
+tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(size_t cmd_len, const uint8_t *p_cmd);
 void phNxpUciHal_send_dev_error_status_ntf();
+bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data);
 
 std::shared_ptr<phNxpUciHal_RxHandler> phNxpUciHal_rx_handler_add(
   uint8_t mt, uint8_t gid, uint8_t oid,

@@ -58,11 +58,26 @@ static void phNxpUciHal_hw_reset_ntf_timeout_cb(uint32_t timerId,
  *                  returns failure.
  *
  ******************************************************************************/
-tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
-                                                const uint8_t *p_cmd,
-                                                uint16_t *data_written) {
+tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(size_t cmd_len,
+                                                const uint8_t *p_cmd) {
+  if (cmd_len > sizeof(nxpucihal_ctrl.p_cmd_data)) {
+    NXPLOG_UCIHAL_E("Packet size is too big to send: %u.", cmd_len);
+    return UWBSTATUS_FAILED;
+  }
+  if (cmd_len < 1) {
+    return UWBSTATUS_FAILED;
+  }
+
+  /* Create local copy of cmd_data */
+  memcpy(nxpucihal_ctrl.p_cmd_data, p_cmd, cmd_len);
+  nxpucihal_ctrl.cmd_len = cmd_len;
+
   // PBF=1 or DATA packet: don't check RSP
-  bool isRetryNotRequired = phNxpUciHal_is_retry_not_required(p_cmd[0]) || (cmd_len < 4);
+  // upper-layer should handle the case of UWBSTATUS_COMMAND_RETRANSMIT && isRetryNotRequired
+  if (phNxpUciHal_is_retry_not_required(p_cmd[0]) ||
+      cmd_len < UCI_MSG_HDR_SIZE) {
+    return phNxpUciHal_write_unlocked();
+  }
 
   const uint8_t mt = (p_cmd[0] & UCI_MT_MASK) >> UCI_MT_SHIFT;
   const uint8_t gid = p_cmd[0] & UCI_GID_MASK;
@@ -72,17 +87,17 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
     SessionTrack_onSessionStart(cmd_len, p_cmd);
   }
 
-  // upper-layer should handle the case of UWBSTATUS_COMMAND_RETRANSMIT && isRetryNotRequired
-  if (isRetryNotRequired) {
-    *data_written = phNxpUciHal_write_unlocked(cmd_len, p_cmd);
-
-    if (*data_written != cmd_len) {
-      NXPLOG_UCIHAL_D("phNxpUciHal_write failed for hal ext");
-      return UWBSTATUS_FAILED;
-    } else {
-      return UWBSTATUS_SUCCESS;
-    }
+  /* Vendor Specific Parsing logic */
+  // TODO: remove parse_enabled
+  nxpucihal_ctrl.hal_parse_enabled =
+      phNxpUciHal_parse(nxpucihal_ctrl.cmd_len, nxpucihal_ctrl.p_cmd_data);
+  if (nxpucihal_ctrl.hal_parse_enabled) {
+    NXPLOG_UCIHAL_D("hal_parse_enabled turned on");
+    return UWBSTATUS_SUCCESS;
   }
+
+  nxpucihal_ctrl.gid = gid;
+  nxpucihal_ctrl.oid = oid;
 
   /* Create the local semaphore */
   if (phNxpUciHal_init_cb_data(&nxpucihal_ctrl.ext_cb_data, NULL) != UWBSTATUS_SUCCESS) {
@@ -99,16 +114,10 @@ tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len,
     nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_FAILED;
     nxpucihal_ctrl.ext_cb_waiting = true;
 
-    *data_written = phNxpUciHal_write_unlocked(cmd_len, p_cmd);
+    status = phNxpUciHal_write_unlocked();
 
-    if (*data_written != cmd_len) {
-      status = UWBSTATUS_FAILED;
+    if (status != UWBSTATUS_SUCCESS) {
       NXPLOG_UCIHAL_D("phNxpUciHal_write failed for hal ext");
-      goto clean_and_return;
-    }
-
-    if (nxpucihal_ctrl.hal_parse_enabled) {
-      status = UWBSTATUS_SUCCESS;
       goto clean_and_return;
     }
 
@@ -164,18 +173,12 @@ clean_and_return:
  *
  ******************************************************************************/
 tHAL_UWB_STATUS phNxpUciHal_send_ext_cmd(uint16_t cmd_len, const uint8_t* p_cmd) {
-  tHAL_UWB_STATUS status;
-
   if (cmd_len >= UCI_MAX_DATA_LEN) {
-    status = UWBSTATUS_FAILED;
-    return status;
+    return UWBSTATUS_FAILED;
   }
-  uint16_t data_written = 0;
+
   HAL_ENABLE_EXT();
-  nxpucihal_ctrl.cmd_len = cmd_len;
-  memcpy(nxpucihal_ctrl.p_cmd_data, p_cmd, cmd_len);
-  status = phNxpUciHal_process_ext_cmd_rsp(
-      nxpucihal_ctrl.cmd_len, nxpucihal_ctrl.p_cmd_data, &data_written);
+  tHAL_UWB_STATUS status = phNxpUciHal_process_ext_cmd_rsp(cmd_len, p_cmd);
   HAL_DISABLE_EXT();
 
   return status;
