@@ -925,15 +925,15 @@ bool phNxpUciHal_handle_set_app_config(uint16_t *data_len, uint8_t *p_data)
   return false;
 }
 
-void phNxpUciHal_handle_get_caps_info(uint16_t data_len, uint8_t *p_data)
+bool phNxpUciHal_handle_get_caps_info(size_t data_len, const uint8_t *p_data)
 {
   if (data_len < UCI_MSG_CORE_GET_CAPS_INFO_NR_OFFSET)
-    return;
+    return false;
 
   uint8_t status = p_data[UCI_RESPONSE_STATUS_OFFSET];
   uint8_t nr = p_data[UCI_MSG_CORE_GET_CAPS_INFO_NR_OFFSET];
   if (status != UWBSTATUS_SUCCESS || nr < 1)
-    return;
+    return false;
 
   auto tlvs = decodeTlvBytes({0xe0, 0xe1, 0xe2, 0xe3}, &p_data[UCI_MSG_CORE_GET_CAPS_INFO_TLV_OFFSET], data_len - UCI_MSG_CORE_GET_CAPS_INFO_TLV_OFFSET);
   if (tlvs.size() != nr) {
@@ -1011,6 +1011,7 @@ void phNxpUciHal_handle_get_caps_info(uint16_t data_len, uint8_t *p_data)
   auto tlv_bytes = encodeTlvBytes(tlvs);
   if ((tlv_bytes.size() + UCI_MSG_CORE_GET_CAPS_INFO_TLV_OFFSET) > sizeof(packet)) {
     NXPLOG_UCIHAL_E("DevCaps overflow!");
+    return false;
   } else {
     uint8_t packet_len = UCI_MSG_CORE_GET_CAPS_INFO_TLV_OFFSET + tlv_bytes.size();
     packet[UCI_PAYLOAD_LENGTH_OFFSET] = packet_len - UCI_MSG_HDR_SIZE;
@@ -1022,6 +1023,6 @@ void phNxpUciHal_handle_get_caps_info(uint16_t data_len, uint8_t *p_data)
     (*nxpucihal_ctrl.p_uwb_stack_data_cback)(packet_len, packet);
     // skip the incoming packet as we have send the modified response
     // already
-    nxpucihal_ctrl.isSkipPacket = 1;
+    return true;
   }
 }
