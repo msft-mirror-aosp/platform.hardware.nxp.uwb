@@ -552,65 +552,57 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo)
     }
 
     /* DBG packets not yet supported, just ignore them silently */
-    if (!nxpucihal_ctrl.isSkipPacket) {
-      if ((mt == UCI_MT_NTF) && (gid == UCI_GID_INTERNAL) &&
-          (oid == UCI_EXT_PARAM_DBG_RFRAME_LOG_NTF)) {
-        nxpucihal_ctrl.isSkipPacket = 1;
-      }
+    if ((mt == UCI_MT_NTF) && (gid == UCI_GID_INTERNAL) &&
+        (oid == UCI_EXT_PARAM_DBG_RFRAME_LOG_NTF)) {
+      nxpucihal_ctrl.isSkipPacket = 1;
     }
 
-    if (!nxpucihal_ctrl.isSkipPacket) {
-      if (!pbf && mt == UCI_MT_NTF && gid == UCI_GID_CORE && oid == UCI_MSG_CORE_GENERIC_ERROR_NTF) {
-        uint8_t status_code = nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET];
+    if (!pbf && mt == UCI_MT_NTF && gid == UCI_GID_CORE && oid == UCI_MSG_CORE_GENERIC_ERROR_NTF) {
+      uint8_t status_code = nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET];
 
-        if (status_code == UCI_STATUS_COMMAND_RETRY
-            ||
-            status_code == UCI_STATUS_SYNTAX_ERROR
-        ) {
-          // Handle retransmissions
-          // TODO: Do not retransmit it when !nxpucihal_ctrl.hal_ext_enabled,
-          // Upper layer should take care of it.
+      if (status_code == UCI_STATUS_COMMAND_RETRY ||
+          status_code == UCI_STATUS_SYNTAX_ERROR) {
+        // Handle retransmissions
+        // TODO: Do not retransmit it when !nxpucihal_ctrl.hal_ext_enabled,
+        // Upper layer should take care of it.
+        nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_COMMAND_RETRANSMIT;
+        nxpucihal_ctrl.isSkipPacket = 1;
+      } else if (status_code == UCI_STATUS_BUFFER_UNDERFLOW) {
+        if (nxpucihal_ctrl.hal_ext_enabled) {
           nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_COMMAND_RETRANSMIT;
           nxpucihal_ctrl.isSkipPacket = 1;
-        } else if (status_code == UCI_STATUS_BUFFER_UNDERFLOW) {
-          if (nxpucihal_ctrl.hal_ext_enabled) {
-            nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_COMMAND_RETRANSMIT;
-            nxpucihal_ctrl.isSkipPacket = 1;
-          } else {
-            // uci to handle retransmission
-            nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] =
-                UCI_STATUS_COMMAND_RETRY;
-          }
+        } else {
+          // uci to handle retransmission
+          nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] =
+              UCI_STATUS_COMMAND_RETRY;
         }
-        bWakeupExtCmd = true;
       }
+      bWakeupExtCmd = true;
     }
 
     // Check status code only for extension commands
-    if (!nxpucihal_ctrl.isSkipPacket) {
-      if (mt == UCI_MT_RSP) {
-        if (nxpucihal_ctrl.hal_ext_enabled) {
-          nxpucihal_ctrl.isSkipPacket = 1;
+    if (mt == UCI_MT_RSP) {
+      if (nxpucihal_ctrl.hal_ext_enabled) {
+        nxpucihal_ctrl.isSkipPacket = 1;
 
-          if (pbf) {
-            /* XXX: fix the whole logic if this really happens */
-            NXPLOG_UCIHAL_E("FIXME: Fragmented packets received while processing internal commands!");
-          }
+        if (pbf) {
+          /* XXX: fix the whole logic if this really happens */
+          NXPLOG_UCIHAL_E("FIXME: Fragmented packets received while processing internal commands!");
+        }
 
-          uint8_t status_code = (nxpucihal_ctrl.rx_data_len > UCI_RESPONSE_STATUS_OFFSET) ?
-            nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] : UCI_STATUS_UNKNOWN;
+        uint8_t status_code = (nxpucihal_ctrl.rx_data_len > UCI_RESPONSE_STATUS_OFFSET) ?
+          nxpucihal_ctrl.p_rx_data[UCI_RESPONSE_STATUS_OFFSET] : UCI_STATUS_UNKNOWN;
 
-          if (status_code == UCI_STATUS_OK) {
-            nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_SUCCESS;
-          } else if ((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_SET_CONFIG)){
-            /* check if any configurations are not supported then ignore the
-              * UWBSTATUS_FEATURE_NOT_SUPPORTED status code*/
-            nxpucihal_ctrl.ext_cb_data.status = phNxpUciHal_process_ext_rsp(nxpucihal_ctrl.rx_data_len, nxpucihal_ctrl.p_rx_data);
-          } else {
-            nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_FAILED;
-            NXPLOG_UCIHAL_E("Got error status code(0x%x) from internal command.", status_code);
-            usleep(1);  // XXX: not sure if it's really needed
-          }
+        if (status_code == UCI_STATUS_OK) {
+          nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_SUCCESS;
+        } else if ((gid == UCI_GID_CORE) && (oid == UCI_MSG_CORE_SET_CONFIG)){
+          /* check if any configurations are not supported then ignore the
+            * UWBSTATUS_FEATURE_NOT_SUPPORTED status code*/
+          nxpucihal_ctrl.ext_cb_data.status = phNxpUciHal_process_ext_rsp(nxpucihal_ctrl.rx_data_len, nxpucihal_ctrl.p_rx_data);
+        } else {
+          nxpucihal_ctrl.ext_cb_data.status = UWBSTATUS_FAILED;
+          NXPLOG_UCIHAL_E("Got error status code(0x%x) from internal command.", status_code);
+          usleep(1);  // XXX: not sure if it's really needed
         }
       }
     }
