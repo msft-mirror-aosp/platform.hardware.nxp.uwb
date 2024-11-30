@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2020, 2022-2023 NXP
+ * Copyright 2012-2020, 2022-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -34,7 +34,6 @@
 #define UCI_EXT_PARAM_DDFS_TONE_CONFIG         0x27
 #define UCI_EXT_PARAM_TX_PULSE_SHAPE_CONFIG    0x28
 #define UCI_EXT_PARAM_CLK_CONFIG_CTRL          0x30
-#define UCI_EXT_PARAM_DBG_RFRAME_LOG_NTF       0x22
 
 #define UCI_PARAM_ID_LOW_POWER_MODE            0x01
 
