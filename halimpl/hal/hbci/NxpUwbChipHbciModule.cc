@@ -408,9 +408,9 @@ tHAL_UWB_STATUS NxpUwbChipHbciModule::check_binding()
       return UWBSTATUS_SUCCESS;
   }
 
-  uint32_t val = 0;
+  unsigned long val = 0;
   NxpConfig_GetNum(NAME_UWB_BINDING_LOCKING_ALLOWED, &val, sizeof(val));
-  bool isBindingLockingAllowed = !!val;
+  bool isBindingLockingAllowed = (val != 0);
   if (!isBindingLockingAllowed) {
     return UWBSTATUS_SUCCESS;
   }
