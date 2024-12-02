@@ -645,7 +645,7 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
 static void parseAntennaConfig(const char *configName)
 {
   std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
-  long retlen = 0;
+  size_t retlen = 0;
   int gotConfig = NxpConfig_GetByteArray(configName, buffer.data(), buffer.size(), &retlen);
   if (gotConfig) {
     if (retlen <= UCI_MSG_HDR_SIZE) {
@@ -692,7 +692,7 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig()
 {
   std::vector<const char *> vendorParamNames;
   std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
-  long retlen = 0;
+  size_t retlen = 0;
   tHAL_UWB_STATUS status = UWBSTATUS_FAILED;
 
   // Base parameter names
