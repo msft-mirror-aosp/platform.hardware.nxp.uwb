@@ -999,17 +999,18 @@ int NxpConfig_GetByteArray(const char* name, uint8_t* pValue, long bufflen, long
 ** Returns:     true, if successful
 **
 *******************************************************************************/
-int NxpConfig_GetNum(const char* name, void* pValue, unsigned long len)
+bool NxpConfig_GetNum(const char* name, void* pValue, unsigned long len)
 {
-    if (pValue == NULL){
+    if ((name == nullptr) || (pValue == nullptr)){
+        ALOGE("[%s] Invalid arguments", __func__);
         return false;
     }
     const uwbParam* pParam = gConfig.find(name);
 
-    if (pParam == NULL)
+    if ((pParam == nullptr) || (pParam->getType() != uwbParam::type::NUMBER)) {
+        ALOGE("Config:%s not found in the config file", name);
         return false;
-    if (pParam->getType() != uwbParam::type::NUMBER)
-        return false;
+    }
 
     unsigned long v = pParam->numValue();
     switch (len)
@@ -1024,6 +1025,7 @@ int NxpConfig_GetNum(const char* name, void* pValue, unsigned long len)
         *(static_cast<unsigned char*> (pValue)) = (unsigned char)v;
         break;
     default:
+        ALOGE("[%s] unsupported length:%d", __func__, len);
         return false;
     }
     return true;
