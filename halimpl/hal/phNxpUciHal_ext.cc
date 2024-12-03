@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019, 2022-2023 NXP
+ * Copyright 2012-2019, 2022-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -971,6 +971,12 @@ bool phNxpUciHal_handle_get_caps_info(size_t data_len, const uint8_t *p_data)
   it = tlvs.find(CCC_SUPPORTED_PROTOCOL_VERSIONS_ID);
   if (it != tlvs.end() && it->second.size() == 2) {
     std::swap(it->second[0], it->second[1]);
+  }
+
+  // Byteorder of SYNC_CODE_INDEX_BITMASKING
+  it = tlvs.find(SYNC_CODE_INDEX_BITMASKING);
+  if (it != tlvs.end() && it->second.size() == 4) {
+    std::reverse(it->second.begin(), it->second.end());
   }
 
   // Append UWB_VENDOR_CAPABILITY from configuration files
