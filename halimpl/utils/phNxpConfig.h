@@ -20,18 +20,23 @@
 #ifndef __CONFIG_H
 #define __CONFIG_H
 
-#include <stdint.h>
+#include <cstddef>
+#include <cstdint>
 
 void NxpConfig_Init(void);
 void NxpConfig_Deinit(void);
 bool NxpConfig_SetCountryCode(const char country_code[2]);
 
-int NxpConfig_GetStr(const char* name, char* p_value, unsigned long len);
-int NxpConfig_GetNum(const char* name, void* p_value, unsigned long len);
-int NxpConfig_GetByteArray(const char* name, uint8_t* pValue, long bufflen, long *len);
+// TODO: use std::optional as return type.
+// TODO: use std::string_view instead of const char*.
+// TODO: add GetBool().
+// TODO: use template for GetNum() (uint8_t, uint16_t, uint32_t).
+bool NxpConfig_GetStr(const char* name, char* p_value, size_t len);
+bool NxpConfig_GetNum(const char* name, void* p_value, size_t len);
+bool NxpConfig_GetByteArray(const char* name, uint8_t* pValue, size_t bufflen, size_t *len);
 
-int NxpConfig_GetStrArrayLen(const char* name, unsigned long *pLen);
-int NxpConfig_GetStrArrayVal(const char* name, int index, char* pValue, unsigned long len);
+bool NxpConfig_GetStrArrayLen(const char* name, size_t* pLen);
+bool NxpConfig_GetStrArrayVal(const char* name, int index, char* pValue, size_t len);
 
 /* libuwb-nxp.conf parameters */
 #define NAME_UWB_BOARD_VARIANT_CONFIG "UWB_BOARD_VARIANT_CONFIG"
