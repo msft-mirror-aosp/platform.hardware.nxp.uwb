@@ -508,8 +508,8 @@ private:
     std::random_device rdev;
     std::mt19937 rng(rdev());
 
-    // valid range is [0, 2~30), but use half of it to prevent roll over
-    std::uniform_int_distribution<std::mt19937::result_type> sts_index(0, (1 << 16) - 1);
+    // valid range is [1, 2~30), but use half of it to prevent roll over
+    std::uniform_int_distribution<std::mt19937::result_type> sts_index(1, (1 << 16) - 1);
     return sts_index(rng);
   }
 
