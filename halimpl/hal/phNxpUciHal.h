@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2023 NXP
+ * Copyright 2012-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -71,6 +71,7 @@
 
 #define FW_BOOT_MODE_PARAM_ID 0x63
 
+#define SYNC_CODE_INDEX_BITMASKING 0xA1
 #define CCC_SUPPORTED_PROTOCOL_VERSIONS_ID 0xA4
 
 /* Low power mode */
@@ -251,9 +252,6 @@ typedef struct phNxpUciHal_Control {
   /* Waiting semaphore */
   CmdRspCheck cmdrsp;
 
-  uint16_t cmd_len;
-  uint8_t p_cmd_data[UCI_MAX_DATA_LEN];
-
   /* CORE_DEVICE_INFO_RSP cache */
   bool isDevInfoCached;
   uint8_t dev_info_resp[256];
@@ -273,6 +271,9 @@ typedef struct phNxpUciHal_Control {
   // Antenna Definitions for extra calibration, b0=Antenna1, b1=Antenna2, ...
   uint8_t cal_rx_antenna_mask;
   uint8_t cal_tx_antenna_mask;
+
+  // Current country code
+  uint8_t country_code[2];
 } phNxpUciHal_Control_t;
 
 // RX packet handler
@@ -297,8 +298,8 @@ struct phNxpUciHal_RxHandler;
 #define UWB_NXP_ANDROID_MW_DROP_VERSION (0x07) /* Android MW early drops */
 /******************** UCI HAL exposed functions *******************************/
 tHAL_UWB_STATUS phNxpUciHal_init_hw();
-tHAL_UWB_STATUS phNxpUciHal_write_unlocked();
-void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo);
+tHAL_UWB_STATUS phNxpUciHal_write_unlocked(size_t cmd_len, const uint8_t* p_cmd);
+void phNxpUciHal_read_complete(void* pContext, phTmlUwb_ReadTransactInfo* pInfo);
 
 // Report UCI packet to upper layer
 void report_uci_message(const uint8_t* buffer, size_t len);
@@ -307,7 +308,7 @@ tHAL_UWB_STATUS phNxpUciHal_uwb_reset();
 tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig();
 tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(size_t cmd_len, const uint8_t *p_cmd);
 void phNxpUciHal_send_dev_error_status_ntf();
-bool phNxpUciHal_parse(uint16_t data_len, const uint8_t *p_data);
+bool phNxpUciHal_parse(size_t* data_len, uint8_t *p_data);
 
 // RX packet handler
 // handler should returns true if the packet is handled and
