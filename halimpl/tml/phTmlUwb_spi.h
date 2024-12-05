@@ -49,5 +49,5 @@
 void phTmlUwb_spi_close(void* pDevHandle);
 tHAL_UWB_STATUS phTmlUwb_spi_open_and_configure(const char* pDevName, void** pLinkHandle);
 int phTmlUwb_spi_read(void* pDevHandle, uint8_t* pBuffer, size_t nNbBytesToRead);
-int phTmlUwb_spi_write(void* pDevHandle, uint8_t* pBuffer, size_t nNbBytesToWrite);
+int phTmlUwb_spi_write(void* pDevHandle, const uint8_t* pBuffer, size_t nNbBytesToWrite);
 int phTmlUwb_Spi_Ioctl(void* pDevHandle, phTmlUwb_ControlCode_t cmd, long arg);
