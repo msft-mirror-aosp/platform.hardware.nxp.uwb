@@ -25,228 +25,83 @@ using namespace std;
 map<uint16_t, vector<uint16_t>> input_map;
 map<uint16_t, vector<uint16_t>> conf_map;
 
-/*********************** Link list functions **********************************/
-
-/*******************************************************************************
-**
-** Function         listInit
-**
-** Description      List initialization
-**
-** Returns          1, if list initialized, 0 otherwise
-**
-*******************************************************************************/
-int listInit(struct listHead* pList) {
-  pList->pFirst = NULL;
-  if (pthread_mutex_init(&pList->mutex, NULL) == -1) {
-    NXPLOG_UCIHAL_E("Mutex creation failed (errno=0x%08x)", errno);
-    return 0;
-  }
-
-  return 1;
-}
-
-/*******************************************************************************
-**
-** Function         listDestroy
-**
-** Description      List destruction
-**
-** Returns          1, if list destroyed, 0 if failed
-**
-*******************************************************************************/
-int listDestroy(struct listHead* pList) {
-  int bListNotEmpty = 1;
-  while (bListNotEmpty) {
-    bListNotEmpty = listGetAndRemoveNext(pList, NULL);
-  }
-
-  if (pthread_mutex_destroy(&pList->mutex) == -1) {
-    NXPLOG_UCIHAL_E("Mutex destruction failed (errno=0x%08x)", errno);
-    return 0;
-  }
-
-  return 1;
-}
-
-/*******************************************************************************
-**
-** Function         listAdd
-**
-** Description      Add a node to the list
-**
-** Returns          1, if added, 0 if otherwise
-**
-*******************************************************************************/
-int listAdd(struct listHead* pList, void* pData) {
-  struct listNode* pNode;
-  struct listNode* pLastNode;
-  int result;
-
-  /* Create node */
-  pNode = (struct listNode*)malloc(sizeof(struct listNode));
-  if (pNode == NULL) {
-    result = 0;
-    NXPLOG_UCIHAL_E("Failed to malloc");
-    goto clean_and_return;
-  }
-  pNode->pData = pData;
-  pNode->pNext = NULL;
-  pthread_mutex_lock(&pList->mutex);
-
-  /* Add the node to the list */
-  if (pList->pFirst == NULL) {
-    /* Set the node as the head */
-    pList->pFirst = pNode;
-  } else {
-    /* Seek to the end of the list */
-    pLastNode = pList->pFirst;
-    while (pLastNode->pNext != NULL) {
-      pLastNode = pLastNode->pNext;
-    }
-
-    /* Add the node to the current list */
-    pLastNode->pNext = pNode;
-  }
-
-  result = 1;
-
-clean_and_return:
-  pthread_mutex_unlock(&pList->mutex);
-  return result;
-}
-
-/*******************************************************************************
-**
-** Function         listRemove
-**
-** Description      Remove node from the list
-**
-** Returns          1, if removed, 0 if otherwise
-**
-*******************************************************************************/
-int listRemove(struct listHead* pList, void* pData) {
-  struct listNode* pNode;
-  struct listNode* pRemovedNode;
-  int result;
-
-  pthread_mutex_lock(&pList->mutex);
-
-  if (pList->pFirst == NULL) {
-    /* Empty list */
-    NXPLOG_UCIHAL_E("Failed to deallocate (list empty)");
-    result = 0;
-    goto clean_and_return;
-  }
-
-  pNode = pList->pFirst;
-  if (pList->pFirst->pData == pData) {
-    /* Get the removed node */
-    pRemovedNode = pNode;
-
-    /* Remove the first node */
-    pList->pFirst = pList->pFirst->pNext;
-  } else {
-    while (pNode->pNext != NULL) {
-      if (pNode->pNext->pData == pData) {
-        /* Node found ! */
-        break;
-      }
-      pNode = pNode->pNext;
-    }
-
-    if (pNode->pNext == NULL) {
-      /* Node not found */
-      result = 0;
-      NXPLOG_UCIHAL_E("Failed to deallocate (not found %8p)", pData);
-      goto clean_and_return;
-    }
-
-    /* Get the removed node */
-    pRemovedNode = pNode->pNext;
-
-    /* Remove the node from the list */
-    pNode->pNext = pNode->pNext->pNext;
-  }
-
-  /* Deallocate the node */
-  free(pRemovedNode);
-
-  result = 1;
-
-clean_and_return:
-  pthread_mutex_unlock(&pList->mutex);
-  return result;
-}
-
-/*******************************************************************************
-**
-** Function         listGetAndRemoveNext
-**
-** Description      Get next node on the list and remove it
-**
-** Returns          1, if successful, 0 if otherwise
-**
-*******************************************************************************/
-int listGetAndRemoveNext(struct listHead* pList, void** ppData) {
-  struct listNode* pNode;
-  int result;
-
-  pthread_mutex_lock(&pList->mutex);
-
-  if (pList->pFirst == NULL) {
-    /* Empty list */
-    NXPLOG_UCIHAL_D("Failed to deallocate (list empty)");
-    result = 0;
-    goto clean_and_return;
-  }
-
-  /* Work on the first node */
-  pNode = pList->pFirst;
-
-  /* Return the data */
-  if (ppData != NULL) {
-    *ppData = pNode->pData;
-  }
-
-  /* Remove and deallocate the node */
-  pList->pFirst = pNode->pNext;
-  free(pNode);
-
-  result = 1;
-
-clean_and_return:
-  listDump(pList);
-  pthread_mutex_unlock(&pList->mutex);
-  return result;
-}
-
-/*******************************************************************************
-**
-** Function         listDump
-**
-** Description      Dump list information
-**
-** Returns          None
-**
-*******************************************************************************/
-void listDump(struct listHead* pList) {
-  struct listNode* pNode = pList->pFirst;
-
-  NXPLOG_UCIHAL_D("Node dump:");
-  while (pNode != NULL) {
-    NXPLOG_UCIHAL_D("- %8p (%8p)", pNode, pNode->pData);
-    pNode = pNode->pNext;
-  }
-
-  return;
-}
-
-/* END Linked list source code */
-
 /****************** Semaphore and mutex helper functions **********************/
+/* Semaphore and mutex monitor */
+struct phNxpUciHal_Monitor {
+public:
+  static std::unique_ptr<phNxpUciHal_Monitor> Create() {
+    //auto monitor = std::unique_ptr<phNxpUciHal_Monitor>(new phNxpUciHal_Monitor());
+    auto monitor = std::make_unique<phNxpUciHal_Monitor>();
+    if (pthread_mutex_init(&monitor->reentrance_mutex_, NULL) == -1) {
+      return nullptr;
+    }
+    if (pthread_mutex_init(&monitor->concurrency_mutex_, NULL) == -1) {
+      pthread_mutex_destroy(&monitor->reentrance_mutex_);
+      return nullptr;
+    }
+    return monitor;
+  }
 
-static phNxpUciHal_Monitor_t* nxpucihal_monitor = NULL;
+  virtual ~phNxpUciHal_Monitor() {
+    pthread_mutex_destroy(&concurrency_mutex_);
+    ReentranceUnlock();
+    pthread_mutex_destroy(&reentrance_mutex_);
+    for (auto p : sems_) {
+      NXPLOG_UCIHAL_E("Unreleased semaphore %p", p);
+      p->status = UWBSTATUS_FAILED;
+      sem_post(&p->sem);
+    }
+    sems_.clear();
+  }
+
+  void AddSem(phNxpUciHal_Sem_t* pCallbackData) {
+    std::lock_guard<std::mutex> lock(lock_);
+    auto it = sems_.find(pCallbackData);
+    if (it == sems_.end()) {
+      sems_.insert(pCallbackData);
+    } else {
+      NXPLOG_UCIHAL_E("phNxpUciHal_init_cb_data: duplicated semaphore %p",
+        pCallbackData);
+    }
+  }
+
+  void RemoveSem(phNxpUciHal_Sem_t* pCallbackData) {
+    std::lock_guard<std::mutex> lock(lock_);
+    auto it = sems_.find(pCallbackData);
+    if (it == sems_.end()) {
+      NXPLOG_UCIHAL_E("phNxpUciHal_cleanup_cb_data: orphan semaphore %p",
+        pCallbackData);
+    } else {
+      sems_.erase(it);
+    }
+  }
+
+  void Reentrancelock() {
+    pthread_mutex_lock(&reentrance_mutex_);
+  }
+
+  void ReentranceUnlock() {
+    pthread_mutex_unlock(&reentrance_mutex_);
+  }
+
+  void Concurrencylock() {
+    pthread_mutex_lock(&concurrency_mutex_);
+  }
+
+  void ConcurrencyUnlock() {
+    pthread_mutex_unlock(&concurrency_mutex_);
+  }
+
+private:
+  std::unordered_set<phNxpUciHal_Sem_t*> sems_;
+  std::mutex lock_;
+  // Mutex protecting native library against reentrance
+  pthread_mutex_t reentrance_mutex_;
+  // Mutex protecting native library against concurrency
+  pthread_mutex_t concurrency_mutex_;
+};
+
+static std::unique_ptr<phNxpUciHal_Monitor> nxpucihal_monitor;
 
 /*******************************************************************************
 **
@@ -257,52 +112,16 @@ static phNxpUciHal_Monitor_t* nxpucihal_monitor = NULL;
 ** Returns          Pointer to monitor, otherwise NULL if failed
 **
 *******************************************************************************/
-phNxpUciHal_Monitor_t* phNxpUciHal_init_monitor(void) {
+bool phNxpUciHal_init_monitor(void) {
   NXPLOG_UCIHAL_D("Entering phNxpUciHal_init_monitor");
 
-  if (nxpucihal_monitor == NULL) {
-    nxpucihal_monitor =
-        (phNxpUciHal_Monitor_t*)malloc(sizeof(phNxpUciHal_Monitor_t));
-  }
+  nxpucihal_monitor = phNxpUciHal_Monitor::Create();
 
-  if (nxpucihal_monitor != NULL) {
-    memset(nxpucihal_monitor, 0x00, sizeof(phNxpUciHal_Monitor_t));
-
-    if (pthread_mutex_init(&nxpucihal_monitor->reentrance_mutex, NULL) == -1) {
-      NXPLOG_UCIHAL_E("reentrance_mutex creation returned 0x%08x", errno);
-      goto clean_and_return;
-    }
-
-    if (pthread_mutex_init(&nxpucihal_monitor->concurrency_mutex, NULL) == -1) {
-      NXPLOG_UCIHAL_E("concurrency_mutex creation returned 0x%08x", errno);
-      pthread_mutex_destroy(&nxpucihal_monitor->reentrance_mutex);
-      goto clean_and_return;
-    }
-
-    if (listInit(&nxpucihal_monitor->sem_list) != 1) {
-      NXPLOG_UCIHAL_E("Semaphore List creation failed");
-      pthread_mutex_destroy(&nxpucihal_monitor->concurrency_mutex);
-      pthread_mutex_destroy(&nxpucihal_monitor->reentrance_mutex);
-      goto clean_and_return;
-    }
-  } else {
+  if (nxpucihal_monitor == nullptr) {
     NXPLOG_UCIHAL_E("nxphal_monitor creation failed");
-    goto clean_and_return;
+    return false;
   }
-
-  NXPLOG_UCIHAL_D("Returning with SUCCESS");
-
-  return nxpucihal_monitor;
-
-clean_and_return:
-  NXPLOG_UCIHAL_D("Returning with FAILURE");
-
-  if (nxpucihal_monitor != NULL) {
-    free(nxpucihal_monitor);
-    nxpucihal_monitor = NULL;
-  }
-
-  return NULL;
+  return true;
 }
 
 /*******************************************************************************
@@ -315,33 +134,7 @@ clean_and_return:
 **
 *******************************************************************************/
 void phNxpUciHal_cleanup_monitor(void) {
-  if (nxpucihal_monitor != NULL) {
-    pthread_mutex_destroy(&nxpucihal_monitor->concurrency_mutex);
-    REENTRANCE_UNLOCK();
-    pthread_mutex_destroy(&nxpucihal_monitor->reentrance_mutex);
-    phNxpUciHal_releaseall_cb_data();
-    listDestroy(&nxpucihal_monitor->sem_list);
-    free(nxpucihal_monitor);
-    nxpucihal_monitor = NULL;
-  }
-
-  return;
-}
-
-/*******************************************************************************
-**
-** Function         phNxpUciHal_get_monitor
-**
-** Description      Get monitor
-**
-** Returns          Pointer to monitor
-**
-*******************************************************************************/
-phNxpUciHal_Monitor_t* phNxpUciHal_get_monitor(void) {
-  if (nxpucihal_monitor == NULL) {
-    NXPLOG_UCIHAL_E("nxpucihal_monitor is null");
-  }
-  return nxpucihal_monitor;
+  nxpucihal_monitor = nullptr;
 }
 
 /* Initialize the callback data */
@@ -360,8 +153,8 @@ tHAL_UWB_STATUS phNxpUciHal_init_cb_data(phNxpUciHal_Sem_t* pCallbackData,
   pCallbackData->pContext = pContext;
 
   /* Add to active semaphore list */
-  if (listAdd(&phNxpUciHal_get_monitor()->sem_list, pCallbackData) != 1) {
-    NXPLOG_UCIHAL_E("Failed to add the semaphore to the list");
+  if (nxpucihal_monitor != nullptr) {
+    nxpucihal_monitor->AddSem(pCallbackData);
   }
 
   return UWBSTATUS_SUCCESS;
@@ -382,15 +175,30 @@ void phNxpUciHal_cleanup_cb_data(phNxpUciHal_Sem_t* pCallbackData) {
     NXPLOG_UCIHAL_E(
         "phNxpUciHal_cleanup_cb_data: Failed to destroy semaphore");
   }
-
-  /* Remove from active semaphore list */
-  if (listRemove(&phNxpUciHal_get_monitor()->sem_list, pCallbackData) != 1) {
-    NXPLOG_UCIHAL_E(
-        "phNxpUciHal_cleanup_cb_data: Failed to remove semaphore from the "
-        "list");
+  if (nxpucihal_monitor != nullptr) {
+    nxpucihal_monitor->RemoveSem(pCallbackData);
   }
+}
 
-  return;
+void REENTRANCE_LOCK() {
+  if (nxpucihal_monitor != nullptr) {
+    nxpucihal_monitor->Reentrancelock();
+  }
+}
+void REENTRANCE_UNLOCK() {
+  if (nxpucihal_monitor != nullptr) {
+    nxpucihal_monitor->ReentranceUnlock();
+  }
+}
+void CONCURRENCY_LOCK() {
+  if (nxpucihal_monitor != nullptr) {
+    nxpucihal_monitor->Concurrencylock();
+  }
+}
+void CONCURRENCY_UNLOCK() {
+  if (nxpucihal_monitor != nullptr) {
+    nxpucihal_monitor->ConcurrencyUnlock();
+  }
 }
 
 int phNxpUciHal_sem_timed_wait_msec(phNxpUciHal_Sem_t* pCallbackData, long msec)
@@ -421,27 +229,6 @@ int phNxpUciHal_sem_timed_wait_msec(phNxpUciHal_Sem_t* pCallbackData, long msec)
     return -1;
   }
   return 0;
-}
-
-/*******************************************************************************
-**
-** Function         phNxpUciHal_releaseall_cb_data
-**
-** Description      Release all callback data
-**
-** Returns          None
-**
-*******************************************************************************/
-void phNxpUciHal_releaseall_cb_data(void) {
-  phNxpUciHal_Sem_t* pCallbackData;
-
-  while (listGetAndRemoveNext(&phNxpUciHal_get_monitor()->sem_list,
-                              (void**)&pCallbackData)) {
-    pCallbackData->status = UWBSTATUS_FAILED;
-    sem_post(&pCallbackData->sem);
-  }
-
-  return;
 }
 
 /* END Semaphore and mutex helper functions */
