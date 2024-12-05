@@ -16,7 +16,8 @@ license {
 soong_config_string_variable {
     name: "chip",
     values: [
-        "SR1XX",
+        "hbci",
+        "hdll",
     ],
 }
 
@@ -26,9 +27,7 @@ soong_config_module_type {
     config_namespace: "nxp_uwb",
     variables: ["chip"],
     properties: [
-        "cflags",
-        "srcs",
-        "local_include_dirs",
+        "static_libs",
     ],
 }
 
@@ -36,13 +35,14 @@ uwb_cc_defaults {
     name: "uwb_defaults",
     soong_config_variables: {
         chip: {
-            conditions_default: {
-                cflags: ["-DSR1XX=TRUE"],
-                srcs: [
-                    "halimpl/hal/hbci/*.cc",
+            hdll: {
+                static_libs: [
+                    "nxp_uwb_hdll",
                 ],
-                local_include_dirs: [
-                    "halimpl/hal/hbci",
+            },
+            conditions_default: {
+                static_libs: [
+                    "nxp_uwb_hbci",
                 ],
             },
         },
