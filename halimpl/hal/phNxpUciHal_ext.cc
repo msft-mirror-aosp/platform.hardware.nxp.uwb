@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2019, 2022-2023 NXP
+ * Copyright 2012-2019, 2022-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -496,7 +496,7 @@ static void extcal_do_xtal(void)
     nxpucihal_ctrl.uwb_chip->read_otp(EXTCAL_PARAM_CLK_ACCURACY, xtal_data, sizeof(xtal_data), &xtal_data_len);
   }
   if (!xtal_data_len) {
-    long retlen = 0;
+    size_t retlen = 0;
     if (NxpConfig_GetByteArray("cal.xtal", xtal_data, sizeof(xtal_data), &retlen)) {
       xtal_data_len = retlen;
     }
@@ -611,12 +611,12 @@ static void extcal_do_tx_power(void)
         std::snprintf(key, sizeof(key), "cal.ant%u.ch%u.tx_power", ant_id, ch);
 
         uint8_t power_value[32];
-        long retlen = 0;
+        size_t retlen = 0;
         if (!NxpConfig_GetByteArray(key, power_value, sizeof(power_value), &retlen)) {
           continue;
         }
 
-        NXPLOG_UCIHAL_D("Apply TX_POWER: %s = { %lu bytes }", key, retlen);
+        NXPLOG_UCIHAL_D("Apply TX_POWER: %s = { %zu bytes }", key, retlen);
         entries.push_back(ant_id);
         entries.insert(entries.end(), power_value, power_value + retlen);
         n_entries++;
@@ -637,11 +637,11 @@ static void extcal_do_tx_power(void)
 static void extcal_do_tx_pulse_shape(void)
 {
   // parameters: cal.tx_pulse_shape={...}
-  long retlen = 0;
+  size_t retlen = 0;
   uint8_t data[64];
 
   if (NxpConfig_GetByteArray("cal.tx_pulse_shape", data, sizeof(data), &retlen) && retlen) {
-      NXPLOG_UCIHAL_D("Apply TX_PULSE_SHAPE: data = { %lu bytes }", retlen);
+      NXPLOG_UCIHAL_D("Apply TX_PULSE_SHAPE: data = { %zu bytes }", retlen);
 
       tHAL_UWB_STATUS ret = nxpucihal_ctrl.uwb_chip->apply_calibration(EXTCAL_PARAM_TX_PULSE_SHAPE, 0, data, (size_t)retlen);
       if (ret != UWBSTATUS_SUCCESS) {
@@ -656,7 +656,7 @@ static void extcal_do_tx_base_band(void)
   // parameters: cal.ddfs_enable=1|0, cal.dc_suppress=1|0, ddfs_tone_config={...}
   uint8_t ddfs_enable = 0, dc_suppress = 0;
   uint8_t ddfs_tone[256];
-  long retlen = 0;
+  size_t retlen = 0;
   tHAL_UWB_STATUS ret;
 
   if (NxpConfig_GetNum("cal.ddfs_enable", &ddfs_enable, 1)) {
@@ -672,7 +672,7 @@ static void extcal_do_tx_base_band(void)
       NXPLOG_UCIHAL_E("cal.ddfs_tone_config is not supplied while cal.ddfs_enable=1, ddfs was not enabled.");
       ddfs_enable = 0;
     } else {
-      NXPLOG_UCIHAL_D("Apply DDFS_TONE_CONFIG: ddfs_tone_config = { %lu bytes }", retlen);
+      NXPLOG_UCIHAL_D("Apply DDFS_TONE_CONFIG: ddfs_tone_config = { %zu bytes }", retlen);
 
       ret = nxpucihal_ctrl.uwb_chip->apply_calibration(EXTCAL_PARAM_DDFS_TONE_CONFIG, 0, ddfs_tone, (size_t)retlen);
       if (ret != UWBSTATUS_SUCCESS) {
@@ -779,7 +779,7 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
 
     // Apply COUNTRY_CODE_CAPS
     uint8_t cc_caps[UCI_MAX_DATA_LEN];
-    long retlen = 0;
+    size_t retlen = 0;
     if (NxpConfig_GetByteArray(NAME_NXP_UWB_COUNTRY_CODE_CAPS, cc_caps, sizeof(cc_caps), &retlen) && retlen) {
       NXPLOG_UCIHAL_D("COUNTRY_CODE_CAPS is provided.");
       phNxpUciHal_applyCountryCaps(country_code, cc_caps, retlen);
@@ -973,10 +973,16 @@ bool phNxpUciHal_handle_get_caps_info(size_t data_len, const uint8_t *p_data)
     std::swap(it->second[0], it->second[1]);
   }
 
+  // Byteorder of SYNC_CODE_INDEX_BITMASKING
+  it = tlvs.find(SYNC_CODE_INDEX_BITMASKING);
+  if (it != tlvs.end() && it->second.size() == 4) {
+    std::reverse(it->second.begin(), it->second.end());
+  }
+
   // Append UWB_VENDOR_CAPABILITY from configuration files
   {
     std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
-    long retlen = 0;
+    size_t retlen = 0;
     if (NxpConfig_GetByteArray(NAME_UWB_VENDOR_CAPABILITY, buffer.data(),
                                buffer.size(), &retlen) && retlen) {
       auto vendorTlvs = decodeTlvBytes({}, buffer.data(), retlen);

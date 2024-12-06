@@ -49,10 +49,10 @@ uwb_cc_defaults {
             conditions_default: {
                 cflags: ["-DSR1XX=TRUE"],
                 srcs: [
-                    "halimpl/hal/sr1xx/*.cc",
+                    "halimpl/hal/hbci/*.cc",
                 ],
                 local_include_dirs: [
-                    "halimpl/hal/sr1xx",
+                    "halimpl/hal/hbci",
                 ],
             },
         },

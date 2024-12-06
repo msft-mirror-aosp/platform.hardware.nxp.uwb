@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2023 NXP
+ * Copyright 2012-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -71,6 +71,7 @@
 
 #define FW_BOOT_MODE_PARAM_ID 0x63
 
+#define SYNC_CODE_INDEX_BITMASKING 0xA1
 #define CCC_SUPPORTED_PROTOCOL_VERSIONS_ID 0xA4
 
 /* Low power mode */
