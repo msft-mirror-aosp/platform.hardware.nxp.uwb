@@ -1,7 +1,7 @@
 /******************************************************************************
  *
  *  Copyright (C) 2011-2012 Broadcom Corporation
- *  Copyright 2018-2019, 2023 NXP
+ *  Copyright 2018-2019, 2023-2024 NXP
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -382,7 +382,9 @@ bool CUwbNxpConfig::readConfig()
             state = END_LINE;
     }
 
-    fclose(fd);
+    if (fclose(fd) != 0) {
+      ALOGE("[%s] fclose failed", __func__);
+    }
 
     if (m_map.size() > 0) {
         mValidFile = true;
