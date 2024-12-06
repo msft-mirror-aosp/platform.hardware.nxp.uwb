@@ -78,7 +78,7 @@ tHAL_UWB_STATUS phTmlUwb_spi_open_and_configure(const char* pDevName, void** pLi
 **                  -1         - write operation failure
 **
 *******************************************************************************/
-int phTmlUwb_spi_write(void* pDevHandle, uint8_t* pBuffer, size_t nNbBytesToWrite)
+int phTmlUwb_spi_write(void* pDevHandle, const uint8_t* pBuffer, size_t nNbBytesToWrite)
 {
   int ret;
   ssize_t numWrote;

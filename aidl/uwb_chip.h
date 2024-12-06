@@ -55,7 +55,7 @@ class UwbChip : public BnUwbChip {
       }
     }
   }
-  static void dataCallback(uint16_t data_len, uint8_t* p_data) {
+  static void dataCallback(uint16_t data_len, const uint8_t* p_data) {
       std::vector<uint8_t> data;
       data.assign(p_data, p_data + data_len);
       if (mClientCallback != nullptr) {

@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2023 NXP
+ * Copyright 2012-2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -71,6 +71,7 @@
 
 #define FW_BOOT_MODE_PARAM_ID 0x63
 
+#define SYNC_CODE_INDEX_BITMASKING 0xA1
 #define CCC_SUPPORTED_PROTOCOL_VERSIONS_ID 0xA4
 
 /* Low power mode */
@@ -159,6 +160,80 @@ typedef struct {
   short tx_power_offset;    // From UWB_COUNTRY_CODE_CAPS
 } phNxpUciHal_Runtime_Settings_t;
 
+// From phNxpUciHal_process_ext_cmd_rsp(),
+// For checking CMD/RSP turn around matching.
+class CmdRspCheck {
+public:
+  CmdRspCheck() { }
+
+  void StartCmd(uint8_t gid, uint8_t oid) {
+    if (sem_ != nullptr) {
+      NXPLOG_UCIHAL_E("CMD/RSP turnaround is already ongoing!");
+    } else {
+      sem_ = std::make_shared<UciHalSemaphore>();
+      gid_ = gid;
+      oid_ = oid;
+    }
+  }
+
+  // CMD writer waits for the corresponding RSP
+  tHAL_UWB_STATUS Wait(long timeout_ms) {
+    auto sem = GetSemaphore();
+    if (sem == nullptr) {
+      NXPLOG_UCIHAL_E("Wait CMD/RSP for non-existed turnaround!");
+      return UCI_STATUS_FAILED;
+    }
+    sem->wait_timeout_msec(timeout_ms);
+    auto ret = sem->getStatus();
+    ReleaseSemaphore();
+    return ret;
+  }
+
+  // Reset the state, this shouldn't be called while
+  // Someone is waiting from WaitRsp().
+  void Cancel() {
+    ReleaseSemaphore();
+  }
+
+  // Wakes up the user thread when RSP packet is matched.
+  void Wakeup(uint8_t gid, uint8_t oid) {
+    auto sem = GetSemaphore();
+    if (sem == nullptr) {
+      NXPLOG_UCIHAL_E("Wakeup CMD/RSP while no one is waiting for CMD/RSP!");
+      return;
+    }
+    if (gid_ != gid || oid_ != oid) {
+      NXPLOG_UCIHAL_E(
+        "Received incorrect response of GID:%x OID:%x, expected GID:%x OID:%x",
+        gid, oid, gid_, oid_);
+      sem->post(UWBSTATUS_COMMAND_RETRANSMIT);
+    } else {
+      sem->post(UWBSTATUS_SUCCESS);
+    }
+  }
+
+  // Wakes up the user thread with error status code.
+  void WakeupError(tHAL_UWB_STATUS status) {
+    auto sem = GetSemaphore();
+    if (sem == nullptr) {
+      NXPLOG_UCIHAL_V("Got error while no one is waiting for CMD/RSP!");
+      return;
+    }
+    sem->post(status);
+  }
+
+private:
+  std::shared_ptr<UciHalSemaphore> GetSemaphore() {
+    return sem_;
+  }
+  void ReleaseSemaphore() {
+    sem_ = nullptr;
+  }
+  std::shared_ptr<UciHalSemaphore> sem_;
+  uint8_t gid_;
+  uint8_t oid_;
+};
+
 /* UCI Control structure */
 typedef struct phNxpUciHal_Control {
   phNxpUci_HalStatus halStatus; /* Indicate if hal is open or closed */
@@ -167,29 +242,15 @@ typedef struct phNxpUciHal_Control {
 
   std::unique_ptr<NxpUwbChip> uwb_chip;
 
-  /* Rx data */
-  uint8_t* p_rx_data;
-  uint16_t rx_data_len;
-
   /* libuwb-uci callbacks */
   uwb_stack_callback_t* p_uwb_stack_cback;
   uwb_stack_data_callback_t* p_uwb_stack_data_cback;
 
   /* HAL extensions */
   uint8_t hal_ext_enabled;
-  bool_t hal_parse_enabled;
 
   /* Waiting semaphore */
-  phNxpUciHal_Sem_t ext_cb_data;
-
-  // in case of fragmented response,
-  // ext_cb_data is flagged only from the 1st response packet
-  bool ext_cb_waiting;
-
-  uint16_t cmd_len;
-  uint8_t p_cmd_data[UCI_MAX_DATA_LEN];
-  uint16_t rsp_len;
-  uint8_t p_rsp_data[UCI_MAX_DATA_LEN];
+  CmdRspCheck cmdrsp;
 
   /* CORE_DEVICE_INFO_RSP cache */
   bool isDevInfoCached;
@@ -198,9 +259,6 @@ typedef struct phNxpUciHal_Control {
   phNxpUciHal_FW_Version_t fw_version;
   device_type_t device_type;
   uint8_t fw_boot_mode;
-
-  /* To skip sending packets to upper layer from HAL*/
-  uint8_t isSkipPacket;
   bool_t fw_dwnld_mode;
 
   // Per-country settings
@@ -213,6 +271,9 @@ typedef struct phNxpUciHal_Control {
   // Antenna Definitions for extra calibration, b0=Antenna1, b1=Antenna2, ...
   uint8_t cal_rx_antenna_mask;
   uint8_t cal_tx_antenna_mask;
+
+  // Current country code
+  uint8_t country_code[2];
 } phNxpUciHal_Control_t;
 
 // RX packet handler
@@ -237,29 +298,40 @@ struct phNxpUciHal_RxHandler;
 #define UWB_NXP_ANDROID_MW_DROP_VERSION (0x07) /* Android MW early drops */
 /******************** UCI HAL exposed functions *******************************/
 tHAL_UWB_STATUS phNxpUciHal_init_hw();
-tHAL_UWB_STATUS phNxpUciHal_write_unlocked(uint16_t data_len, const uint8_t *p_data);
-void phNxpUciHal_read_complete(void* pContext, phTmlUwb_TransactInfo_t* pInfo);
+tHAL_UWB_STATUS phNxpUciHal_write_unlocked(size_t cmd_len, const uint8_t* p_cmd);
+void phNxpUciHal_read_complete(void* pContext, phTmlUwb_ReadTransactInfo* pInfo);
+
+// Report UCI packet to upper layer
+void report_uci_message(const uint8_t* buffer, size_t len);
+
 tHAL_UWB_STATUS phNxpUciHal_uwb_reset();
 tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig();
-tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(uint16_t cmd_len, const uint8_t *p_cmd, uint16_t *data_written);
+tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(size_t cmd_len, const uint8_t *p_cmd);
 void phNxpUciHal_send_dev_error_status_ntf();
+bool phNxpUciHal_parse(size_t* data_len, uint8_t *p_data);
+
+// RX packet handler
+// handler should returns true if the packet is handled and
+// shouldn't report it to the upper layer.
+
+using RxHandlerCallback = std::function<bool(size_t packet_len, const uint8_t *packet)>;
 
 std::shared_ptr<phNxpUciHal_RxHandler> phNxpUciHal_rx_handler_add(
   uint8_t mt, uint8_t gid, uint8_t oid,
-  bool skip_reporting, bool run_once,
-  std::function<void(size_t packet_len, const uint8_t *packet)> callback);
+  bool run_once,
+  RxHandlerCallback callback);
 void phNxpUciHal_rx_handler_del(std::shared_ptr<phNxpUciHal_RxHandler> handler);
 
-// Helper class for rx handler with once=false
+// Helper class for rx handler with run_once=false
 // auto-unregistered from destructor
+
 class UciHalRxHandler {
 public:
   UciHalRxHandler() {
   }
   UciHalRxHandler(uint8_t mt, uint8_t gid, uint8_t oid,
-                 bool skip_reporting,
-                 std::function<void(size_t packet_len, const uint8_t *packet)> callback) {
-    handler_ = phNxpUciHal_rx_handler_add(mt, gid, oid, skip_reporting, false, callback);
+                  RxHandlerCallback callback) {
+    handler_ = phNxpUciHal_rx_handler_add(mt, gid, oid, false, callback);
   }
   UciHalRxHandler& operator=(UciHalRxHandler &&handler) {
     handler_ = std::move(handler.handler_);
