@@ -1,7 +1,7 @@
 /******************************************************************************
  *
  *  Copyright (C) 2011-2012 Broadcom Corporation
- *  Copyright 2018-2019, 2023 NXP
+ *  Copyright 2018-2019, 2023-2024 NXP
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -22,6 +22,8 @@
 #include <limits.h>
 #include <sys/stat.h>
 
+#include <cstddef>
+#include <cstdint>
 #include <iomanip>
 #include <list>
 #include <memory>
@@ -41,6 +43,8 @@
 #include "phNxpUciHal_ext.h"
 #include "phNxpUciHal_utils.h"
 #include "phNxpLog.h"
+
+namespace {
 
 static const char default_nxp_config_path[] = "/vendor/etc/libuwb-nxp.conf";
 static const char country_code_config_name[] = "libuwb-countrycode.conf";
@@ -91,6 +95,7 @@ public:
 
     void dump(const string &tag) const;
 private:
+    // TODO: use uint64_t or uint32_t instead of unsigned long.
     unsigned long   m_numValue;
     string          m_str_value;
     vector<uint8_t>  m_arrValue;
@@ -377,7 +382,9 @@ bool CUwbNxpConfig::readConfig()
             state = END_LINE;
     }
 
-    fclose(fd);
+    if (fclose(fd) != 0) {
+      ALOGE("[%s] fclose failed", __func__);
+    }
 
     if (m_map.size() > 0) {
         mValidFile = true;
@@ -643,7 +650,7 @@ public:
     const uwbParam* find(const char *name)  const;
     bool    getValue(const char* name, char* pValue, size_t len) const;
     bool    getValue(const char* name, unsigned long& rValue) const;
-    bool    getValue(const char* name, uint8_t* pValue, long len, long* readlen) const;
+    bool    getValue(const char* name, uint8_t* pValue, size_t len, size_t* readlen) const;
 private:
     // default_nxp_config_path
     CUwbNxpConfig mMainConfig;
@@ -793,9 +800,9 @@ void CascadeConfig::init(const char *main_config)
 
     // Pick one libuwb-countrycode.conf with the highest VERSION number
     // from multiple directories specified by COUNTRY_CODE_CAP_FILE_LOCATION
-    unsigned long arrLen = 0;
+    size_t arrLen = 0;
     if (NxpConfig_GetStrArrayLen(NAME_COUNTRY_CODE_CAP_FILE_LOCATION, &arrLen) && arrLen > 0) {
-        const long loc_max_len = 260;
+        constexpr size_t loc_max_len = 260;
         auto loc = make_unique<char[]>(loc_max_len);
         int version, max_version = -1;
         string strPickedPath;
@@ -907,7 +914,7 @@ bool CascadeConfig::getValue(const char* name, char* pValue, size_t len) const
     return true;
 }
 
-bool CascadeConfig::getValue(const char* name, uint8_t* pValue, long len, long* readlen) const
+bool CascadeConfig::getValue(const char* name, uint8_t* pValue, size_t len, size_t* readlen) const
 {
     const uwbParam *param = find(name);
     if (!param)
@@ -934,7 +941,7 @@ bool CascadeConfig::getValue(const char* name, unsigned long& rValue) const
     return true;
 }
 
-/*******************************************************************************/
+}   // namespace
 
 static CascadeConfig gConfig;
 
@@ -964,7 +971,7 @@ bool NxpConfig_SetCountryCode(const char country_code[2])
 ** Returns:     True if found, otherwise False.
 **
 *******************************************************************************/
-int NxpConfig_GetStr(const char* name, char* pValue, unsigned long len)
+bool NxpConfig_GetStr(const char* name, char* pValue, size_t len)
 {
     return gConfig.getValue(name, pValue, len);
 }
@@ -985,9 +992,9 @@ int NxpConfig_GetStr(const char* name, char* pValue, unsigned long len)
 ** Returns:     TRUE[1] if config param name is found in the config file, else FALSE[0]
 **
 *******************************************************************************/
-int NxpConfig_GetByteArray(const char* name, uint8_t* pValue, long bufflen, long *len)
+bool NxpConfig_GetByteArray(const char* name, uint8_t* pValue, size_t bufflen, size_t* len)
 {
-    return gConfig.getValue(name, pValue, bufflen,len);
+    return gConfig.getValue(name, pValue, bufflen, len);
 }
 
 /*******************************************************************************
@@ -999,17 +1006,18 @@ int NxpConfig_GetByteArray(const char* name, uint8_t* pValue, long bufflen, long
 ** Returns:     true, if successful
 **
 *******************************************************************************/
-int NxpConfig_GetNum(const char* name, void* pValue, unsigned long len)
+bool NxpConfig_GetNum(const char* name, void* pValue, size_t len)
 {
-    if (pValue == NULL){
+    if ((name == nullptr) || (pValue == nullptr)){
+        ALOGE("[%s] Invalid arguments", __func__);
         return false;
     }
     const uwbParam* pParam = gConfig.find(name);
 
-    if (pParam == NULL)
+    if ((pParam == nullptr) || (pParam->getType() != uwbParam::type::NUMBER)) {
+        ALOGE("Config:%s not found in the config file", name);
         return false;
-    if (pParam->getType() != uwbParam::type::NUMBER)
-        return false;
+    }
 
     unsigned long v = pParam->numValue();
     switch (len)
@@ -1024,13 +1032,14 @@ int NxpConfig_GetNum(const char* name, void* pValue, unsigned long len)
         *(static_cast<unsigned char*> (pValue)) = (unsigned char)v;
         break;
     default:
+        ALOGE("[%s] unsupported length:%zu", __func__, len);
         return false;
     }
     return true;
 }
 
 // Get the length of a 'string-array' type parameter
-int NxpConfig_GetStrArrayLen(const char* name, unsigned long* pLen)
+bool NxpConfig_GetStrArrayLen(const char* name, size_t* pLen)
 {
     const uwbParam* param = gConfig.find(name);
     if (!param || param->getType() != uwbParam::type::STRINGARRAY)
@@ -1041,7 +1050,7 @@ int NxpConfig_GetStrArrayLen(const char* name, unsigned long* pLen)
 }
 
 // Get a string value from 'string-array' type parameters, index zero-based
-int NxpConfig_GetStrArrayVal(const char* name, int index, char* pValue, unsigned long len)
+bool NxpConfig_GetStrArrayVal(const char* name, int index, char* pValue, size_t len)
 {
     const uwbParam* param = gConfig.find(name);
     if (!param || param->getType() != uwbParam::type::STRINGARRAY)
