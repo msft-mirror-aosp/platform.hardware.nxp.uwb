@@ -157,9 +157,9 @@ NxpUwbChipSr200::apply_calibration(extcal_param_id_t id, const uint8_t ch,
   case EXTCAL_PARAM_TX_BASE_BAND_CONTROL:
   case EXTCAL_PARAM_DDFS_TONE_CONFIG:
   case EXTCAL_PARAM_TX_PULSE_SHAPE:
+  case EXTCAL_PARAM_RX_ANT_DELAY:
     return sr1xx_apply_calibration(id, ch, data, data_len);
   case EXTCAL_PARAM_CLK_ACCURACY:
-  case EXTCAL_PARAM_RX_ANT_DELAY:
     /* break through */
   default:
     NXPLOG_UCIHAL_E("Unsupported parameter: 0x%x", id);
