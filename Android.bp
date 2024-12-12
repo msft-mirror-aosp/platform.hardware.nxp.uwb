@@ -6,7 +6,7 @@ package {
 // See: http://go/android-license-faq
 license {
     name: "hardware_nxp_uwb_license",
-    visibility: [":__subpackages__"],
+    visibility: ["//visibility:public"],
     license_kinds: [
         "SPDX-license-identifier-Apache-2.0",
     ],
@@ -16,8 +16,8 @@ license {
 soong_config_string_variable {
     name: "chip",
     values: [
-        "SR1XX",
-        "SR200",
+        "hbci",
+        "hdll",
     ],
 }
 
@@ -27,9 +27,7 @@ soong_config_module_type {
     config_namespace: "nxp_uwb",
     variables: ["chip"],
     properties: [
-        "cflags",
-        "srcs",
-        "local_include_dirs",
+        "static_libs",
     ],
 }
 
@@ -37,22 +35,14 @@ uwb_cc_defaults {
     name: "uwb_defaults",
     soong_config_variables: {
         chip: {
-            SR200: {
-                cflags: ["-DSR200=TRUE"],
-                srcs: [
-                    "halimpl/hal/sr200/*.cc",
-                ],
-                local_include_dirs: [
-                    "halimpl/hal/sr200",
+            hdll: {
+                static_libs: [
+                    "nxp_uwb_hdll",
                 ],
             },
             conditions_default: {
-                cflags: ["-DSR1XX=TRUE"],
-                srcs: [
-                    "halimpl/hal/hbci/*.cc",
-                ],
-                local_include_dirs: [
-                    "halimpl/hal/hbci",
+                static_libs: [
+                    "nxp_uwb_hbci",
                 ],
             },
         },
