@@ -6,7 +6,7 @@ package {
 // See: http://go/android-license-faq
 license {
     name: "hardware_nxp_uwb_license",
-    visibility: [":__subpackages__"],
+    visibility: ["//visibility:public"],
     license_kinds: [
         "SPDX-license-identifier-Apache-2.0",
     ],
