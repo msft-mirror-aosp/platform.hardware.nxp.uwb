@@ -23,7 +23,9 @@
 #include <stdlib.h>
 #include <sys/ioctl.h>
 
+#include <optional>
 #include <string>
+#include <string_view>
 
 #include "phNxpConfig.h"
 #include "phNxpLog.h"
@@ -34,13 +36,17 @@
 using namespace std;
 #define FILEPATH_MAXLEN 500
 
-static uint8_t chip_id = 0x00;
-static uint8_t deviceLcInfo = 0x00;
-static uint8_t is_fw_download_log_enabled = 0x00;
-static const char* default_prod_fw = "libsr100t_prod_fw.bin";
-static const char* default_dev_fw = "libsr100t_dev_fw.bin";
-static const char* default_fw_dir = "/vendor/firmware/uwb/";
-static string default_fw_path;
+namespace {
+
+uint8_t chip_id = 0x00;
+uint8_t deviceLcInfo = 0x00;
+uint8_t is_fw_download_log_enabled = 0x00;
+constexpr std::string_view default_prod_fw = "libsr100t_prod_fw.bin";
+constexpr std::string_view default_dev_fw = "libsr100t_dev_fw.bin";
+constexpr std::string_view default_fw_dir = "/vendor/firmware/uwb/";
+string default_fw_path;
+
+}   // namespace
 
 /*************************************************************************************/
 /*   LOCAL FUNCTIONS                                                                 */
@@ -58,37 +64,22 @@ static void setOpts(void)
     gOpts.fMiso         = NULL;
 }
 
-
+// TODO: change function name & return type
 static int init(void)
 {
-  const char *pDefaultFwFileName = NULL;
-  char configured_fw_name[FILEPATH_MAXLEN];
   default_fw_path = default_fw_dir;
 
   if((deviceLcInfo == PHHBCI_HELIOS_PROD_KEY_1) || (deviceLcInfo == PHHBCI_HELIOS_PROD_KEY_2)) {
-    pDefaultFwFileName = default_prod_fw;
-    if (!NxpConfig_GetStr(NAME_NXP_UWB_PROD_FW_FILENAME, configured_fw_name, sizeof(configured_fw_name))) {
-      ALOGD("Invalid Prod Fw  name keeping the default name: %s", pDefaultFwFileName);
-      default_fw_path += pDefaultFwFileName;
-    } else{
-      ALOGD("configured_fw_name : %s", configured_fw_name);
-      default_fw_path += configured_fw_name;
-    }
+    default_fw_path += NxpConfig_GetStr(NAME_NXP_UWB_PROD_FW_FILENAME).value_or(default_prod_fw);
   } else if (deviceLcInfo == PHHBCI_HELIOS_DEV_KEY) {
-    pDefaultFwFileName = default_dev_fw;
-    if (!NxpConfig_GetStr(NAME_NXP_UWB_DEV_FW_FILENAME, configured_fw_name, sizeof(configured_fw_name))) {
-      ALOGD("Invalid Dev Fw  name keeping the default name: %s", pDefaultFwFileName);
-      default_fw_path += pDefaultFwFileName;
-    } else{
-      ALOGD("configured_fw_name : %s", configured_fw_name);
-      default_fw_path += configured_fw_name;
-    }
+    default_fw_path += NxpConfig_GetStr(NAME_NXP_UWB_DEV_FW_FILENAME).value_or(default_dev_fw);
   } else {
     ALOGD("Invalid DeviceLCInfo : 0x%x\n", deviceLcInfo);
     return 1;
   }
-
   ALOGD("Referring FW path..........: %s", default_fw_path.c_str());
+
+  // TODO: remove these out.
   // gOpts.capture = Capture_Apdu_With_Dummy_Miso;
 
   if (Capture_Off != gOpts.capture) {
@@ -941,14 +932,9 @@ int phNxpUciHal_fw_download()
         ALOGD("phHbci_GetChipIdInfo Failure!\n");
         return 1;
     }
-    is_fw_download_log_enabled = false;
+    is_fw_download_log_enabled = NxpConfig_GetBool(NAME_UWB_FW_DOWNLOAD_LOG).value_or(false);
+    ALOGD("NAME_UWB_FW_DOWNLOAD_LOG: 0x%02x\n",is_fw_download_log_enabled);
 
-    if(NxpConfig_GetNum(NAME_UWB_FW_DOWNLOAD_LOG, &num, sizeof(num))){
-        is_fw_download_log_enabled = (uint8_t)num;
-        ALOGD("NAME_UWB_FW_DOWNLOAD_LOG: 0x%02x\n",is_fw_download_log_enabled);
-    } else {
-        ALOGD("NAME_UWB_FW_DOWNLOAD_LOG: failed 0x%02x\n",is_fw_download_log_enabled);
-    }
     if (init())
     {
         ALOGD("INIT Failed.....\n");

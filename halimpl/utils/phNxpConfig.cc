@@ -28,9 +28,12 @@
 #include <iomanip>
 #include <list>
 #include <memory>
+#include <optional>
+#include <span>
 #include <sstream>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -47,6 +50,7 @@
 
 namespace {
 
+// TODO: use constexpr
 static const char default_nxp_config_path[] = "/vendor/etc/libuwb-nxp.conf";
 static const char country_code_config_name[] = "libuwb-countrycode.conf";
 static const char nxp_uci_config_file[] = "libuwb-uci.conf";
@@ -67,6 +71,7 @@ static const char prop_default_calsku[] = "defaultsku";
 static const char prop_name_revision[] = "persist.vendor.uwb.cal.revision";
 static const char prop_default_revision[] = "defaultrevision";
 
+// TODO: remove this out
 using namespace::std;
 
 class uwbParam
@@ -108,6 +113,8 @@ private:
 class CUwbNxpConfig
 {
 public:
+    using HashType = unordered_map<std::string, uwbParam>;
+
     CUwbNxpConfig();
     CUwbNxpConfig(const char *filepath);
 
@@ -127,7 +134,7 @@ public:
         mValidFile = false;
     }
 
-    const uwbParam*    find(const char* p_name) const;
+    const uwbParam* find(std::string_view key) const;
     void    setCountry(const string& strCountry);
     const char* getFilePath() const {
         return mFilePath.c_str();
@@ -135,7 +142,7 @@ public:
 
     void dump() const;
 
-    const unordered_map<string, uwbParam>& get_data() const {
+    const HashType& get_data() const {
         return m_map;
     }
 
@@ -146,7 +153,7 @@ private:
     std::filesystem::path mFilePath;
     bool mFactoryFile;
 
-    unordered_map<string, uwbParam> m_map;
+    HashType m_map;
 };
 
 /*******************************************************************************
@@ -462,21 +469,12 @@ CUwbNxpConfig& CUwbNxpConfig::operator=(CUwbNxpConfig&& config)
     return *this;
 }
 
-/*******************************************************************************
-**
-** Function:    CUwbNxpConfig::find()
-**
-** Description: search if a setting exist in the setting array
-**
-** Returns:     pointer to the setting object
-**
-*******************************************************************************/
-const uwbParam* CUwbNxpConfig::find(const char* p_name) const
+const uwbParam* CUwbNxpConfig::find(std::string_view key) const
 {
-    const auto it = m_map.find(p_name);
-
+    // TODO: how can we use the same hash function for string and string_view?
+    const auto it = m_map.find(std::string(key));
     if (it == m_map.cend()) {
-        return NULL;
+        return nullptr;
     }
     return &it->second;
 }
@@ -656,10 +654,7 @@ public:
     void deinit();
     bool setCountryCode(const char country_code[2]);
 
-    const uwbParam* find(const char *name)  const;
-    bool    getValue(const char* name, char* pValue, size_t len) const;
-    bool    getValue(const char* name, unsigned long& rValue) const;
-    bool    getValue(const char* name, uint8_t* pValue, size_t len, size_t* readlen) const;
+    const uwbParam* find(std::string_view key)  const;
 private:
     // default_nxp_config_path
     CUwbNxpConfig mMainConfig;
@@ -798,39 +793,34 @@ void CascadeConfig::init(const char *main_config)
     evaluateExtraConfPaths();
 
     // re-evaluate with "<extid>"
-    char extid_value[PROPERTY_VALUE_MAX];
-    if (!NxpConfig_GetStr(extid_config_name, extid_value, sizeof(extid_value))) {
-        strcpy(extid_value, extid_default_value);
-    }
-    mExtraConfSpecifiers.mCurExtid = extid_value;
+    mExtraConfSpecifiers.mCurExtid =
+        NxpConfig_GetStr(extid_config_name).value_or(extid_default_value);
     evaluateExtraConfPaths();
 
-    ALOGI("Provided specifiers: sku=[%s] revision=[%s] extid=[%s]", sku_value, revision_value, extid_value);
+    ALOGI("Provided specifiers: sku=[%s] revision=[%s] extid=[%s]", sku_value, revision_value,
+        mExtraConfSpecifiers.mCurExtid.c_str());
 
     // Pick one libuwb-countrycode.conf with the highest VERSION number
     // from multiple directories specified by COUNTRY_CODE_CAP_FILE_LOCATION
-    size_t arrLen = 0;
-    if (NxpConfig_GetStrArrayLen(NAME_COUNTRY_CODE_CAP_FILE_LOCATION, &arrLen) && arrLen > 0) {
-        constexpr size_t loc_max_len = 260;
-        auto loc = make_unique<char[]>(loc_max_len);
-        int version, max_version = -1;
+    std::optional<size_t> arrLen = NxpConfig_GetStrArrayLen(NAME_COUNTRY_CODE_CAP_FILE_LOCATION);
+    if (arrLen.has_value() && *arrLen > 0) {
+        int max_version = -1;
         string strPickedPath;
         bool foundCapFile = false;
         CUwbNxpConfig pickedConfig;
 
-        for (int i = 0; i < arrLen; i++) {
-            if (!NxpConfig_GetStrArrayVal(NAME_COUNTRY_CODE_CAP_FILE_LOCATION, i, loc.get(), loc_max_len)) {
-                continue;
-            }
-            string strPath(loc.get());
-            strPath += country_code_config_name;
+        for (auto i = 0; i < *arrLen; i++) {
+            std::optional<std::string_view> loc = NxpConfig_GetStrArrayVal(NAME_COUNTRY_CODE_CAP_FILE_LOCATION, i);
+            if (!loc.has_value()) { continue;  }
 
+            string strPath(*loc);
+            strPath += country_code_config_name;
             ALOGV("Try to load %s", strPath.c_str());
 
             CUwbNxpConfig config(strPath.c_str());
 
             const uwbParam *param = config.find(NAME_NXP_COUNTRY_CODE_VERSION);
-            version = param ? atoi(param->str_value()) : -2;
+            int version = param ? atoi(param->str_value()) : -2;
             if (version > max_version) {
                 foundCapFile = true;
                 pickedConfig = move(config);
@@ -885,69 +875,27 @@ bool CascadeConfig::setCountryCode(const char country_code[2])
     return evaluateExtraConfPaths();
 }
 
-const uwbParam* CascadeConfig::find(const char *name) const
+const uwbParam* CascadeConfig::find(std::string_view key) const
 {
     const uwbParam* param = NULL;
 
-    param = mCapsConfig.find(name);
+    param = mCapsConfig.find(key);
     if (param)
       return param;
 
     for (auto it = mExtraConfig.rbegin(); it != mExtraConfig.rend(); it++) {
         auto &config = it->second;
-        param = config.find(name);
+        param = config.find(key);
         if (param)
             break;
     }
     if (!param) {
-        param = mMainConfig.find(name);
+        param = mMainConfig.find(key);
     }
     if (!param) {
-        param = mUciConfig.find(name);
+        param = mUciConfig.find(key);
     }
     return param;
-}
-
-// TODO: move these getValue() helpers out of the class
-bool CascadeConfig::getValue(const char* name, char* pValue, size_t len) const
-{
-    const uwbParam *param = find(name);
-    if (!param)
-        return false;
-    if (param->getType() != uwbParam::type::STRING)
-        return false;
-    if (len < (param->str_len() + 1))
-        return false;
-
-    strncpy(pValue, param->str_value(), len);
-    return true;
-}
-
-bool CascadeConfig::getValue(const char* name, uint8_t* pValue, size_t len, size_t* readlen) const
-{
-    const uwbParam *param = find(name);
-    if (!param)
-        return false;
-    if (param->getType() != uwbParam::type::BYTEARRAY)
-        return false;
-    if (len < param->arr_len())
-        return false;
-    memcpy(pValue, param->arr_value(), param->arr_len());
-    if (readlen)
-        *readlen = param->arr_len();
-    return true;
-}
-
-bool CascadeConfig::getValue(const char* name, unsigned long& rValue) const
-{
-    const uwbParam *param = find(name);
-    if (!param)
-        return false;
-    if (param->getType() != uwbParam::type::NUMBER)
-        return false;
-
-    rValue = param->numValue();
-    return true;
 }
 
 }   // namespace
@@ -971,104 +919,60 @@ bool NxpConfig_SetCountryCode(const char country_code[2])
     return gConfig.setCountryCode(country_code);
 }
 
-/*******************************************************************************
-**
-** Function:    NxpConfig_GetStr
-**
-** Description: API function for getting a string value of a setting
-**
-** Returns:     True if found, otherwise False.
-**
-*******************************************************************************/
-bool NxpConfig_GetStr(const char* name, char* pValue, size_t len)
+std::optional<std::string_view> NxpConfig_GetStr(std::string_view key)
 {
-    return gConfig.getValue(name, pValue, len);
-}
-
-/*******************************************************************************
-**
-** Function:    NxpConfig_GetByteArray()
-**
-** Description: Read byte array value from the config file.
-**
-** Parameters:
-**              name    - name of the config param to read.
-**              pValue  - pointer to input buffer.
-**              bufflen - input buffer length.
-**              len     - out parameter to return the number of bytes read from config file,
-**                        return -1 in case bufflen is not enough.
-**
-** Returns:     TRUE[1] if config param name is found in the config file, else FALSE[0]
-**
-*******************************************************************************/
-bool NxpConfig_GetByteArray(const char* name, uint8_t* pValue, size_t bufflen, size_t* len)
-{
-    return gConfig.getValue(name, pValue, bufflen, len);
-}
-
-/*******************************************************************************
-**
-** Function:    NxpConfig_GetNum
-**
-** Description: API function for getting a numerical value of a setting
-**
-** Returns:     true, if successful
-**
-*******************************************************************************/
-bool NxpConfig_GetNum(const char* name, void* pValue, size_t len)
-{
-    if ((name == nullptr) || (pValue == nullptr)){
-        ALOGE("[%s] Invalid arguments", __func__);
-        return false;
+    const uwbParam *param = gConfig.find(key);
+    if (param == nullptr || param->getType() != uwbParam::type::STRING) {
+        return std::nullopt;
     }
-    const uwbParam* pParam = gConfig.find(name);
+    return param->str_value();
+}
+
+std::optional<std::span<const uint8_t>> NxpConfig_GetByteArray(std::string_view key)
+{
+    const uwbParam *param = gConfig.find(key);
+    if (param == nullptr || param->getType() != uwbParam::type::BYTEARRAY) {
+        return std::nullopt;
+    }
+    return std::span{param->arr_value(), param->arr_len()};
+}
+
+std::optional<uint64_t> NxpConfig_GetUint64(std::string_view key)
+{
+    const uwbParam* pParam = gConfig.find(key);
 
     if ((pParam == nullptr) || (pParam->getType() != uwbParam::type::NUMBER)) {
-        ALOGE("Config:%s not found in the config file", name);
-        return false;
+        return std::nullopt;
     }
-
-    unsigned long v = pParam->numValue();
-    switch (len)
-    {
-    case sizeof(unsigned long):
-        *(static_cast<unsigned long*>(pValue)) = (unsigned long)v;
-        break;
-    case sizeof(unsigned short):
-        *(static_cast<unsigned short*>(pValue)) = (unsigned short)v;
-        break;
-    case sizeof(unsigned char):
-        *(static_cast<unsigned char*> (pValue)) = (unsigned char)v;
-        break;
-    default:
-        ALOGE("[%s] unsupported length:%zu", __func__, len);
-        return false;
-    }
-    return true;
+    return pParam->numValue();
 }
 
-// Get the length of a 'string-array' type parameter
-bool NxpConfig_GetStrArrayLen(const char* name, size_t* pLen)
+std::optional<bool> NxpConfig_GetBool(std::string_view key)
 {
-    const uwbParam* param = gConfig.find(name);
-    if (!param || param->getType() != uwbParam::type::STRINGARRAY)
-        return false;
-
-    *pLen = param->str_arr_len();
-    return true;
+    const uwbParam* pParam = gConfig.find(key);
+    if (pParam == nullptr || pParam->getType() != uwbParam::type::NUMBER) {
+        return std::nullopt;
+    }
+    return pParam->numValue();
 }
 
-// Get a string value from 'string-array' type parameters, index zero-based
-bool NxpConfig_GetStrArrayVal(const char* name, int index, char* pValue, size_t len)
+std::optional<size_t> NxpConfig_GetStrArrayLen(std::string_view key)
 {
-    const uwbParam* param = gConfig.find(name);
-    if (!param || param->getType() != uwbParam::type::STRINGARRAY)
-        return false;
-    if (index < 0 || index >= param->str_arr_len())
-        return false;
+    const uwbParam* param = gConfig.find(key);
+    if (param == nullptr || param->getType() != uwbParam::type::STRINGARRAY) {
+        return std::nullopt;
+    }
+    return param->str_arr_len();
+}
 
-    if (len < param->str_arr_elem_len(index) + 1)
-        return false;
-    strncpy(pValue, param->str_arr_elem(index), len);
-    return true;
+std::optional<std::string_view> NxpConfig_GetStrArrayVal(std::string_view key, int idx)
+{
+    const uwbParam* param = gConfig.find(key);
+    if (param == nullptr || param->getType() != uwbParam::type::STRINGARRAY) {
+        return std::nullopt;
+    }
+    if (idx < 0 || idx >= param->str_arr_len()) {
+        return std::nullopt;
+    }
+    return param->str_arr_elem(idx);
 }
