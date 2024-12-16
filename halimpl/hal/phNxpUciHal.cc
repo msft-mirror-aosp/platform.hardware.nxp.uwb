@@ -17,10 +17,14 @@
 
 #include <array>
 #include <functional>
-#include <string.h>
 #include <list>
 #include <map>
+#include <memory>
 #include <mutex>
+#include <optional>
+#include <span>
+#include <string>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -645,31 +649,26 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
  ******************************************************************************/
 static void parseAntennaConfig(const char *configName)
 {
-  std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
-  size_t retlen = 0;
-  int gotConfig = NxpConfig_GetByteArray(configName, buffer.data(), buffer.size(), &retlen);
-  if (gotConfig) {
-    if (retlen <= UCI_MSG_HDR_SIZE) {
-      NXPLOG_UCIHAL_E("parseAntennaConfig: %s is too short. Aborting.", configName);
-      return;
-    }
+  auto res = NxpConfig_GetByteArray(configName);
+  if (!res.has_value()) {
+    NXPLOG_UCIHAL_D("No antenna pair info found, %s is missing.", configName);
+    return;
   }
-  else
-  {
-    NXPLOG_UCIHAL_E("parseAntennaConfig: Failed to get '%s'. Aborting.", configName);
+  std::span<const uint8_t> data = *res;
+  if (data.size() <= UCI_MSG_HDR_SIZE) {
+    NXPLOG_UCIHAL_D("No antenna pair info found, %s is too short.", configName);
     return;
   }
 
-  const uint16_t dataLength = retlen;
-  const uint8_t *data = buffer.data();
+  int index = 1;  // Excluding number of params
+  while (index < data.size()) {
+    if ((index + 3) > data.size()) {
+      break;
+    }
+    uint8_t tagId = data[index++];
+    uint8_t subTagId = data[index++];
+    uint8_t length = data[index++];
 
-  uint8_t index = 1; // Excluding number of params
-  uint8_t tagId, subTagId;
-  int length;
-  while (index < dataLength) {
-    tagId = data[index++];
-    subTagId = data[index++];
-    length = data[index++];
     if ((ANTENNA_RX_PAIR_DEFINE_TAG_ID == tagId) &&
         (ANTENNA_RX_PAIR_DEFINE_SUB_TAG_ID == subTagId)) {
       nxpucihal_ctrl.numberOfAntennaPairs = data[index];
@@ -679,6 +678,7 @@ static void parseAntennaConfig(const char *configName)
       index = index + length;
     }
   }
+  NXPLOG_UCIHAL_D("No antenna pair info found in from %s.", configName)
 }
 
 /******************************************************************************
@@ -692,9 +692,6 @@ static void parseAntennaConfig(const char *configName)
 tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig()
 {
   std::vector<const char *> vendorParamNames;
-  std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
-  size_t retlen = 0;
-  tHAL_UWB_STATUS status = UWBSTATUS_FAILED;
 
   // Base parameter names
   if (nxpucihal_ctrl.fw_boot_mode == USER_FW_BOOT_MODE) {
@@ -710,15 +707,15 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig()
     per_chip_param = NAME_UWB_CORE_EXT_DEVICE_SR1XX_S_CONFIG;
   }
 
-  if (NxpConfig_GetByteArray(per_chip_param, buffer.data(), buffer.size(),
-                             &retlen)) {
-    if (retlen > 0 && retlen < UCI_MAX_DATA_LEN) {
-      NXPLOG_UCIHAL_D("VendorConfig: apply %s", per_chip_param);
-      status = phNxpUciHal_sendCoreConfig(buffer.data(), retlen);
-      if (status != UWBSTATUS_SUCCESS) {
-        NXPLOG_UCIHAL_E("VendorConfig: failed to apply %s", per_chip_param);
-        return status;
-      }
+  // TODO: split this into a function.
+  auto chip_pkt = NxpConfig_GetByteArray(per_chip_param);
+  if (chip_pkt.has_value()) {
+    NXPLOG_UCIHAL_D("VendorConfig: apply %s", per_chip_param);
+    tHAL_UWB_STATUS status =
+      phNxpUciHal_sendCoreConfig((*chip_pkt).data(), (*chip_pkt).size());
+    if (status != UWBSTATUS_SUCCESS) {
+      NXPLOG_UCIHAL_E("VendorConfig: failed to apply %s", per_chip_param);
+      return status;
     }
   }
 
@@ -740,29 +737,28 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig()
 
   // Execute
   for (const auto paramName : vendorParamNames) {
-    if (NxpConfig_GetByteArray(paramName, buffer.data(), buffer.size(), &retlen)) {
-      if (retlen > 0 && retlen < UCI_MAX_DATA_LEN) {
-        NXPLOG_UCIHAL_D("VendorConfig: apply %s", paramName);
-        status = phNxpUciHal_send_ext_cmd(retlen, buffer.data());
-        if (status != UWBSTATUS_SUCCESS) {
-          NXPLOG_UCIHAL_E("VendorConfig: failed to apply %s", paramName);
-          return status;
-        }
+    auto extra_pkt = NxpConfig_GetByteArray(paramName);
+    if (extra_pkt.has_value()) {
+      NXPLOG_UCIHAL_D("VendorConfig: apply %s", paramName);
+      tHAL_UWB_STATUS status =
+        phNxpUciHal_send_ext_cmd((*extra_pkt).size(), (*extra_pkt).data());
+      if (status != UWBSTATUS_SUCCESS) {
+        NXPLOG_UCIHAL_E("VendorConfig: failed to apply %s", paramName);
+        return status;
       }
     }
   }
 
   // Low Power Mode
   // TODO: remove this out, this can be move to Chip parameter names
-  uint8_t lowPowerMode = 0;
-  if (NxpConfig_GetNum(NAME_NXP_UWB_LOW_POWER_MODE, &lowPowerMode, sizeof(lowPowerMode))) {
-    NXPLOG_UCIHAL_D("VendorConfig: apply %s", NAME_NXP_UWB_LOW_POWER_MODE);
+  bool lowPowerMode =  NxpConfig_GetBool(NAME_NXP_UWB_LOW_POWER_MODE).value_or(false);
+  NXPLOG_UCIHAL_D("VendorConfig: apply %s", NAME_NXP_UWB_LOW_POWER_MODE);
 
+  if (lowPowerMode) {
     // Core set config packet: GID=0x00 OID=0x04
     const std::vector<uint8_t> packet(
         {((UCI_MT_CMD << UCI_MT_SHIFT) | UCI_GID_CORE), UCI_MSG_CORE_SET_CONFIG,
-         0x00, 0x04, 0x01, LOW_POWER_MODE_TAG_ID, LOW_POWER_MODE_LENGTH,
-         lowPowerMode});
+         0x00, 0x04, 0x01, LOW_POWER_MODE_TAG_ID, LOW_POWER_MODE_LENGTH, 0x01 });
 
     if (phNxpUciHal_send_ext_cmd(packet.size(), packet.data()) != UWBSTATUS_SUCCESS) {
       NXPLOG_UCIHAL_E("VendorConfig: failed to apply NAME_NXP_UWB_LOW_POWER_MODE");

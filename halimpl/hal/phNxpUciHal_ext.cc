@@ -13,13 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <string.h>
 #include <sys/stat.h>
 
 #include <atomic>
 #include <bitset>
 #include <limits>
 #include <map>
+#include <optional>
+#include <span>
 #include <vector>
 
 #include <cutils/properties.h>
@@ -164,32 +165,18 @@ tHAL_UWB_STATUS phNxpUciHal_send_ext_cmd(size_t cmd_len, const uint8_t* p_cmd) {
  *                  update the acutual state of operation in arg pointer
  *
  ******************************************************************************/
-tHAL_UWB_STATUS phNxpUciHal_set_board_config(){
-  tHAL_UWB_STATUS status;
-  uint8_t buffer[] = {0x2E,0x00,0x00,0x02,0x01,0x01};
-  /* Set the board variant configurations */
-  unsigned long num = 0;
-  NXPLOG_UCIHAL_D("%s: enter; ", __func__);
-  uint8_t boardConfig = 0, boardVersion = 0;
+tHAL_UWB_STATUS phNxpUciHal_set_board_config() {
+  uint8_t buffer[6] = {0x2E,0x00,0x00,0x02,0x01,0x01};
 
-  if(NxpConfig_GetNum(NAME_UWB_BOARD_VARIANT_CONFIG, &num, sizeof(num))){
-    boardConfig = (uint8_t)num;
-    NXPLOG_UCIHAL_D("%s: NAME_UWB_BOARD_VARIANT_CONFIG: %x", __func__,boardConfig);
-  } else {
-    NXPLOG_UCIHAL_D("%s: NAME_UWB_BOARD_VARIANT_CONFIG: failed %x", __func__,boardConfig);
-  }
-  if(NxpConfig_GetNum(NAME_UWB_BOARD_VARIANT_VERSION, &num, sizeof(num))){
-    boardVersion = (uint8_t)num;
-    NXPLOG_UCIHAL_D("%s: NAME_UWB_BOARD_VARIANT_VERSION: %x", __func__,boardVersion);
-  } else{
-    NXPLOG_UCIHAL_D("%s: NAME_UWB_BOARD_VARIANT_VERSION: failed %lx", __func__,num);
-  }
+  uint8_t boardConfig = NxpConfig_GetNum<uint8_t>(NAME_UWB_BOARD_VARIANT_CONFIG).value_or(0);
+  uint8_t boardVersion = NxpConfig_GetNum<uint8_t>(NAME_UWB_BOARD_VARIANT_VERSION).value_or(0);
+
+  NXPLOG_UCIHAL_D("Board variant config: config=0x%x, version=0x%x", boardConfig, boardVersion);
+
   buffer[4] = boardConfig;
   buffer[5] = boardVersion;
 
-  status = phNxpUciHal_send_ext_cmd(sizeof(buffer), buffer);
-
-  return status;
+  return phNxpUciHal_send_ext_cmd(sizeof(buffer), buffer);
 }
 
 /*******************************************************************************
@@ -485,52 +472,65 @@ static bool CountryCodeCapsApplyTxPower(void)
 
 static void extcal_do_xtal(void)
 {
-  int ret;
-
   // RF_CLK_ACCURACY_CALIB (otp supported)
   // parameters: cal.otp.xtal=0|1, cal.xtal=X
-  uint8_t otp_xtal_flag = 0;
+  constexpr std::string_view kConfKeyOtp = "cal.otp.xtal";  // as-if, safe to use data() for c-string.
+  constexpr std::string_view kConfKeyXtal = "cal.xtal";
+
   uint8_t xtal_data[32];
   size_t xtal_data_len = 0;
+  bool xtal_otp_provided = false;
 
-  if (NxpConfig_GetNum("cal.otp.xtal", &otp_xtal_flag, 1) && otp_xtal_flag) {
-    nxpucihal_ctrl.uwb_chip->read_otp(EXTCAL_PARAM_CLK_ACCURACY, xtal_data, sizeof(xtal_data), &xtal_data_len);
+  // Reads xtal calibration from OTP.
+  bool use_otp_xtal = NxpConfig_GetBool(kConfKeyOtp).value_or(false);
+  if (use_otp_xtal) {
+    tHAL_UWB_STATUS status = nxpucihal_ctrl.uwb_chip->read_otp(
+      EXTCAL_PARAM_CLK_ACCURACY, xtal_data, sizeof(xtal_data), &xtal_data_len);
+    xtal_otp_provided = status == UWBSTATUS_SUCCESS && xtal_data_len > 0;
   }
-  if (!xtal_data_len) {
+
+  // Reads xtal calibration from configuration file.
+  if (!xtal_otp_provided) {
+    if (use_otp_xtal) {
+      NXPLOG_UCIHAL_W("%s is set but cannot read it from otp, fallback to config.", kConfKeyOtp.data());
+    }
     size_t retlen = 0;
-    if (NxpConfig_GetByteArray("cal.xtal", xtal_data, sizeof(xtal_data), &retlen)) {
-      xtal_data_len = retlen;
+    auto res = NxpConfig_GetByteArray(kConfKeyXtal);
+    if (!res.has_value()) {
+      NXPLOG_UCIHAL_E("Failed to get clock calibration data: %s is not provided.", kConfKeyXtal.data());
+      return;
     }
+    std::span<const uint8_t> data = *res;
+    if (data.empty() || data.size() > sizeof(xtal_data)) {
+      NXPLOG_UCIHAL_E("Failed to get clock calibration data: cannot parse %s", kConfKeyXtal.data());
+      return;
+    }
+    memcpy(xtal_data, data.data(), data.size());
+    xtal_data_len = data.size();
   }
 
-  if (xtal_data_len) {
-    NXPLOG_UCIHAL_D("Apply CLK_ACCURARY (len=%zu, from-otp=%c)", xtal_data_len, otp_xtal_flag ? 'y' : 'n');
+  NXPLOG_UCIHAL_D("Apply CLK_ACCURARY (len=%zu, from-otp=%c)", xtal_data_len, xtal_otp_provided ? 'y' : 'n');
 
-    ret = nxpucihal_ctrl.uwb_chip->apply_calibration(EXTCAL_PARAM_CLK_ACCURACY, 0, xtal_data, xtal_data_len);
-
-    if (ret != UWBSTATUS_SUCCESS) {
-      NXPLOG_UCIHAL_E("Failed to apply CLK_ACCURACY (len=%zu, from-otp=%c)",
-          xtal_data_len, otp_xtal_flag ? 'y' : 'n');
-    }
+  tHAL_UWB_STATUS ret =
+    nxpucihal_ctrl.uwb_chip->apply_calibration(
+      EXTCAL_PARAM_CLK_ACCURACY, 0, xtal_data, xtal_data_len);
+  if (ret != UWBSTATUS_SUCCESS) {
+    NXPLOG_UCIHAL_E("Failed to apply CLK_ACCURACY.");
   }
 }
 
 // Returns a pair of limit values <lower limit, upper limit>
 static std::pair<uint16_t, uint16_t> extcal_get_ant_delay_limits(uint8_t ant_id, uint8_t ch)
 {
-  uint16_t lower_limit = std::numeric_limits<uint16_t>::min();
-  uint16_t upper_limit = std::numeric_limits<uint16_t>::max();
+  constexpr uint16_t def_lower_limit = std::numeric_limits<uint16_t>::min();
+  constexpr uint16_t def_upper_limit = std::numeric_limits<uint16_t>::max();
 
   const std::string key_lower_limit = std::format("cal.ant{}.ch{}.ant_delay.lower_limit", ant_id, ch);
   const std::string key_upper_limit = std::format("cal.ant{}.ch{}.ant_delay.upper_limit", ant_id, ch);
 
-  uint16_t val = 0;
-  if (NxpConfig_GetNum(key_lower_limit.c_str(), &val, sizeof(val))) {
-    lower_limit = val;
-  }
-  if (NxpConfig_GetNum(key_upper_limit.c_str(), &val, sizeof(val))) {
-    upper_limit = val;
-  }
+  uint16_t lower_limit = NxpConfig_GetNum<uint16_t>(key_lower_limit).value_or(def_lower_limit);
+  uint16_t upper_limit = NxpConfig_GetNum<uint16_t>(key_upper_limit).value_or(def_upper_limit);
+
   return std::make_pair(lower_limit, upper_limit);
 }
 
@@ -544,36 +544,36 @@ static void extcal_do_ant_delay_ch(const std::bitset<8> rx_antenna_mask, uint8_t
 
     const uint8_t ant_id = i + 1;
 
-    uint16_t delay_value, version_value;
-    bool value_provided = false;
-
     const std::string key_ant_delay = std::format("cal.ant{}.ch{}.ant_delay", ant_id, ch);
-    const std::string key_force_version = key_ant_delay + std::format(".force_version", ant_id, ch);
+    const std::string key_force_version = key_ant_delay + ".force_version";
+
+    std::optional<uint16_t> delay_value;
 
     // 1) try cal.ant{N}.ch{N}.ant_delay.force_value.{N}
-    if (NxpConfig_GetNum(key_force_version.c_str(), &version_value, 2)) {
-      const std::string key_force_value = key_ant_delay + std::format(".force_value.{}", ant_id, ch, version_value);
-      if (NxpConfig_GetNum(key_force_value.c_str(), &delay_value, 2)) {
-        value_provided = true;
-        NXPLOG_UCIHAL_D("Apply RX_ANT_DELAY_CALIB %s = %u", key_force_value.c_str(), delay_value);
+    std::optional<uint16_t> force_version = NxpConfig_GetNum<uint16_t>(key_force_version);
+    if (force_version.has_value()) {
+      const std::string key_force_value = key_ant_delay + std::format(".force_value.{}", *force_version);
+      delay_value = NxpConfig_GetNum<uint16_t>(key_force_value);
+      if (delay_value.has_value()) {
+        NXPLOG_UCIHAL_D("Apply RX_ANT_DELAY_CALIB %s = %u", key_force_value.c_str(), *delay_value);
       }
     }
 
     // 2) try cal.ant{N}.ch{N}.ant_delay
-    if (!value_provided) {
-      if (NxpConfig_GetNum(key_ant_delay.c_str(), &delay_value, 2)) {
-        value_provided = true;
-        NXPLOG_UCIHAL_D("Apply RX_ANT_DELAY_CALIB: %s = %u", key_ant_delay.c_str(), delay_value);
+    if (!delay_value.has_value()) {
+      delay_value = NxpConfig_GetNum<uint16_t>(key_ant_delay);
+      if (delay_value.has_value()) {
+        NXPLOG_UCIHAL_D("Apply RX_ANT_DELAY_CALIB: %s = %u", key_ant_delay.c_str(), *delay_value);
       }
     }
 
-    if (!value_provided) {
+    if (!delay_value.has_value()) {
       NXPLOG_UCIHAL_V("%s was not provided from configuration files.", key_ant_delay.c_str());
       return;
     }
 
     // clamping
-    uint16_t clamped_delay = delay_value;
+    uint16_t clamped_delay = *delay_value;
     std::pair<uint16_t, uint16_t> limits = extcal_get_ant_delay_limits(ant_id, ch);
     if (clamped_delay < limits.first) { clamped_delay = limits.first; }
     if (clamped_delay > limits.second) { clamped_delay = limits.second; }
@@ -640,19 +640,17 @@ static void extcal_do_tx_power(void)
         if (!tx_antenna_mask[i])
           continue;
 
-        char key[32];
         const uint8_t ant_id = i + 1;
-        std::snprintf(key, sizeof(key), "cal.ant%u.ch%u.tx_power", ant_id, ch);
 
-        uint8_t power_value[32];
-        size_t retlen = 0;
-        if (!NxpConfig_GetByteArray(key, power_value, sizeof(power_value), &retlen)) {
+        std::string key = std::format("cal.ant{}.ch{}.tx_power", ant_id, ch);
+        std::optional<std::span<const uint8_t>> res = NxpConfig_GetByteArray(key);
+        if (!res.has_value()) {
           continue;
         }
-
-        NXPLOG_UCIHAL_D("Apply TX_POWER: %s = { %zu bytes }", key, retlen);
+        std::span<const uint8_t> pkt = *res;
+        NXPLOG_UCIHAL_D("Apply TX_POWER: %s = { %zu bytes }", key.c_str(), (*res).size());
         entries.push_back(ant_id);
-        entries.insert(entries.end(), power_value, power_value + retlen);
+        entries.insert(entries.end(), pkt.begin(), pkt.end());
         n_entries++;
       }
 
@@ -670,14 +668,12 @@ static void extcal_do_tx_power(void)
 
 static void extcal_do_tx_pulse_shape(void)
 {
-  // parameters: cal.tx_pulse_shape={...}
-  size_t retlen = 0;
-  uint8_t data[64];
+  std::optional<std::span<const uint8_t>> res = NxpConfig_GetByteArray("cal.tx_pulse_shape");
+  if (res.has_value()) {
+      NXPLOG_UCIHAL_D("Apply TX_PULSE_SHAPE: data = { %zu bytes }", (*res).size());
 
-  if (NxpConfig_GetByteArray("cal.tx_pulse_shape", data, sizeof(data), &retlen) && retlen) {
-      NXPLOG_UCIHAL_D("Apply TX_PULSE_SHAPE: data = { %zu bytes }", retlen);
-
-      tHAL_UWB_STATUS ret = nxpucihal_ctrl.uwb_chip->apply_calibration(EXTCAL_PARAM_TX_PULSE_SHAPE, 0, data, (size_t)retlen);
+      tHAL_UWB_STATUS ret = nxpucihal_ctrl.uwb_chip->apply_calibration(
+        EXTCAL_PARAM_TX_PULSE_SHAPE, /*ch=*/0, (*res).data(), (*res).size());
       if (ret != UWBSTATUS_SUCCESS) {
         NXPLOG_UCIHAL_E("Failed to apply TX_PULSE_SHAPE.");
       }
@@ -688,27 +684,20 @@ static void extcal_do_tx_base_band(void)
 {
   // TX_BASE_BAND_CONTROL, DDFS_TONE_CONFIG
   // parameters: cal.ddfs_enable=1|0, cal.dc_suppress=1|0, ddfs_tone_config={...}
-  uint8_t ddfs_enable = 0, dc_suppress = 0;
-  uint8_t ddfs_tone[256];
-  size_t retlen = 0;
-  tHAL_UWB_STATUS ret;
-
-  if (NxpConfig_GetNum("cal.ddfs_enable", &ddfs_enable, 1)) {
-    NXPLOG_UCIHAL_D("Apply TX_BASE_BAND_CONTROL: ddfs_enable=%u", ddfs_enable);
-  }
-  if (NxpConfig_GetNum("cal.dc_suppress", &dc_suppress, 1)) {
-    NXPLOG_UCIHAL_D("Apply TX_BASE_BAND_CONTROL: dc_suppress=%u", dc_suppress);
-  }
+  bool ddfs_enable = NxpConfig_GetBool("cal.ddfs_enable").value_or(false);
+  bool dc_suppress = NxpConfig_GetBool("cal.dc_suppress").value_or(false);
 
   // DDFS_TONE_CONFIG
   if (ddfs_enable) {
-    if (!NxpConfig_GetByteArray("cal.ddfs_tone_config", ddfs_tone, sizeof(ddfs_tone), &retlen) || !retlen) {
+    std::optional<std::span<const uint8_t>> ddfs_tone = NxpConfig_GetByteArray("cal.ddfs_tone_config");
+    if (!ddfs_tone.has_value()) {
       NXPLOG_UCIHAL_E("cal.ddfs_tone_config is not supplied while cal.ddfs_enable=1, ddfs was not enabled.");
       ddfs_enable = 0;
     } else {
-      NXPLOG_UCIHAL_D("Apply DDFS_TONE_CONFIG: ddfs_tone_config = { %zu bytes }", retlen);
+      NXPLOG_UCIHAL_D("Apply DDFS_TONE_CONFIG: ddfs_tone_config = { %zu bytes }", (*ddfs_tone).size());
 
-      ret = nxpucihal_ctrl.uwb_chip->apply_calibration(EXTCAL_PARAM_DDFS_TONE_CONFIG, 0, ddfs_tone, (size_t)retlen);
+      tHAL_UWB_STATUS ret = nxpucihal_ctrl.uwb_chip->apply_calibration(EXTCAL_PARAM_DDFS_TONE_CONFIG,
+        /*ch=*/0, (*ddfs_tone).data(), (*ddfs_tone).size());
       if (ret != UWBSTATUS_SUCCESS) {
         NXPLOG_UCIHAL_E("Failed to apply DDFS_TONE_CONFIG, ddfs was not enabled.");
         ddfs_enable = 0;
@@ -717,16 +706,13 @@ static void extcal_do_tx_base_band(void)
   }
 
   // TX_BASE_BAND_CONTROL
-  {
-    uint8_t flag = 0;
-    if (ddfs_enable)
-      flag |= 0x01;
-    if (dc_suppress)
-      flag |= 0x02;
-    ret = nxpucihal_ctrl.uwb_chip->apply_calibration(EXTCAL_PARAM_TX_BASE_BAND_CONTROL, 0, &flag, 1);
-    if (ret) {
-      NXPLOG_UCIHAL_E("Failed to apply TX_BASE_BAND_CONTROL");
-    }
+  uint8_t flag = 0;
+  if (ddfs_enable) { flag |= 0x01; }
+  if (dc_suppress) { flag |= 0x02; }
+  tHAL_UWB_STATUS ret = nxpucihal_ctrl.uwb_chip->apply_calibration(EXTCAL_PARAM_TX_BASE_BAND_CONTROL,
+    /*ch=*/0, &flag, 1);
+  if (ret) {
+    NXPLOG_UCIHAL_E("Failed to apply TX_BASE_BAND_CONTROL");
   }
 }
 
@@ -741,16 +727,20 @@ static void extcal_do_tx_base_band(void)
 void phNxpUciHal_extcal_handle_coreinit(void)
 {
   // read rx_aantenna_mask, tx_antenna_mask
-  uint8_t rx_antenna_mask_n = 0x1;
-  uint8_t tx_antenna_mask_n = 0x1;
-  if (!NxpConfig_GetNum("cal.rx_antenna_mask", &rx_antenna_mask_n, 1)) {
-      NXPLOG_UCIHAL_E("cal.rx_antenna_mask is not specified, use default 0x%x", rx_antenna_mask_n);
+  auto res = NxpConfig_GetNum<uint8_t>("cal.rx_antenna_mask");
+  if (!res.has_value()) {
+    NXPLOG_UCIHAL_W("cal.tx_antenna_mask is not specified, use default value.");
   }
-  if (!NxpConfig_GetNum("cal.tx_antenna_mask", &tx_antenna_mask_n, 1)) {
-      NXPLOG_UCIHAL_E("cal.tx_antenna_mask is not specified, use default 0x%x", tx_antenna_mask_n);
+  nxpucihal_ctrl.cal_rx_antenna_mask = res.value_or(0x01);
+
+  res = NxpConfig_GetNum<uint8_t>("cal.tx_antenna_mask");
+  if (!res.has_value()) {
+      NXPLOG_UCIHAL_W("cal.tx_antenna_mask is not specified, use default value.");
   }
-  nxpucihal_ctrl.cal_rx_antenna_mask = rx_antenna_mask_n;
-  nxpucihal_ctrl.cal_tx_antenna_mask = tx_antenna_mask_n;
+  nxpucihal_ctrl.cal_tx_antenna_mask = res.value_or(0x01);
+
+  NXPLOG_UCIHAL_D("tx_antenna_mask=0x%x, rx_antenna_mask=0x%x",
+    nxpucihal_ctrl.cal_tx_antenna_mask, nxpucihal_ctrl.cal_rx_antenna_mask);
 
   extcal_do_xtal();
   extcal_do_ant_delay();
@@ -799,24 +789,23 @@ void phNxpUciHal_handle_set_country_code(const char country_code[2])
     phNxpUciHal_resetRuntimeSettings();
 
     // Load ExtraCal restrictions
-    uint16_t mask= 0;
-    if (NxpConfig_GetNum("cal.restricted_channels", &mask, sizeof(mask))) {
+    uint16_t mask = NxpConfig_GetNum<uint16_t>("cal.restricted_channels").value_or(0);
+    if (mask != 0) {
       NXPLOG_UCIHAL_D("Restriction flag, restricted channel mask=0x%x", mask);
       rt_set->restricted_channel_mask = mask;
     }
 
-    uint8_t uwb_disable = 0;
-    if (NxpConfig_GetNum("cal.uwb_disable", &uwb_disable, sizeof(uwb_disable))) {
-      NXPLOG_UCIHAL_D("Restriction flag, uwb_disable=%u", uwb_disable);
-      rt_set->uwb_enable = !uwb_disable;
+    if (NxpConfig_GetBool("cal.uwb_disable").value_or(false)) {
+      NXPLOG_UCIHAL_D("Restriction flag, uwb_disable set");
+      rt_set->uwb_enable = 0;
     }
 
     // Apply COUNTRY_CODE_CAPS
-    uint8_t cc_caps[UCI_MAX_DATA_LEN];
-    size_t retlen = 0;
-    if (NxpConfig_GetByteArray(NAME_NXP_UWB_COUNTRY_CODE_CAPS, cc_caps, sizeof(cc_caps), &retlen) && retlen) {
+    std::optional<std::span<const uint8_t>> cc_caps =
+      NxpConfig_GetByteArray(NAME_NXP_UWB_COUNTRY_CODE_CAPS);
+    if (cc_caps.has_value()) {
       NXPLOG_UCIHAL_D("COUNTRY_CODE_CAPS is provided.");
-      phNxpUciHal_applyCountryCaps(country_code, cc_caps, retlen);
+      phNxpUciHal_applyCountryCaps(country_code, (*cc_caps).data(), (*cc_caps).size());
     }
 
     // Check country code validity
@@ -1008,15 +997,12 @@ bool phNxpUciHal_handle_get_caps_info(size_t data_len, const uint8_t *p_data)
   }
 
   // Append UWB_VENDOR_CAPABILITY from configuration files
-  {
-    std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
-    size_t retlen = 0;
-    if (NxpConfig_GetByteArray(NAME_UWB_VENDOR_CAPABILITY, buffer.data(),
-                               buffer.size(), &retlen) && retlen) {
-      auto vendorTlvs = decodeTlvBytes({}, buffer.data(), retlen);
-      for (auto const& [key, val] : vendorTlvs) {
-        tlvs[key] = val;
-      }
+  std::optional<std::span<const uint8_t>> vcaps =
+    NxpConfig_GetByteArray(NAME_UWB_VENDOR_CAPABILITY);
+  if (vcaps.has_value()) {
+    auto vendorTlvs = decodeTlvBytes(/*ext_ids=*/{}, (*vcaps).data(), (*vcaps).size());
+    for (auto const& [key, val] : vendorTlvs) {
+      tlvs[key] = val;
     }
   }
 

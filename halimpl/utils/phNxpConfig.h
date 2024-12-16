@@ -22,22 +22,41 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <limits>
+#include <optional>
+#include <span>
+#include <string_view>
+
+#include "phNxpLog.h"
 
 void NxpConfig_Init(void);
 void NxpConfig_Deinit(void);
 bool NxpConfig_SetCountryCode(const char country_code[2]);
 
-// TODO: use std::optional as return type.
-// TODO: use std::string_view instead of const char*.
-// TODO: add GetBool().
-// TODO: use template for GetNum() (uint8_t, uint16_t, uint32_t).
-bool NxpConfig_GetStr(const char* name, char* p_value, size_t len);
-bool NxpConfig_GetNum(const char* name, void* p_value, size_t len);
-bool NxpConfig_GetByteArray(const char* name, uint8_t* pValue, size_t bufflen, size_t *len);
+std::optional<std::string_view> NxpConfig_GetStr(std::string_view key);
 
-bool NxpConfig_GetStrArrayLen(const char* name, size_t* pLen);
-bool NxpConfig_GetStrArrayVal(const char* name, int index, char* pValue, size_t len);
+std::optional<std::span<const uint8_t>> NxpConfig_GetByteArray(std::string_view key);
 
+std::optional<uint64_t> NxpConfig_GetUint64(std::string_view key);
+
+template <typename T>
+inline std::optional<T> NxpConfig_GetNum(std::string_view key) {
+    static_assert(std::is_integral<T>::value);
+    auto res = NxpConfig_GetUint64(key);
+    if (res.has_value() && *res > std::numeric_limits<T>::max()) {
+        std::string strkey(key);
+        NXPLOG_UCIHAL_W("Config %s overflow", strkey.c_str());
+    }
+    return res;
+}
+
+// Returns true or false if key is existed as a number type parameter.
+std::optional<bool> NxpConfig_GetBool(std::string_view key);
+
+std::optional<size_t> NxpConfig_GetStrArrayLen(std::string_view key);
+std::optional<std::string_view> NxpConfig_GetStrArrayVal(std::string_view key, int idx);
+
+// TODO: use constexpr
 /* libuwb-nxp.conf parameters */
 #define NAME_UWB_BOARD_VARIANT_CONFIG "UWB_BOARD_VARIANT_CONFIG"
 #define NAME_UWB_BOARD_VARIANT_VERSION "UWB_BOARD_VARIANT_VERSION"
