@@ -19,6 +19,7 @@
 //#define LOG_NDEBUG 0
 #define LOG_TAG "NxpUwbConf"
 
+#include <filesystem>
 #include <limits.h>
 #include <sys/stat.h>
 
@@ -50,6 +51,7 @@ static const char default_nxp_config_path[] = "/vendor/etc/libuwb-nxp.conf";
 static const char country_code_config_name[] = "libuwb-countrycode.conf";
 static const char nxp_uci_config_file[] = "libuwb-uci.conf";
 static const char default_uci_config_path[] = "/vendor/etc/";
+static const char factory_file_prefix[] = "cal-factory";
 
 static const char country_code_specifier[] = "<country>";
 static const char sku_specifier[] = "<sku>";
@@ -119,6 +121,7 @@ public:
     virtual ~CUwbNxpConfig();
 
     bool isValid() const { return mValidFile; }
+    bool isFactory() const { return mFactoryFile; }
     void reset() {
         m_map.clear();
         mValidFile = false;
@@ -130,7 +133,7 @@ public:
         return mFilePath.c_str();
     }
 
-    void    dump() const;
+    void dump() const;
 
     const unordered_map<string, uwbParam>& get_data() const {
         return m_map;
@@ -139,9 +142,11 @@ public:
 private:
     bool readConfig();
 
+    bool mValidFile;
+    std::filesystem::path mFilePath;
+    bool mFactoryFile;
+
     unordered_map<string, uwbParam> m_map;
-    bool    mValidFile;
-    string  mFilePath;
 };
 
 /*******************************************************************************
@@ -397,6 +402,12 @@ bool CUwbNxpConfig::readConfig()
         ALOGI("Extra calibration file %s opened.", name);
     }
 
+    // Checks if this is a factory calibrated file by filename matching
+    std::string filename = mFilePath.stem();
+    if (filename.starts_with(factory_file_prefix)) {
+        mFactoryFile = true;
+    }
+
     return mValidFile;
 }
 
@@ -410,7 +421,7 @@ bool CUwbNxpConfig::readConfig()
 **
 *******************************************************************************/
 CUwbNxpConfig::CUwbNxpConfig() :
-    mValidFile(false)
+    mValidFile(false), mFactoryFile(false)
 {
 }
 
@@ -427,7 +438,7 @@ CUwbNxpConfig::~CUwbNxpConfig()
 {
 }
 
-CUwbNxpConfig::CUwbNxpConfig(const char *filepath) : mValidFile(false), mFilePath(filepath)
+CUwbNxpConfig::CUwbNxpConfig(const char *filepath) : mValidFile(false), mFilePath(filepath), mFactoryFile(false)
 {
     readConfig();
 }
