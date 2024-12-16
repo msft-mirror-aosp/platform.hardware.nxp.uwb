@@ -883,7 +883,7 @@ bool phNxpUciHal_handle_set_app_config(size_t *data_len, uint8_t *p_data)
         NXPLOG_UCIHAL_D("Country code blocked channel %u", ch);
 
         // send setAppConfig response with UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF response
-        const uint8_t rsp_data[] = { 0x41, 0x03, 0x04, 0x04,
+        uint8_t rsp_data[] = { 0x41, 0x03, 0x04, 0x04,
           UCI_STATUS_FAILED, 0x01, tlv_tag, UCI_STATUS_CODE_ANDROID_REGULATION_UWB_OFF
         };
         report_uci_message(rsp_data, sizeof(rsp_data));
