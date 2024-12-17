@@ -18,6 +18,7 @@
 
 #include <atomic>
 #include <bitset>
+#include <limits>
 #include <map>
 #include <vector>
 
@@ -514,6 +515,25 @@ static void extcal_do_xtal(void)
   }
 }
 
+// Returns a pair of limit values <lower limit, upper limit>
+static std::pair<uint16_t, uint16_t> extcal_get_ant_delay_limits(uint8_t ant_id, uint8_t ch)
+{
+  uint16_t lower_limit = std::numeric_limits<uint16_t>::min();
+  uint16_t upper_limit = std::numeric_limits<uint16_t>::max();
+
+  const std::string key_lower_limit = std::format("cal.ant{}.ch{}.ant_delay.lower_limit", ant_id, ch);
+  const std::string key_upper_limit = std::format("cal.ant{}.ch{}.ant_delay.upper_limit", ant_id, ch);
+
+  uint16_t val = 0;
+  if (NxpConfig_GetNum(key_lower_limit.c_str(), &val, sizeof(val))) {
+    lower_limit = val;
+  }
+  if (NxpConfig_GetNum(key_upper_limit.c_str(), &val, sizeof(val))) {
+    upper_limit = val;
+  }
+  return std::make_pair(lower_limit, upper_limit);
+}
+
 static void extcal_do_ant_delay_ch(const std::bitset<8> rx_antenna_mask, uint8_t ch)
 {
   std::vector<uint8_t> entries;
@@ -552,10 +572,20 @@ static void extcal_do_ant_delay_ch(const std::bitset<8> rx_antenna_mask, uint8_t
       return;
     }
 
+    // clamping
+    uint16_t clamped_delay = delay_value;
+    std::pair<uint16_t, uint16_t> limits = extcal_get_ant_delay_limits(ant_id, ch);
+    if (clamped_delay < limits.first) { clamped_delay = limits.first; }
+    if (clamped_delay > limits.second) { clamped_delay = limits.second; }
+
+    if (clamped_delay != delay_value) {
+      NXPLOG_UCIHAL_W("Clamping %s to %u", key_ant_delay.c_str(), clamped_delay);
+    }
+
     entries.push_back(ant_id);
     // Little Endian
-    entries.push_back(delay_value & 0xff);
-    entries.push_back(delay_value >> 8);
+    entries.push_back(clamped_delay & 0xff);
+    entries.push_back(clamped_delay >> 8);
     n_entries++;
   }
 
@@ -564,6 +594,7 @@ static void extcal_do_ant_delay_ch(const std::bitset<8> rx_antenna_mask, uint8_t
   entries.insert(entries.begin(), n_entries);
   tHAL_UWB_STATUS ret = nxpucihal_ctrl.uwb_chip->apply_calibration(EXTCAL_PARAM_RX_ANT_DELAY, ch, entries.data(), entries.size());
   if (ret != UWBSTATUS_SUCCESS) {
+    // TODO: halt the chip when this failed.
     NXPLOG_UCIHAL_E("Failed to apply RX_ANT_DELAY for channel %u", ch);
   }
 }
