@@ -514,10 +514,67 @@ static void extcal_do_xtal(void)
   }
 }
 
+static void extcal_do_ant_delay_ch(const std::bitset<8> rx_antenna_mask, uint8_t ch)
+{
+  std::vector<uint8_t> entries;
+  uint8_t n_entries = 0;
+
+  for (auto i = 0; i < rx_antenna_mask.size(); i++) {
+    if (!rx_antenna_mask.test(i)) { continue; }
+
+    const uint8_t ant_id = i + 1;
+
+    uint16_t delay_value, version_value;
+    bool value_provided = false;
+
+    const std::string key_ant_delay = std::format("cal.ant{}.ch{}.ant_delay", ant_id, ch);
+    const std::string key_force_version = key_ant_delay + std::format(".force_version", ant_id, ch);
+
+    // 1) try cal.ant{N}.ch{N}.ant_delay.force_value.{N}
+    if (NxpConfig_GetNum(key_force_version.c_str(), &version_value, 2)) {
+      const std::string key_force_value = key_ant_delay + std::format(".force_value.{}", ant_id, ch, version_value);
+      if (NxpConfig_GetNum(key_force_value.c_str(), &delay_value, 2)) {
+        value_provided = true;
+        NXPLOG_UCIHAL_D("Apply RX_ANT_DELAY_CALIB %s = %u", key_force_value.c_str(), delay_value);
+      }
+    }
+
+    // 2) try cal.ant{N}.ch{N}.ant_delay
+    if (!value_provided) {
+      if (NxpConfig_GetNum(key_ant_delay.c_str(), &delay_value, 2)) {
+        value_provided = true;
+        NXPLOG_UCIHAL_D("Apply RX_ANT_DELAY_CALIB: %s = %u", key_ant_delay.c_str(), delay_value);
+      }
+    }
+
+    if (!value_provided) {
+      NXPLOG_UCIHAL_V("%s was not provided from configuration files.", key_ant_delay.c_str());
+      return;
+    }
+
+    entries.push_back(ant_id);
+    // Little Endian
+    entries.push_back(delay_value & 0xff);
+    entries.push_back(delay_value >> 8);
+    n_entries++;
+  }
+
+  if (!n_entries) { return; }
+
+  entries.insert(entries.begin(), n_entries);
+  tHAL_UWB_STATUS ret = nxpucihal_ctrl.uwb_chip->apply_calibration(EXTCAL_PARAM_RX_ANT_DELAY, ch, entries.data(), entries.size());
+  if (ret != UWBSTATUS_SUCCESS) {
+    NXPLOG_UCIHAL_E("Failed to apply RX_ANT_DELAY for channel %u", ch);
+  }
+}
+
 static void extcal_do_ant_delay(void)
 {
-  std::bitset<8> rx_antenna_mask(nxpucihal_ctrl.cal_rx_antenna_mask);
-  const uint8_t n_rx_antennas = rx_antenna_mask.size();
+  const std::bitset<8> rx_antenna_mask(nxpucihal_ctrl.cal_rx_antenna_mask);
+  if (rx_antenna_mask.none()) {
+    NXPLOG_UCIHAL_E("No rx_antenna_mask defined by configuration file. Please check your configurations files (and HAL codes).")
+    return;
+  }
 
   const uint8_t *cal_channels = NULL;
   uint8_t nr_cal_channels = 0;
@@ -526,62 +583,8 @@ static void extcal_do_ant_delay(void)
   // RX_ANT_DELAY_CALIB
   // parameter: cal.ant<N>.ch<N>.ant_delay=X
   // N(1) + N * {AntennaID(1), Rxdelay(Q14.2)}
-  if (n_rx_antennas) {
-    for (int i = 0; i < nr_cal_channels; i++) {
-      uint8_t ch = cal_channels[i];
-      std::vector<uint8_t> entries;
-      uint8_t n_entries = 0;
-
-      for (auto i = 0; i < n_rx_antennas; i++) {
-        if (!rx_antenna_mask[i])
-          continue;
-
-        const uint8_t ant_id = i + 1;
-
-        uint16_t delay_value, version_value;
-        bool value_provided = false;
-
-        const std::string key_ant_delay = std::format("cal.ant{}.ch{}.ant_delay", ant_id, ch);
-        const std::string key_force_version = key_ant_delay + std::format(".force_version", ant_id, ch);
-
-        // 1) try cal.ant{N}.ch{N}.ant_delay.force_value.{N}
-        if (NxpConfig_GetNum(key_force_version.c_str(), &version_value, 2)) {
-          const std::string key_force_value = key_ant_delay + std::format(".force_value.{}", ant_id, ch, version_value);
-          if (NxpConfig_GetNum(key_force_value.c_str(), &delay_value, 2)) {
-            value_provided = true;
-            NXPLOG_UCIHAL_D("Apply RX_ANT_DELAY_CALIB %s = %u", key_force_value.c_str(), delay_value);
-          }
-        }
-
-        // 2) try cal.ant{N}.ch{N}.ant_delay
-        if (!value_provided) {
-          if (NxpConfig_GetNum(key_ant_delay.c_str(), &delay_value, 2)) {
-            value_provided = true;
-            NXPLOG_UCIHAL_D("Apply RX_ANT_DELAY_CALIB: %s = %u", key_ant_delay.c_str(), delay_value);
-          }
-        }
-
-        if (!value_provided) {
-          NXPLOG_UCIHAL_V("%s was not provided from configuration files.", key_ant_delay.c_str());
-          continue;
-        }
-
-        entries.push_back(ant_id);
-        // Little Endian
-        entries.push_back(delay_value & 0xff);
-        entries.push_back(delay_value >> 8);
-        n_entries++;
-      }
-
-      if (!n_entries)
-        continue;
-
-      entries.insert(entries.begin(), n_entries);
-      tHAL_UWB_STATUS ret = nxpucihal_ctrl.uwb_chip->apply_calibration(EXTCAL_PARAM_RX_ANT_DELAY, ch, entries.data(), entries.size());
-      if (ret != UWBSTATUS_SUCCESS) {
-        NXPLOG_UCIHAL_E("Failed to apply RX_ANT_DELAY for channel %u", ch);
-      }
-    }
+  for (int i = 0; i < nr_cal_channels; i++) {
+    extcal_do_ant_delay_ch(rx_antenna_mask, cal_channels[i]);
   }
 }
 
