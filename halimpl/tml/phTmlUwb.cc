@@ -1,5 +1,5 @@
 /*
- * Copyright 2012-2020 NXP
+ * Copyright 2012-2020, 2024 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -35,8 +35,57 @@ extern phNxpUciHal_Control_t nxpucihal_ctrl;
 /* Indicates a Initial or offset value */
 #define PH_TMLUWB_VALUE_ONE (0x01)
 
-/* Initialize Context structure pointer used to access context structure */
-static phTmlUwb_Context_t* gpphTmlUwb_Context;
+namespace {
+
+// Structure containing details related to read and write operations
+struct phTmlUwb_ReadInfo {
+  volatile bool bThreadShouldStop;
+  volatile bool bThreadRunning;
+  uint8_t
+      bThreadBusy; /*Flag to indicate thread is busy on respective operation */
+  /* Transaction completion Callback function */
+  ReadCallback* pThread_Callback;
+  void* pContext;        /*Context passed while invocation of operation */
+  uint8_t* pBuffer;      /*Buffer passed while invocation of operation */
+  size_t wLength;      /*Length of data read/written */
+  tHAL_UWB_STATUS wWorkStatus; /*Status of the transaction performed */
+};
+
+struct phTmlUwb_WriteInfo {
+  volatile bool bThreadShouldStop;
+  volatile bool bThreadRunning;
+  uint8_t
+      bThreadBusy; /*Flag to indicate thread is busy on respective operation */
+  /* Transaction completion Callback function */
+  WriteCallback* pThread_Callback;
+  void* pContext;        /*Context passed while invocation of operation */
+  const uint8_t* pBuffer;      /*Buffer passed while invocation of operation */
+  size_t wLength;      /*Length of data read/written */
+  tHAL_UWB_STATUS wWorkStatus; /*Status of the transaction performed */
+};
+
+// Base Context Structure containing members required for entire session
+struct phTmlUwb_Context {
+  pthread_t readerThread;
+  pthread_t writerThread;
+
+  phTmlUwb_ReadInfo tReadInfo;  /*Pointer to Reader Thread Structure */
+  phTmlUwb_WriteInfo tWriteInfo; /*Pointer to Writer Thread Structure */
+  void* pDevHandle;                    /* Pointer to Device Handle */
+  std::shared_ptr<MessageQueue<phLibUwb_Message>> pClientMq; /* Pointer to Client thread message queue */
+  sem_t rxSemaphore;
+  sem_t txSemaphore;      /* Lock/Acquire txRx Semaphore */
+
+  pthread_cond_t wait_busy_condition; /*Condition to wait reader thread*/
+  pthread_mutex_t wait_busy_lock;     /*Condition lock to wait reader thread*/
+  volatile uint8_t wait_busy_flag;    /*Condition flag to wait reader thread*/
+  volatile uint8_t gWriterCbflag;    /* flag to indicate write callback message is pushed to
+                           queue*/
+};
+
+std::unique_ptr<phTmlUwb_Context> gpphTmlUwb_Context;
+
+}   // namespace
 
 /* Local Function prototypes */
 static tHAL_UWB_STATUS phTmlUwb_StartWriterThread(void);
@@ -77,68 +126,52 @@ static int phTmlUwb_WaitReadInit(void);
 **                                             been disconnected
 **
 *******************************************************************************/
-tHAL_UWB_STATUS phTmlUwb_Init(const char* pDevName, std::shared_ptr<MessageQueue<phLibUwb_Message>> pClientMq)
+tHAL_UWB_STATUS phTmlUwb_Init(const char* pDevName,
+    std::shared_ptr<MessageQueue<phLibUwb_Message>> pClientMq)
 {
-  tHAL_UWB_STATUS wInitStatus = UWBSTATUS_SUCCESS;
-
-  /* Check if TML layer is already Initialized */
-  if (NULL != gpphTmlUwb_Context) {
-    /* TML initialization is already completed */
-    wInitStatus = PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_ALREADY_INITIALISED);
+  if (gpphTmlUwb_Context != nullptr) {
+    return PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_ALREADY_INITIALISED);
   }
-  /* Validate Input parameters */
-  else if (!pDevName || !pClientMq) {
-    /*Parameters passed to TML init are wrong */
-    wInitStatus = PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_INVALID_PARAMETER);
-  } else {
-    /* Allocate memory for TML context */
-    gpphTmlUwb_Context =
-        (phTmlUwb_Context_t*)malloc(sizeof(phTmlUwb_Context_t));
 
-    if (NULL == gpphTmlUwb_Context) {
-      wInitStatus = PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_FAILED);
-    } else {
-      /* Initialise all the internal TML variables */
-      memset(gpphTmlUwb_Context, PH_TMLUWB_RESET_VALUE,
-             sizeof(phTmlUwb_Context_t));
-
-      /* Open the device file to which data is read/written */
-      wInitStatus = phTmlUwb_spi_open_and_configure(pDevName, &(gpphTmlUwb_Context->pDevHandle));
-
-      if (UWBSTATUS_SUCCESS != wInitStatus) {
-        wInitStatus = PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_INVALID_DEVICE);
-        gpphTmlUwb_Context->pDevHandle = NULL;
-      } else {
-        gpphTmlUwb_Context->tWriteInfo.bThreadBusy = false;
-        gpphTmlUwb_Context->pClientMq = pClientMq;
-
-        setDeviceHandle(gpphTmlUwb_Context->pDevHandle);  // To set device handle for FW download usecase
-
-        if (0 != sem_init(&gpphTmlUwb_Context->rxSemaphore, 0, 0)) {
-          wInitStatus = UWBSTATUS_FAILED;
-        } else if (0 != sem_init(&gpphTmlUwb_Context->txSemaphore, 0, 0)) {
-          wInitStatus = UWBSTATUS_FAILED;
-        } else if(0 != phTmlUwb_WaitReadInit()) {
-           wInitStatus = UWBSTATUS_FAILED;
-        } else {
-          /* Start TML thread (to handle write and read operations) */
-          if (UWBSTATUS_SUCCESS != phTmlUwb_StartWriterThread()) {
-            wInitStatus = PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_FAILED);
-          } else {
-            /* Store the Thread Identifier to which Message is to be posted */
-            wInitStatus = UWBSTATUS_SUCCESS;
-          }
-        }
-      }
-    }
+  if (!pDevName || !pClientMq) {
+    return PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_INVALID_PARAMETER);
   }
-  /* Clean up all the TML resources if any error */
+
+  // Allocate memory for TML context
+  gpphTmlUwb_Context = std::make_unique<phTmlUwb_Context>();
+  if (gpphTmlUwb_Context == nullptr) {
+    return PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_FAILED);
+  }
+
+  // Open the device file to which data is read/written
+  tHAL_UWB_STATUS wInitStatus =
+    phTmlUwb_spi_open_and_configure(pDevName, &(gpphTmlUwb_Context->pDevHandle));
   if (UWBSTATUS_SUCCESS != wInitStatus) {
-    /* Clear all handles and memory locations initialized during init */
-    phTmlUwb_CleanUp();
+    gpphTmlUwb_Context->pDevHandle = NULL;
+    return PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_INVALID_DEVICE);
   }
 
-  return wInitStatus;
+  gpphTmlUwb_Context->tWriteInfo.bThreadBusy = false;
+  gpphTmlUwb_Context->pClientMq = pClientMq;
+
+  setDeviceHandle(gpphTmlUwb_Context->pDevHandle);  // To set device handle for FW download usecase
+
+  if (sem_init(&gpphTmlUwb_Context->rxSemaphore, 0, 0)) {
+    return UWBSTATUS_FAILED;
+  }
+  if (sem_init(&gpphTmlUwb_Context->txSemaphore, 0, 0)) {
+    return UWBSTATUS_FAILED;
+  }
+  if(phTmlUwb_WaitReadInit()) {
+    return UWBSTATUS_FAILED;
+  }
+
+  // Start TML thread (to handle write and read operations)
+  if (UWBSTATUS_SUCCESS != phTmlUwb_StartWriterThread()) {
+    return PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_FAILED);
+  }
+
+  return UWBSTATUS_SUCCESS;
 }
 
 /*******************************************************************************
@@ -157,7 +190,7 @@ static void* phTmlUwb_TmlReaderThread(void* pParam)
   UNUSED(pParam);
 
   /* Transaction info buffer to be passed to Callback Thread */
-  static phTmlUwb_TransactInfo_t tTransactionInfo;
+  static phTmlUwb_ReadTransactInfo tTransactionInfo;
   /* Structure containing Tml callback function and parameters to be invoked
      by the callback thread */
   static phLibUwb_DeferredCall_t tDeferredInfo;
@@ -184,7 +217,7 @@ static void* phTmlUwb_TmlReaderThread(void* pParam)
     NXPLOG_TML_V("TmlReader:  Invoking SPI Read");
 
     uint8_t temp[UCI_MAX_DATA_LEN];
-    int32_t dwNoBytesWrRd =
+    int dwNoBytesWrRd =
         phTmlUwb_spi_read(gpphTmlUwb_Context->pDevHandle, temp, UCI_MAX_DATA_LEN);
 
     if(gpphTmlUwb_Context->tReadInfo.bThreadShouldStop) {
@@ -206,7 +239,7 @@ static void* phTmlUwb_TmlReaderThread(void* pParam)
       NXPLOG_TML_V("TmlReader: SPI Read successful");
 
       /* Update the actual number of bytes read including header */
-      gpphTmlUwb_Context->tReadInfo.wLength = (uint16_t)(dwNoBytesWrRd);
+      gpphTmlUwb_Context->tReadInfo.wLength = dwNoBytesWrRd;
 
       dwNoBytesWrRd = PH_TMLUWB_RESET_VALUE;
 
@@ -225,13 +258,18 @@ static void* phTmlUwb_TmlReaderThread(void* pParam)
       tDeferredInfo.pParameter = &tTransactionInfo;
 
       /* TML reader writer callback synchronization mutex lock --- START */
-      pthread_mutex_lock(&gpphTmlUwb_Context->wait_busy_lock);
+      if (pthread_mutex_lock(&gpphTmlUwb_Context->wait_busy_lock)) {
+        NXPLOG_TML_E("[%s] Mutex lock failed for wait_busy_lock at line: %d", __func__, __LINE__);
+      }
+
       if ((gpphTmlUwb_Context->gWriterCbflag == false) &&
         ((gpphTmlUwb_Context->tReadInfo.pBuffer[0] & 0x60) != 0x60)) {
         phTmlUwb_WaitWriteComplete();
       }
       /* TML reader writer callback synchronization mutex lock --- END */
-      pthread_mutex_unlock(&gpphTmlUwb_Context->wait_busy_lock);
+      if (pthread_mutex_unlock(&gpphTmlUwb_Context->wait_busy_lock)) {
+        NXPLOG_TML_E("[%s] Mutex unlock failed for wait_busy_lock at line: %d", __func__, __LINE__);
+      }
 
       auto msg = std::make_shared<phLibUwb_Message>(PH_LIBUWB_DEFERREDCALL_MSG, &tDeferredInfo);
       phTmlUwb_DeferredCall(msg);
@@ -260,7 +298,7 @@ static void* phTmlUwb_TmlWriterThread(void* pParam)
   UNUSED(pParam);
 
   /* Transaction info buffer to be passed to Callback Thread */
-  static phTmlUwb_TransactInfo_t tTransactionInfo;
+  static phTmlUwb_WriteTransactInfo tTransactionInfo;
   /* Structure containing Tml callback function and parameters to be invoked
      by the callback thread */
   static phLibUwb_DeferredCall_t tDeferredInfo;
@@ -291,14 +329,18 @@ static void* phTmlUwb_TmlWriterThread(void* pParam)
 
     /* TML reader writer callback synchronization mutex lock --- START
       */
-    pthread_mutex_lock(&gpphTmlUwb_Context->wait_busy_lock);
+    if (pthread_mutex_lock(&gpphTmlUwb_Context->wait_busy_lock)) {
+      NXPLOG_TML_E("[%s] Mutex lock failed for wait_busy_lock at line: %d", __func__, __LINE__);
+    }
     gpphTmlUwb_Context->gWriterCbflag = false;
     int32_t dwNoBytesWrRd =
         phTmlUwb_spi_write(gpphTmlUwb_Context->pDevHandle,
                             gpphTmlUwb_Context->tWriteInfo.pBuffer,
                             gpphTmlUwb_Context->tWriteInfo.wLength);
     /* TML reader writer callback synchronization mutex lock --- END */
-    pthread_mutex_unlock(&gpphTmlUwb_Context->wait_busy_lock);
+    if (pthread_mutex_unlock(&gpphTmlUwb_Context->wait_busy_lock)) {
+      NXPLOG_TML_E("[%s] Mutex unlock failed for wait_busy_lock at line: %d", __func__, __LINE__);
+    }
 
     /* Try SPI Write Five Times, if it fails :*/
     if (-1 == dwNoBytesWrRd) {
@@ -320,7 +362,7 @@ static void* phTmlUwb_TmlWriterThread(void* pParam)
      */
     tTransactionInfo.wStatus = wStatus;
     tTransactionInfo.pBuff = gpphTmlUwb_Context->tWriteInfo.pBuffer;
-    tTransactionInfo.wLength = (uint16_t)dwNoBytesWrRd;
+    tTransactionInfo.wLength = dwNoBytesWrRd;
 
     /* Prepare the message to be posted on the User thread */
     tDeferredInfo.pCallback = &phTmlUwb_WriteDeferredCb;
@@ -332,11 +374,15 @@ static void* phTmlUwb_TmlWriterThread(void* pParam)
     if (UWBSTATUS_SUCCESS == wStatus) {
       /* TML reader writer callback synchronization mutex lock --- START
           */
-      pthread_mutex_lock(&gpphTmlUwb_Context->wait_busy_lock);
+      if (pthread_mutex_lock(&gpphTmlUwb_Context->wait_busy_lock)) {
+        NXPLOG_TML_E("[%s] Mutex lock failed for wait_busy_lock at line: %d", __func__, __LINE__);
+      }
       gpphTmlUwb_Context->gWriterCbflag = true;
       phTmlUwb_SignalWriteComplete();
         /* TML reader writer callback synchronization mutex lock --- END */
-      pthread_mutex_unlock(&gpphTmlUwb_Context->wait_busy_lock);
+      if (pthread_mutex_unlock(&gpphTmlUwb_Context->wait_busy_lock)) {
+        NXPLOG_TML_E("[%s] Mutex unlock failed for wait_busy_lock at line: %d", __func__, __LINE__);
+      }
     }
   } /* End of While loop */
 
@@ -358,26 +404,27 @@ static void* phTmlUwb_TmlWriterThread(void* pParam)
 **
 *******************************************************************************/
 static void phTmlUwb_CleanUp(void) {
-  if (NULL == gpphTmlUwb_Context) {
+  if (gpphTmlUwb_Context == nullptr) {
     return;
   }
+
   if (NULL != gpphTmlUwb_Context->pDevHandle) {
     (void)phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_ControlCode_t::SetPower, 0);
   }
 
   sem_destroy(&gpphTmlUwb_Context->rxSemaphore);
   sem_destroy(&gpphTmlUwb_Context->txSemaphore);
-  pthread_mutex_destroy(&gpphTmlUwb_Context->wait_busy_lock);
-  pthread_cond_destroy(&gpphTmlUwb_Context->wait_busy_condition);
+  if (pthread_mutex_destroy(&gpphTmlUwb_Context->wait_busy_lock)) {
+    NXPLOG_TML_E("[%s] Failed to destroy mutex 'wait_busy_lock' at line: %d", __func__, __LINE__);
+  }
+  if (pthread_cond_destroy(&gpphTmlUwb_Context->wait_busy_condition)) {
+    NXPLOG_TML_E("[%s] Failed to destroy conditional variable 'wait_busy_condition' at line: %d",
+        __func__, __LINE__);
+  }
   phTmlUwb_spi_close(gpphTmlUwb_Context->pDevHandle);
   gpphTmlUwb_Context->pDevHandle = NULL;
 
-  /* Clear memory allocated for storing Context variables */
-  free((void*)gpphTmlUwb_Context);
-  /* Set the pointer to NULL to indicate De-Initialization */
-  gpphTmlUwb_Context = NULL;
-
-  return;
+  gpphTmlUwb_Context.reset();
 }
 
 /*******************************************************************************
@@ -443,8 +490,8 @@ tHAL_UWB_STATUS phTmlUwb_Shutdown(void)
 **                  UWBSTATUS_BUSY - write request is already in progress
 **
 *******************************************************************************/
-tHAL_UWB_STATUS phTmlUwb_Write(uint8_t* pBuffer, uint16_t wLength,
-                         pphTmlUwb_TransactCompletionCb_t pTmlWriteComplete,
+tHAL_UWB_STATUS phTmlUwb_Write(const uint8_t* pBuffer, size_t wLength,
+                         WriteCallback pTmlWriteComplete,
                          void* pContext) {
   tHAL_UWB_STATUS wWriteStatus;
 
@@ -505,16 +552,17 @@ tHAL_UWB_STATUS phTmlUwb_Write(uint8_t* pBuffer, uint16_t wLength,
 **                  UWBSTATUS_BUSY - read request is already in progress
 **
 *******************************************************************************/
-tHAL_UWB_STATUS phTmlUwb_StartRead(uint8_t* pBuffer, uint16_t wLength,
-                        pphTmlUwb_TransactCompletionCb_t pTmlReadComplete,
-                        void* pContext)
+tHAL_UWB_STATUS phTmlUwb_StartRead(ReadCallback pTmlReadComplete, void* pContext)
 {
+  // TODO: move this to gpphTmlUwb_Context
+  static uint8_t shared_rx_buffer[UCI_MAX_DATA_LEN];
+
   /* Check whether TML is Initialized */
   if (!gpphTmlUwb_Context || !gpphTmlUwb_Context->pDevHandle) {
     return PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_NOT_INITIALISED);
   }
 
-  if (!pBuffer || wLength < 1 || !pTmlReadComplete) {
+  if (!pTmlReadComplete) {
     return PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_INVALID_PARAMETER);
   }
 
@@ -523,8 +571,8 @@ tHAL_UWB_STATUS phTmlUwb_StartRead(uint8_t* pBuffer, uint16_t wLength,
   }
 
   /* Setting the flag marks beginning of a Read Operation */
-  gpphTmlUwb_Context->tReadInfo.pBuffer = pBuffer;
-  gpphTmlUwb_Context->tReadInfo.wLength = wLength;
+  gpphTmlUwb_Context->tReadInfo.pBuffer = shared_rx_buffer;
+  gpphTmlUwb_Context->tReadInfo.wLength = sizeof(shared_rx_buffer);
   gpphTmlUwb_Context->tReadInfo.pThread_Callback = pTmlReadComplete;
   gpphTmlUwb_Context->tReadInfo.pContext = pContext;
 
@@ -551,7 +599,9 @@ void phTmlUwb_StopRead()
     phTmlUwb_Spi_Ioctl(gpphTmlUwb_Context->pDevHandle, phTmlUwb_ControlCode_t::SetPower, ABORT_READ_PENDING);
     sem_post(&gpphTmlUwb_Context->rxSemaphore);
 
-    pthread_join(gpphTmlUwb_Context->readerThread, NULL);
+    if (pthread_join(gpphTmlUwb_Context->readerThread, NULL)) {
+      NXPLOG_TML_E("[%s] pthread_join failed for reader thread at line: %d ", __func__, __LINE__);
+    }
   }
 }
 
@@ -604,7 +654,9 @@ static void phTmlUwb_StopWriterThread(void)
   if (gpphTmlUwb_Context->tWriteInfo.bThreadRunning) {
     sem_post(&gpphTmlUwb_Context->txSemaphore);
 
-    pthread_join(gpphTmlUwb_Context->writerThread, NULL);
+    if (pthread_join(gpphTmlUwb_Context->writerThread, NULL)) {
+      NXPLOG_TML_E("[%s] pthread_join failed for writer thread at line: %d ", __func__, __LINE__);
+    }
   }
 }
 
@@ -639,7 +691,7 @@ void phTmlUwb_DeferredCall(std::shared_ptr<phLibUwb_Message> msg)
 static void phTmlUwb_ReadDeferredCb(void* pParams)
 {
   /* Transaction info buffer to be passed to Callback Function */
-  phTmlUwb_TransactInfo_t* pTransactionInfo = (phTmlUwb_TransactInfo_t*)pParams;
+  phTmlUwb_ReadTransactInfo* pTransactionInfo = (phTmlUwb_ReadTransactInfo*)pParams;
 
   /* Reset the flag to accept another Read Request */
   gpphTmlUwb_Context->tReadInfo.pThread_Callback(
@@ -661,7 +713,7 @@ static void phTmlUwb_ReadDeferredCb(void* pParams)
 *******************************************************************************/
 static void phTmlUwb_WriteDeferredCb(void* pParams) {
   /* Transaction info buffer to be passed to Callback Function */
-  phTmlUwb_TransactInfo_t* pTransactionInfo = (phTmlUwb_TransactInfo_t*)pParams;
+  phTmlUwb_WriteTransactInfo* pTransactionInfo = (phTmlUwb_WriteTransactInfo*)pParams;
 
   /* Reset the flag to accept another Write Request */
   gpphTmlUwb_Context->tWriteInfo.bThreadBusy = false;
@@ -739,14 +791,21 @@ static void phTmlUwb_SignalWriteComplete(void) {
 static int phTmlUwb_WaitReadInit(void) {
   int ret;
   pthread_condattr_t attr;
-  pthread_condattr_init(&attr);
-  pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+  if (pthread_condattr_init(&attr)) {
+    NXPLOG_TML_E(" [%s] conditional attr init failed at line: %d", __func__, __LINE__);
+  }
+  if (pthread_condattr_setclock(&attr, CLOCK_MONOTONIC)) {
+    NXPLOG_TML_E(" [%s] conditional attr setClock failed at line: %d", __func__, __LINE__);
+  }
   memset(&gpphTmlUwb_Context->wait_busy_condition, 0,
          sizeof(gpphTmlUwb_Context->wait_busy_condition));
-  pthread_mutex_init(&gpphTmlUwb_Context->wait_busy_lock, NULL);
+  if (pthread_mutex_init(&gpphTmlUwb_Context->wait_busy_lock, NULL)) {
+    NXPLOG_TML_E(" [%s] mutex init failed for wait busy lock at line: %d", __func__,  __LINE__);
+  }
   ret = pthread_cond_init(&gpphTmlUwb_Context->wait_busy_condition, &attr);
   if (ret) {
-    NXPLOG_TML_E(" phTmlUwb_WaitReadInit failed, error = 0x%X", ret);
+    NXPLOG_TML_E("[%s] pthread_cond_init failed for wait_busy_condition at line: %d", __func__,
+        __LINE__);
   }
   return ret;
 }

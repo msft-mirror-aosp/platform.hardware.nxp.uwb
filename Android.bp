@@ -6,22 +6,57 @@ package {
 // See: http://go/android-license-faq
 license {
     name: "hardware_nxp_uwb_license",
-    visibility: [":__subpackages__"],
+    visibility: ["//visibility:public"],
     license_kinds: [
         "SPDX-license-identifier-Apache-2.0",
     ],
     // large-scale-change unable to identify any license_text files
 }
 
+soong_config_string_variable {
+    name: "chip",
+    values: [
+        "hbci",
+        "hdll",
+    ],
+}
+
+soong_config_module_type {
+    name: "uwb_cc_defaults",
+    module_type: "cc_defaults",
+    config_namespace: "nxp_uwb",
+    variables: ["chip"],
+    properties: [
+        "static_libs",
+    ],
+}
+
+uwb_cc_defaults {
+    name: "uwb_defaults",
+    soong_config_variables: {
+        chip: {
+            hdll: {
+                static_libs: [
+                    "nxp_uwb_hdll",
+                ],
+            },
+            conditions_default: {
+                static_libs: [
+                    "nxp_uwb_hbci",
+                ],
+            },
+        },
+    },
+}
+
 cc_library_shared {
     name: "uwb_uci.helios",
     defaults: [
         "hidl_defaults",
+        "uwb_defaults",
     ],
     proprietary: true,
     srcs: [
-        "halimpl/hal/sr1xx/*.cc",
-        "halimpl/inc/common/*.cc",
         "halimpl/hal/*.cc",
         "halimpl/log/*.cc",
         "halimpl/tml/*.cc",
@@ -54,7 +89,6 @@ cc_library_shared {
     ],
     cflags: [
         "-DGENERIC",
-        "-DSOC_DEFAULT",
         "-DBUILDCFG=1",
         "-Wno-deprecated-register",
         "-Wno-unused-parameter",
