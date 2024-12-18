@@ -338,7 +338,7 @@ private:
       return;
 
     phNxpUciHal_Sem_t urskDeleteNtfWait;
-    phNxpUciHal_init_cb_data(&urskDeleteNtfWait, NULL);
+    phNxpUciHal_init_cb_data(&urskDeleteNtfWait);
 
     phNxpUciHal_rx_handler_add(UCI_MT_RSP, UCI_GID_PROPRIETARY_0X0F,
       UCI_MSG_URSK_DELETE, true,
