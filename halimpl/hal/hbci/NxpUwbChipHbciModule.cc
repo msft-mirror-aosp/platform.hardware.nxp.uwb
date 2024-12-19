@@ -42,7 +42,7 @@ static void report_binding_status(uint8_t binding_status)
 static bool otp_read_data(const uint8_t channel, const uint8_t param_id, uint8_t *buffer, size_t len)
 {
   phNxpUciHal_Sem_t calib_data_ntf_wait;
-  phNxpUciHal_init_cb_data(&calib_data_ntf_wait, NULL);
+  phNxpUciHal_init_cb_data(&calib_data_ntf_wait);
 
   // NXP_READ_CALIB_DATA_NTF
   bool received = false;
@@ -168,7 +168,7 @@ static tHAL_UWB_STATUS sr1xx_do_bind(uint8_t *binding_status, uint8_t *remain_co
 
   // register rx handler for UWB_ESE_BINDING_NTF
   phNxpUciHal_Sem_t binding_ntf_wait;
-  phNxpUciHal_init_cb_data(&binding_ntf_wait, NULL);
+  phNxpUciHal_init_cb_data(&binding_ntf_wait);
 
   auto binding_ntf_cb =
     [&](size_t packet_len, const uint8_t *packet) mutable -> bool
@@ -230,7 +230,7 @@ static tHAL_UWB_STATUS sr1xx_check_binding_status(uint8_t *binding_status)
   // register rx handler for UWB_ESE_BINDING_CHECK_NTF
   uint8_t binding_status_got = UWB_DEVICE_UNKNOWN;
   phNxpUciHal_Sem_t binding_check_ntf_wait;
-  phNxpUciHal_init_cb_data(&binding_check_ntf_wait, NULL);
+  phNxpUciHal_init_cb_data(&binding_check_ntf_wait);
   auto binding_check_ntf_cb = [&](size_t packet_len, const uint8_t *packet) mutable -> bool {
     if (packet_len >= UCI_RESPONSE_STATUS_OFFSET) {
       binding_status_got = packet[UCI_RESPONSE_STATUS_OFFSET];
