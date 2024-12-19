@@ -659,6 +659,7 @@ private:
         break;
       }
       if (msg->sync_) {
+        std::lock_guard<std::mutex> lock(sync_mutex_);
         msg->cond_flag = true;
         msg->cond_.notify_one();
       }
@@ -676,7 +677,7 @@ private:
     if (msg->sync_) {
       std::unique_lock<std::mutex> lock(sync_mutex_);
       if (!msg->cond_.wait_for(lock, std::chrono::milliseconds(kQueueTimeoutMs),
-                               [msg] { return msg->cond_flag; })) {
+                               [&msg] { return msg->cond_flag; })) {
         NXPLOG_UCIHAL_E("SessionTrack: timeout to process %d", static_cast<int>(msg->type_));
       }
     }
