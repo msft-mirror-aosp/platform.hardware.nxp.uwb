@@ -95,6 +95,10 @@ private:
   static constexpr long kQueueTimeoutMs = 2000;
   static constexpr long kUrskDeleteNtfTimeoutMs = 500;
 
+  // used when unregistered session handle is processed.
+  static constexpr uint32_t kUnknownSessionId = 0xFFFFFFFF;
+  static constexpr uint8_t kUnknownSessionType = 0xFF;
+
 private:
   std::shared_ptr<phNxpUciHal_RxHandler> rx_handler_session_status_ntf_;
   std::unordered_map<uint32_t, std::shared_ptr<SessionInfo>> sessions_;
@@ -180,28 +184,17 @@ public:
     auto session_init_rsp_cb =
       [this, session_id, session_type](size_t packet_len, const uint8_t *packet) -> bool
     {
-      if (packet_len != UCI_MSG_SESSION_STATE_INIT_RSP_LEN )
+      if (packet_len != UCI_MSG_SESSION_STATE_INIT_RSP_LEN) {
+        NXPLOG_UCIHAL_E("Unrecognized SessionInitRsp");
         return false;
+      }
 
       uint8_t status = packet[UCI_MSG_SESSION_STATE_INIT_RSP_STATUS_OFFSET];
-      uint32_t handle = le_bytes_to_cpu<uint32_t>(&packet[UCI_MSG_SESSION_STATE_INIT_RSP_HANDLE_OFFSET]);
       if (status != UWBSTATUS_SUCCESS)
         return false;
 
-      bool was_idle;
-      {
-        std::lock_guard<std::mutex> lock(sessions_lock_);
-
-        was_idle = IsDeviceIdle();
-
-        sessions_.emplace(std::make_pair(handle,
-                                         std::make_shared<SessionInfo>(session_id, session_type)));
-      }
-      if (was_idle) {
-        NXPLOG_UCIHAL_D("Queue Active");
-        QueueSessionTrackWork(SessionTrackWorkType::ACTIVATE);
-      }
-
+      uint32_t handle = le_bytes_to_cpu<uint32_t>(&packet[UCI_MSG_SESSION_STATE_INIT_RSP_HANDLE_OFFSET]);
+      AddNewSession(handle, session_id, session_type);
       return false;
     };
 
@@ -214,10 +207,11 @@ public:
   // Called by upper-layer's SetAppConfig command handler
   void OnChannelConfig(uint32_t session_handle, uint8_t channel) {
     // Update channel info
-    std::lock_guard<std::mutex> lock(sessions_lock_);
     auto pSessionInfo = GetSessionInfo(session_handle);
-    if (!pSessionInfo)
-      return;
+    if (!pSessionInfo) {
+      NXPLOG_UCIHAL_E("Unrecognized session app config detected, handle=0x%x", session_handle);
+      pSessionInfo = AddNewSession(session_handle, kUnknownSessionId, kUnknownSessionType);
+    }
     pSessionInfo->channel_ = channel;
   }
 
@@ -274,15 +268,18 @@ public:
 
     uint32_t session_handle = le_bytes_to_cpu<uint32_t>(&packet[UCI_MSG_SESSION_START_HANDLE_OFFSET]);
 
-    std::shared_ptr<SessionInfo> pSessionInfo;
-    {
-      std::lock_guard<std::mutex> lock(sessions_lock_);
-      pSessionInfo = GetSessionInfo(session_handle);
-    }
+    std::shared_ptr<SessionInfo> pSessionInfo = GetSessionInfo(session_handle);
 
     // Check STS_INDEX and fetch if it was not set by upper-layer
-    if (!pSessionInfo || pSessionInfo->session_type_ != kSessionType_CCCRanging)
+    if (!pSessionInfo) {
+      NXPLOG_UCIHAL_E("Unrecognized session start detected, handle=0x%x", session_handle);
+      pSessionInfo = AddNewSession(session_handle, kUnknownSessionId, kUnknownSessionType);
+    }
+
+    // Patches STS_INDEX only for CCC session.
+    if (pSessionInfo->session_type_ != kSessionType_CCCRanging) {
       return;
+    }
 
     auto result = QueryStsIndex(session_handle);
     if (!result.first) {
@@ -523,39 +520,29 @@ private:
     uint32_t session_handle = le_bytes_to_cpu<uint32_t>(&packet[UCI_MSG_SESSION_STATUS_NTF_HANDLE_OFFSET]);
     uint8_t session_state = packet[UCI_MSG_SESSION_STATUS_NTF_STATE_OFFSET];
 
-    bool is_idle = false;
-    {
-      std::lock_guard<std::mutex> lock(sessions_lock_);
-
-      auto pSessionInfo = GetSessionInfo(session_handle);
-      if (pSessionInfo) {
-        NXPLOG_UCIHAL_D("SessionTrack: update session handle 0x%08x state %u", session_handle, session_state);
-        pSessionInfo->session_state_ = session_state;
-      }
-
-      if (session_state == UCI_MSG_SESSION_STATE_DEINIT) {
-        NXPLOG_UCIHAL_D("SessionTrack: remove session handle 0x%08x", session_handle);
-
-        if (delete_ursk_ccc_enabled_ && pSessionInfo &&
-            pSessionInfo->session_type_ == kSessionType_CCCRanging) {
-
-          // If this CCC ranging session, issue DELETE_URSK_CMD for this session.
-          // This is executed on client thread, we shouldn't block the execution of this thread.
-          QueueDeleteUrsk(pSessionInfo);
-        }
-        sessions_.erase(session_handle);
-        is_idle = IsDeviceIdle();
-      } else if (session_state == UCI_MSG_SESSION_STATE_ACTIVE) {
-        // mark this session has been started at
-        pSessionInfo->ranging_started_ = true;
-      }
+    auto pSessionInfo = GetSessionInfo(session_handle);
+    if (pSessionInfo == nullptr) {
+      NXPLOG_UCIHAL_E("SessionTrack: Unrecognized session status received, handle=0x%x", session_handle);
+      AddNewSession(session_handle, kUnknownSessionId, kUnknownSessionType);
+      pSessionInfo = GetSessionInfo(session_handle);
     }
 
-    if (is_idle) { // transition to IDLE
-      NXPLOG_UCIHAL_D("Queue Idle");
-      QueueSessionTrackWork(SessionTrackWorkType::IDLE);
-    }
+    NXPLOG_UCIHAL_D("SessionTrack: update session handle 0x%08x state %u", session_handle, session_state);
+    pSessionInfo->session_state_ = session_state;
 
+    if (session_state == UCI_MSG_SESSION_STATE_DEINIT) {
+      if (delete_ursk_ccc_enabled_ &&
+          pSessionInfo->session_type_ == kSessionType_CCCRanging) {
+
+        // If this CCC ranging session, issue DELETE_URSK_CMD for this session.
+        // This is executed on client thread, we shouldn't block the execution of this thread.
+        QueueDeleteUrsk(pSessionInfo);
+      }
+      RemoveSession(session_handle);
+    } else if (session_state == UCI_MSG_SESSION_STATE_ACTIVE) {
+      // mark this session has been started at
+      pSessionInfo->ranging_started_ = true;
+    }
     return false;
   }
 
@@ -699,11 +686,48 @@ private:
     QueueSessionTrackWork(msg);
   }
 
+  // Adds a new session info and transition to ACTIVE when it was in idle.
+  std::shared_ptr<SessionInfo> AddNewSession(uint32_t session_handle,
+                                             uint32_t session_id,
+                                             uint8_t session_type) {
+    NXPLOG_UCIHAL_D("SessionTrack: add session handle 0x%08x", session_handle);
+    std::lock_guard<std::mutex> lock(sessions_lock_);
+
+    bool was_idle = IsDeviceIdle();
+
+    std::shared_ptr<SessionInfo> info =
+      std::make_shared<SessionInfo>(session_id, session_type);
+    sessions_.emplace(std::make_pair(session_handle, info));
+
+    if (was_idle) {
+      NXPLOG_UCIHAL_D("Queue Active");
+      QueueSessionTrackWork(SessionTrackWorkType::ACTIVATE);
+    }
+    return info;
+  }
+
+  // Removes a session and transition to IDLE when it's IDLE.
+  // Called by SessionStatusNtf::DEINIT
+  void RemoveSession(uint32_t session_handle) {
+    NXPLOG_UCIHAL_D("SessionTrack: remove session handle 0x%08x", session_handle);
+
+    std::lock_guard<std::mutex> lock(sessions_lock_);
+
+    sessions_.erase(session_handle);
+
+    if (IsDeviceIdle()) {
+      NXPLOG_UCIHAL_D("Queue Idle");
+      QueueSessionTrackWork(SessionTrackWorkType::IDLE);
+    }
+  }
+
   std::shared_ptr<SessionInfo> GetSessionInfo(uint32_t session_handle) {
+    std::lock_guard<std::mutex> lock(sessions_lock_);
+
     auto it = sessions_.find(session_handle);
     if (it == sessions_.end()) {
       NXPLOG_UCIHAL_E("SessionTrack: Session 0x%08x not registered", session_handle);
-      return NULL;
+      return nullptr;
     }
     return it->second;
   }
