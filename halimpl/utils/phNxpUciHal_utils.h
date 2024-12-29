@@ -47,18 +47,11 @@ enum phNxpUciHal_Pkt_Type {
   NXP_TML_FW_DNLD_RSP_UWBS_2_AP,
 };
 
-
+// TODO: 1) use UciHalSemaphore, 2) use std::binary_semaphore
 /* Semaphore handling structure */
 typedef struct phNxpUciHal_Sem {
-  /* Semaphore used to wait for callback */
   sem_t sem;
-
-  /* Used to store the status sent by the callback */
   tHAL_UWB_STATUS status;
-
-  /* Used to provide a local context to the callback */
-  void* pContext;
-
 } phNxpUciHal_Sem_t;
 
 /* Semaphore helper macros */
@@ -77,8 +70,7 @@ static inline int SEM_POST(phNxpUciHal_Sem_t* pCallbackData)
 bool phNxpUciHal_init_monitor(void);
 void phNxpUciHal_cleanup_monitor(void);
 
-tHAL_UWB_STATUS phNxpUciHal_init_cb_data(phNxpUciHal_Sem_t* pCallbackData,
-                                         void* pContext);
+tHAL_UWB_STATUS phNxpUciHal_init_cb_data(phNxpUciHal_Sem_t* pCallbackData);
 
 int phNxpUciHal_sem_timed_wait_msec(phNxpUciHal_Sem_t* pCallbackData, long msec);
 
@@ -101,10 +93,7 @@ void phNxpUciHal_cleanup_cb_data(phNxpUciHal_Sem_t* pCallbackData);
 class UciHalSemaphore {
 public:
   UciHalSemaphore() {
-    phNxpUciHal_init_cb_data(&sem, NULL);
-  }
-  UciHalSemaphore(void *context) {
-    phNxpUciHal_init_cb_data(&sem, context);
+    phNxpUciHal_init_cb_data(&sem);
   }
   virtual ~UciHalSemaphore() {
     phNxpUciHal_cleanup_cb_data(&sem);
@@ -116,6 +105,7 @@ public:
     return phNxpUciHal_sem_timed_wait_msec(&sem, msec);
   }
   int post() {
+    sem.status = UWBSTATUS_SUCCESS;
     return sem_post(&sem.sem);
   }
   int post(tHAL_UWB_STATUS status) {
