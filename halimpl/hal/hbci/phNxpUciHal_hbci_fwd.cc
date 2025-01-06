@@ -27,7 +27,7 @@
 
 #include "phNxpConfig.h"
 #include "phNxpLog.h"
-#include "phNxpUciHal_fwd.h"
+#include "phNxpUciHal_hbci_fwd.h"
 #include <phNxpUciHal_utils.h>
 #include <phTmlUwb_spi.h>
 

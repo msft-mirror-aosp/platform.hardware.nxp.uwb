@@ -42,7 +42,7 @@ static void report_binding_status(uint8_t binding_status)
 static bool otp_read_data(const uint8_t channel, const uint8_t param_id, uint8_t *buffer, size_t len)
 {
   phNxpUciHal_Sem_t calib_data_ntf_wait;
-  phNxpUciHal_init_cb_data(&calib_data_ntf_wait, NULL);
+  phNxpUciHal_init_cb_data(&calib_data_ntf_wait);
 
   // NXP_READ_CALIB_DATA_NTF
   bool received = false;
@@ -168,7 +168,7 @@ static tHAL_UWB_STATUS sr1xx_do_bind(uint8_t *binding_status, uint8_t *remain_co
 
   // register rx handler for UWB_ESE_BINDING_NTF
   phNxpUciHal_Sem_t binding_ntf_wait;
-  phNxpUciHal_init_cb_data(&binding_ntf_wait, NULL);
+  phNxpUciHal_init_cb_data(&binding_ntf_wait);
 
   auto binding_ntf_cb =
     [&](size_t packet_len, const uint8_t *packet) mutable -> bool
@@ -230,7 +230,7 @@ static tHAL_UWB_STATUS sr1xx_check_binding_status(uint8_t *binding_status)
   // register rx handler for UWB_ESE_BINDING_CHECK_NTF
   uint8_t binding_status_got = UWB_DEVICE_UNKNOWN;
   phNxpUciHal_Sem_t binding_check_ntf_wait;
-  phNxpUciHal_init_cb_data(&binding_check_ntf_wait, NULL);
+  phNxpUciHal_init_cb_data(&binding_check_ntf_wait);
   auto binding_check_ntf_cb = [&](size_t packet_len, const uint8_t *packet) mutable -> bool {
     if (packet_len >= UCI_RESPONSE_STATUS_OFFSET) {
       binding_status_got = packet[UCI_RESPONSE_STATUS_OFFSET];
@@ -277,9 +277,9 @@ static int16_t sr1xx_extra_group_delay(const uint8_t ch)
   bool is_calibrated_with_d4x = false;
 
   int has_calibrated_with_fw_config = NxpConfig_GetStr(
-    "cal.fw_version", calibrated_with_fw, sizeof(calibrated_with_fw) - 1);
+      "cal.fw_version", calibrated_with_fw, sizeof(calibrated_with_fw) - 1);
 
-  if ( has_calibrated_with_fw_config ) {
+  if (has_calibrated_with_fw_config) {
     // Conf file has entry of `cal.fw_version`
     if ( ( 0 == memcmp("48.", calibrated_with_fw, 3)) ||
          ( 0 == memcmp("49.", calibrated_with_fw, 3))) {
@@ -323,10 +323,10 @@ static int16_t sr1xx_extra_group_delay(const uint8_t ch)
   return required_compensation;
 }
 
-class NxpUwbChipSr1xx final : public NxpUwbChip {
+class NxpUwbChipHbciModule final : public NxpUwbChip {
 public:
-  NxpUwbChipSr1xx();
-  virtual ~NxpUwbChipSr1xx();
+  NxpUwbChipHbciModule();
+  virtual ~NxpUwbChipHbciModule();
 
   tHAL_UWB_STATUS chip_init();
   tHAL_UWB_STATUS core_init();
@@ -349,16 +349,16 @@ private:
   uint8_t bindingStatus_;
 };
 
-NxpUwbChipSr1xx::NxpUwbChipSr1xx() :
+NxpUwbChipHbciModule::NxpUwbChipHbciModule() :
   bindingStatus_(UWB_DEVICE_UNKNOWN)
 {
 }
 
-NxpUwbChipSr1xx::~NxpUwbChipSr1xx()
+NxpUwbChipHbciModule::~NxpUwbChipHbciModule()
 {
 }
 
-bool NxpUwbChipSr1xx::onDeviceStatusNtf(size_t packet_len, const uint8_t* packet)
+bool NxpUwbChipHbciModule::onDeviceStatusNtf(size_t packet_len, const uint8_t* packet)
 {
   if(packet_len > UCI_RESPONSE_STATUS_OFFSET) {
     uint8_t status = packet[UCI_RESPONSE_STATUS_OFFSET];
@@ -369,7 +369,7 @@ bool NxpUwbChipSr1xx::onDeviceStatusNtf(size_t packet_len, const uint8_t* packet
   return false;
 }
 
-bool NxpUwbChipSr1xx::onGenericErrorNtf(size_t packet_len, const uint8_t* packet)
+bool NxpUwbChipHbciModule::onGenericErrorNtf(size_t packet_len, const uint8_t* packet)
 {
   if(packet_len > UCI_RESPONSE_STATUS_OFFSET) {
     uint8_t status = packet[UCI_RESPONSE_STATUS_OFFSET];
@@ -381,7 +381,7 @@ bool NxpUwbChipSr1xx::onGenericErrorNtf(size_t packet_len, const uint8_t* packet
   return false;
 }
 
-bool NxpUwbChipSr1xx::onBindingStatusNtf(size_t packet_len, const uint8_t* packet)
+bool NxpUwbChipHbciModule::onBindingStatusNtf(size_t packet_len, const uint8_t* packet)
 {
   if (packet_len > UCI_RESPONSE_STATUS_OFFSET) {
     bindingStatus_ = packet[UCI_RESPONSE_STATUS_OFFSET];
@@ -391,7 +391,7 @@ bool NxpUwbChipSr1xx::onBindingStatusNtf(size_t packet_len, const uint8_t* packe
   return true;
 }
 
-tHAL_UWB_STATUS NxpUwbChipSr1xx::check_binding()
+tHAL_UWB_STATUS NxpUwbChipHbciModule::check_binding()
 {
   // Wait for Binding status notification
   if (bindingStatusNtfWait_.getStatus() != UWBSTATUS_SUCCESS) {
@@ -408,9 +408,9 @@ tHAL_UWB_STATUS NxpUwbChipSr1xx::check_binding()
       return UWBSTATUS_SUCCESS;
   }
 
-  uint32_t val = 0;
+  unsigned long val = 0;
   NxpConfig_GetNum(NAME_UWB_BINDING_LOCKING_ALLOWED, &val, sizeof(val));
-  bool isBindingLockingAllowed = !!val;
+  bool isBindingLockingAllowed = (val != 0);
   if (!isBindingLockingAllowed) {
     return UWBSTATUS_SUCCESS;
   }
@@ -470,7 +470,7 @@ tHAL_UWB_STATUS NxpUwbChipSr1xx::check_binding()
 
 extern int phNxpUciHal_fw_download();
 
-tHAL_UWB_STATUS NxpUwbChipSr1xx::chip_init()
+tHAL_UWB_STATUS NxpUwbChipHbciModule::chip_init()
 {
   tHAL_UWB_STATUS status;
 
@@ -499,30 +499,30 @@ tHAL_UWB_STATUS NxpUwbChipSr1xx::chip_init()
   // register device status ntf handler
   deviceStatusNtfHandler_ = UciHalRxHandler(
       UCI_MT_NTF, UCI_GID_CORE, UCI_MSG_CORE_DEVICE_STATUS_NTF,
-      std::bind(&NxpUwbChipSr1xx::onDeviceStatusNtf, this, std::placeholders::_1, std::placeholders::_2)
+      std::bind(&NxpUwbChipHbciModule::onDeviceStatusNtf, this, std::placeholders::_1, std::placeholders::_2)
   );
 
   // register device error ntf handler
   genericErrorNtfHandler_ = UciHalRxHandler(
     UCI_MT_NTF, UCI_GID_CORE, UCI_MSG_CORE_GENERIC_ERROR_NTF,
-    std::bind(&NxpUwbChipSr1xx::onGenericErrorNtf, this, std::placeholders::_1, std::placeholders::_2)
+    std::bind(&NxpUwbChipHbciModule::onGenericErrorNtf, this, std::placeholders::_1, std::placeholders::_2)
   );
 
   // register binding status ntf handler
   bindingStatusNtfHandler_ = UciHalRxHandler(
       UCI_MT_NTF, UCI_GID_PROPRIETARY, UCI_MSG_BINDING_STATUS_NTF,
-      std::bind(&NxpUwbChipSr1xx::onBindingStatusNtf, this, std::placeholders::_1, std::placeholders::_2)
+      std::bind(&NxpUwbChipHbciModule::onBindingStatusNtf, this, std::placeholders::_1, std::placeholders::_2)
   );
 
   return status;
 }
 
-tHAL_UWB_STATUS NxpUwbChipSr1xx::core_init()
+tHAL_UWB_STATUS NxpUwbChipHbciModule::core_init()
 {
   return check_binding();
 }
 
-device_type_t NxpUwbChipSr1xx::get_device_type(const uint8_t *param, size_t param_len)
+device_type_t NxpUwbChipHbciModule::get_device_type(const uint8_t *param, size_t param_len)
 {
   // 'SR100S' or 'SR1..T'
   if (param_len >= 6) {
@@ -535,7 +535,7 @@ device_type_t NxpUwbChipSr1xx::get_device_type(const uint8_t *param, size_t para
   return DEVICE_TYPE_UNKNOWN;
 }
 
-tHAL_UWB_STATUS NxpUwbChipSr1xx::read_otp(extcal_param_id_t id, uint8_t *data, size_t data_len, size_t *retlen)
+tHAL_UWB_STATUS NxpUwbChipHbciModule::read_otp(extcal_param_id_t id, uint8_t *data, size_t data_len, size_t *retlen)
 {
   return sr1xx_read_otp(id, data, data_len, retlen);
 }
@@ -569,7 +569,7 @@ tHAL_UWB_STATUS sr1xx_apply_calibration_ant_delay(extcal_param_id_t id, const ui
   return sr1xx_apply_calibration(id, ch, patched_data.data(), data_len);
 }
 
-tHAL_UWB_STATUS NxpUwbChipSr1xx::apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len)
+tHAL_UWB_STATUS NxpUwbChipHbciModule::apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len)
 {
   if (id == EXTCAL_PARAM_RX_ANT_DELAY) {
     return sr1xx_apply_calibration_ant_delay(id, ch, data, data_len);
@@ -581,7 +581,7 @@ tHAL_UWB_STATUS NxpUwbChipSr1xx::apply_calibration(extcal_param_id_t id, const u
 }
 
 tHAL_UWB_STATUS
-NxpUwbChipSr1xx::get_supported_channels(const uint8_t **cal_channels, uint8_t *nr)
+NxpUwbChipHbciModule::get_supported_channels(const uint8_t **cal_channels, uint8_t *nr)
 {
   static const uint8_t sr100_cal_channels[] = {5, 6, 8, 9};
   *cal_channels = sr100_cal_channels;
@@ -591,5 +591,5 @@ NxpUwbChipSr1xx::get_supported_channels(const uint8_t **cal_channels, uint8_t *n
 
 std::unique_ptr<NxpUwbChip> GetUwbChip()
 {
-  return std::make_unique<NxpUwbChipSr1xx>();
+  return std::make_unique<NxpUwbChipHbciModule>();
 }
