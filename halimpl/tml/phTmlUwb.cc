@@ -103,6 +103,8 @@ static void phTmlUwb_WaitWriteComplete(void);
 static void phTmlUwb_SignalWriteComplete(void);
 static int phTmlUwb_WaitReadInit(void);
 
+static void phTmlUwb_DeferredCall(std::shared_ptr<phLibUwb_Message> msg);
+
 /* Function definitions */
 
 /*******************************************************************************
@@ -672,7 +674,7 @@ static void phTmlUwb_StopWriterThread(void)
 ** Returns          None
 **
 *******************************************************************************/
-void phTmlUwb_DeferredCall(std::shared_ptr<phLibUwb_Message> msg)
+static void phTmlUwb_DeferredCall(std::shared_ptr<phLibUwb_Message> msg)
 {
   gpphTmlUwb_Context->pClientMq->send(msg);
 }
