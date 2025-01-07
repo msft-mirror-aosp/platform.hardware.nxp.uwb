@@ -46,7 +46,6 @@ using android::base::StringPrintf;
 /* UCI HAL Control structure */
 phNxpUciHal_Control_t nxpucihal_ctrl;
 
-bool uwb_device_initialized = false;
 bool uwb_get_platform_id = false;
 uint32_t timeoutTimerId = 0;
 char persistant_log_path[120];
@@ -606,8 +605,6 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
     return UWBSTATUS_FAILED;
   }
 
-  uwb_device_initialized = false;
-
   CONCURRENCY_LOCK();
 
   SessionTrack_deinit();
@@ -873,8 +870,6 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
     return UWBSTATUS_FAILED;
   }
 
-  uwb_device_initialized = false;
-
   // Device Status Notification
   UciHalSemaphore devStatusNtfWait;
   uint8_t dev_status = UWB_DEVICE_ERROR;
@@ -949,7 +944,6 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
   }
   phNxpUciHal_extcal_handle_coreinit();
 
-  uwb_device_initialized = true;
   phNxpUciHal_getVersionInfo();
 
   return UWBSTATUS_SUCCESS;
