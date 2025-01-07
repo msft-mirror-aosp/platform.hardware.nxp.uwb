@@ -107,12 +107,17 @@ class CUwbNxpConfig
 {
 public:
     CUwbNxpConfig();
-    CUwbNxpConfig(CUwbNxpConfig&& config);
     CUwbNxpConfig(const char *filepath);
-    virtual ~CUwbNxpConfig();
+
+    // only movable
+    CUwbNxpConfig(CUwbNxpConfig&& config);
     CUwbNxpConfig& operator=(CUwbNxpConfig&& config);
 
-    bool open(const char *filepath);
+    CUwbNxpConfig(CUwbNxpConfig& config) = delete;
+    CUwbNxpConfig& operator=(CUwbNxpConfig& config) = delete;
+
+    virtual ~CUwbNxpConfig();
+
     bool isValid() const { return mValidFile; }
     void reset() {
         m_map.clear();
@@ -130,8 +135,9 @@ public:
     const unordered_map<string, uwbParam>& get_data() const {
         return m_map;
     }
+
 private:
-    bool    readConfig();
+    bool readConfig();
 
     unordered_map<string, uwbParam> m_map;
     bool    mValidFile;
@@ -421,9 +427,9 @@ CUwbNxpConfig::~CUwbNxpConfig()
 {
 }
 
-CUwbNxpConfig::CUwbNxpConfig(const char *filepath)
+CUwbNxpConfig::CUwbNxpConfig(const char *filepath) : mValidFile(false), mFilePath(filepath)
 {
-    open(filepath);
+    readConfig();
 }
 
 CUwbNxpConfig::CUwbNxpConfig(CUwbNxpConfig&& config)
@@ -443,14 +449,6 @@ CUwbNxpConfig& CUwbNxpConfig::operator=(CUwbNxpConfig&& config)
 
     config.mValidFile = false;
     return *this;
-}
-
-bool CUwbNxpConfig::open(const char *filepath)
-{
-    mValidFile = false;
-    mFilePath = filepath;
-
-    return readConfig();
 }
 
 /*******************************************************************************
@@ -731,7 +729,7 @@ bool CascadeConfig::evaluateExtraConfPaths()
 
         // re-open the file if filepath got re-evaluated.
         if (new_filename != config.getFilePath()) {
-            config.open(new_filename.c_str());
+            config = CUwbNxpConfig(new_filename.c_str());
             updated = true;
         }
     }
