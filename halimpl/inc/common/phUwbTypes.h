@@ -108,19 +108,6 @@ struct phLibUwb_Message {
 };
 
 /*
- * Possible Hardware Configuration exposed to upper layer.
- * Typically this should be at least the communication link (Ex:"COM1","COM2")
- * the controller is connected to.
- */
-typedef struct phLibUwb_sConfig {
-  uint8_t* pLogFile; /* Log File Name*/
-  /* Hardware communication link to the controller */
-  phLibUwb_eConfigLinkType nLinkType;
-  /* message queue on the client thread */
-  std::shared_ptr<MessageQueue<phLibUwb_Message>> pClientMq;
-} phLibUwb_sConfig_t, *pphLibUwb_sConfig_t;
-
-/*
  * Deferred message specific info declaration.
  * This type of information is packed as message data when
  * PH_LIBUWB_DEFERREDCALL_MSG

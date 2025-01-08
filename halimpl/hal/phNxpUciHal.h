@@ -237,7 +237,9 @@ private:
 typedef struct phNxpUciHal_Control {
   phNxpUci_HalStatus halStatus; /* Indicate if hal is open or closed */
   std::thread client_thread;    /* Integration thread handle */
-  phLibUwb_sConfig_t gDrvCfg;   /* Driver config data */
+
+  // a main message queue on the "client" thread.
+  std::shared_ptr<MessageQueue<phLibUwb_Message>> pClientMq;
 
   std::unique_ptr<NxpUwbChip> uwb_chip;
 
