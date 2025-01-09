@@ -114,9 +114,7 @@ public:
 
     std::span<const uint8_t> arr_value() const { return m_arrValue; }
 
-    size_t str_arr_len() const { return m_arrStrValue.size(); }
-    std::string_view str_arr_elem(const int index) const { return m_arrStrValue[index]; }
-    size_t str_arr_elem_len(const int index) const { return m_arrStrValue[index].length(); }
+    std::vector<std::string> str_arr_value() const { return m_arrStrValue; }
 
     void dump(const std::string &tag) const {
         if (m_type == type::NUMBER) {
@@ -764,18 +762,18 @@ void CascadeConfig::init(std::string_view main_config)
 
     // Pick one libuwb-countrycode.conf with the highest VERSION number
     // from multiple directories specified by COUNTRY_CODE_CAP_FILE_LOCATION
-    std::optional<size_t> arrLen = NxpConfig_GetStrArrayLen(NAME_COUNTRY_CODE_CAP_FILE_LOCATION);
-    if (arrLen.has_value() && *arrLen > 0) {
+    // XXX: Can't we just drop this feature of COUNTRY_CODE_CAP_FILE_LOCATION?
+    std::vector<std::string> locations = NxpConfig_GetStrArray(NAME_COUNTRY_CODE_CAP_FILE_LOCATION);
+    if ( locations.size() > 0) {
         int max_version = -1;
         std::string strPickedPath;
         bool foundCapFile = false;
         CUwbNxpConfig pickedConfig;
 
-        for (auto i = 0; i < *arrLen; i++) {
-            std::optional<std::string_view> loc = NxpConfig_GetStrArrayVal(NAME_COUNTRY_CODE_CAP_FILE_LOCATION, i);
-            if (!loc.has_value()) { continue;  }
+        for (const std::string& loc : locations) {
+            if (loc.empty()) { continue; }
 
-            std::string strPath(*loc);
+            std::string strPath(loc);
             strPath += country_code_config_name;
             ALOGV("Try to load %s", strPath.c_str());
 
@@ -924,23 +922,11 @@ std::optional<bool> NxpConfig_GetBool(std::string_view key)
     return pParam->numValue();
 }
 
-std::optional<size_t> NxpConfig_GetStrArrayLen(std::string_view key)
+std::vector<std::string> NxpConfig_GetStrArray(std::string_view key)
 {
     const uwbParam* param = gConfig.find(key);
     if (param == nullptr || param->getType() != uwbParam::type::STRINGARRAY) {
-        return std::nullopt;
+        return std::vector<std::string>{};
     }
-    return param->str_arr_len();
-}
-
-std::optional<std::string_view> NxpConfig_GetStrArrayVal(std::string_view key, int idx)
-{
-    const uwbParam* param = gConfig.find(key);
-    if (param == nullptr || param->getType() != uwbParam::type::STRINGARRAY) {
-        return std::nullopt;
-    }
-    if (idx < 0 || idx >= param->str_arr_len()) {
-        return std::nullopt;
-    }
-    return param->str_arr_elem(idx);
+    return param->str_arr_value();
 }
