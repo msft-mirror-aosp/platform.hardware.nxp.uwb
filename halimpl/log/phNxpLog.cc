@@ -15,13 +15,16 @@
  */
 
 #define LOG_TAG "NxpUwbHal"
-#include "phNxpLog.h"
-#include "phNxpConfig.h"
+
+#include <string>
+
 #include <cutils/properties.h>
 #include <log/log.h>
-#include <stdio.h>
-#include <string.h>
 
+#include "phNxpLog.h"
+#include "phNxpConfig.h"
+
+// TODO: use constexpr and move to header
 const char* NXPLOG_ITEM_EXTNS = "NxpExtns";
 const char* NXPLOG_ITEM_UCIHAL = "NxpUwbHal";
 const char* NXPLOG_ITEM_UCIX = "NxpUciX";
@@ -29,31 +32,17 @@ const char* NXPLOG_ITEM_UCIR = "NxpUciR";
 const char* NXPLOG_ITEM_FWDNLD = "NxpFwDnld";
 const char* NXPLOG_ITEM_TML = "NxpUwbTml";
 
-#ifdef NXP_HCI_REQ
-const char* NXPLOG_ITEM_HCPX = "NxpHcpX";
-const char* NXPLOG_ITEM_HCPR = "NxpHcpR";
-#endif /*NXP_HCI_REQ*/
-
 /* global log level structure */
 uci_log_level_t gLog_level;
 
-/*******************************************************************************
- *
- * Function         phNxpLog_SetGlobalLogLevel
- *
- * Description      Sets the global log level for all modules.
- *                  This value is set by Android property
- *uwb.nxp_log_level_global.
- *                  If value can be overridden by module log level.
- *
- * Returns          The value of global log level
- *
- ******************************************************************************/
-static uint8_t phNxpLog_SetGlobalLogLevel(void) {
+namespace {
+
+uint8_t phNxpLog_SetGlobalLogLevel(void) {
   uint8_t level = NXPLOG_DEFAULT_LOGLEVEL;
   unsigned long num = 0;
   char valueStr[PROPERTY_VALUE_MAX] = {0};
 
+  // TODO: use property_get_int32()
   int len = property_get(PROP_NAME_NXPLOG_GLOBAL_LOGLEVEL, valueStr, "");
   if (len > 0) {
     // let Android property override .conf variable
@@ -64,147 +53,64 @@ static uint8_t phNxpLog_SetGlobalLogLevel(void) {
   return level;
 }
 
-/*******************************************************************************
- *
- * Function         phNxpLog_SetHALLogLevel
- *
- * Description      Sets the HAL layer log level.
- *
- * Returns          void
- *
- ******************************************************************************/
-static void phNxpLog_SetHALLogLevel(uint8_t level) {
-  unsigned long num = 0;
-  int len;
-  char valueStr[PROPERTY_VALUE_MAX] = {0};
-
-  if (NxpConfig_GetNum(NAME_NXPLOG_HAL_LOGLEVEL, &num, sizeof(num))) {
-    gLog_level.hal_log_level =
-        (level > (unsigned char)num) ? level : (unsigned char)num;
-    ;
+// TODO: add helper function for reading property + configuration
+void phNxpLog_SetHALLogLevel(uint8_t level) {
+  int32_t prop_level = property_get_int32(PROP_NAME_NXPLOG_HAL_LOGLEVEL, 0);
+  if (prop_level > 0) {
+    gLog_level.hal_log_level = prop_level;
+    return;
   }
-
-  len = property_get(PROP_NAME_NXPLOG_HAL_LOGLEVEL, valueStr, "");
-  if (len > 0) {
-    /* let Android property override .conf variable */
-    sscanf(valueStr, "%lu", &num);
-
-    gLog_level.hal_log_level = (unsigned char)num;
-  }
+  uint8_t conf_level = NxpConfig_GetNum<uint8_t>(NAME_NXPLOG_HAL_LOGLEVEL).value_or(0);
+  gLog_level.hal_log_level = std::max(level, conf_level);
 }
 
-/*******************************************************************************
- *
- * Function         phNxpLog_SetExtnsLogLevel
- *
- * Description      Sets the Extensions layer log level.
- *
- * Returns          void
- *
- ******************************************************************************/
-static void phNxpLog_SetExtnsLogLevel(uint8_t level) {
-  unsigned long num = 0;
-  int len;
-  char valueStr[PROPERTY_VALUE_MAX] = {0};
-  if (NxpConfig_GetNum(NAME_NXPLOG_EXTNS_LOGLEVEL, &num, sizeof(num))) {
-    gLog_level.extns_log_level =
-        (level > (unsigned char)num) ? level : (unsigned char)num;
-    ;
+void phNxpLog_SetExtnsLogLevel(uint8_t level) {
+  int32_t prop_level = property_get_int32(PROP_NAME_NXPLOG_EXTNS_LOGLEVEL, 0);
+  if (prop_level > 0) {
+    gLog_level.extns_log_level = prop_level;
+    return;
   }
-
-  len = property_get(PROP_NAME_NXPLOG_EXTNS_LOGLEVEL, valueStr, "");
-  if (len > 0) {
-    /* let Android property override .conf variable */
-    sscanf(valueStr, "%lu", &num);
-    gLog_level.extns_log_level = (unsigned char)num;
-  }
+  uint8_t conf_level = NxpConfig_GetNum<uint8_t>(NAME_NXPLOG_EXTNS_LOGLEVEL).value_or(0);
+  gLog_level.extns_log_level = std::max(level, conf_level);
 }
 
-/*******************************************************************************
- *
- * Function         phNxpLog_SetTmlLogLevel
- *
- * Description      Sets the Tml layer log level.
- *
- * Returns          void
- *
- ******************************************************************************/
-static void phNxpLog_SetTmlLogLevel(uint8_t level) {
-  unsigned long num = 0;
-  int len;
-  char valueStr[PROPERTY_VALUE_MAX] = {0};
-  if (NxpConfig_GetNum(NAME_NXPLOG_TML_LOGLEVEL, &num, sizeof(num))) {
-    gLog_level.tml_log_level =
-        (level > (unsigned char)num) ? level : (unsigned char)num;
-    ;
+void phNxpLog_SetTmlLogLevel(uint8_t level) {
+  int32_t prop_level = property_get_int32(PROP_NAME_NXPLOG_TML_LOGLEVEL, 0);
+  if (prop_level > 0) {
+    gLog_level.tml_log_level = prop_level;
+    return;
   }
 
-  len = property_get(PROP_NAME_NXPLOG_TML_LOGLEVEL, valueStr, "");
-  if (len > 0) {
-    /* let Android property override .conf variable */
-    sscanf(valueStr, "%lu", &num);
-    gLog_level.tml_log_level = (unsigned char)num;
-  }
+  uint8_t conf_level = NxpConfig_GetNum<uint8_t>(NAME_NXPLOG_TML_LOGLEVEL).value_or(0);
+  gLog_level.tml_log_level = std::max(level, conf_level);
 }
 
-/*******************************************************************************
- *
- * Function         phNxpLog_SetDnldLogLevel
- *
- * Description      Sets the FW download layer log level.
- *
- * Returns          void
- *
- ******************************************************************************/
-static void phNxpLog_SetDnldLogLevel(uint8_t level) {
-  unsigned long num = 0;
-  int len;
-  char valueStr[PROPERTY_VALUE_MAX] = {0};
-  if (NxpConfig_GetNum(NAME_NXPLOG_FWDNLD_LOGLEVEL, &num, sizeof(num))) {
-    gLog_level.dnld_log_level =
-        (level > (unsigned char)num) ? level : (unsigned char)num;
-    ;
+void phNxpLog_SetDnldLogLevel(uint8_t level) {
+  int32_t prop_level = property_get_int32(PROP_NAME_NXPLOG_FWDNLD_LOGLEVEL, 0);
+  if (prop_level > 0) {
+    gLog_level.dnld_log_level = prop_level;
+    return;
   }
 
-  len = property_get(PROP_NAME_NXPLOG_FWDNLD_LOGLEVEL, valueStr, "");
-  if (len > 0) {
-    /* let Android property override .conf variable */
-    sscanf(valueStr, "%lu", &num);
-    gLog_level.dnld_log_level = (unsigned char)num;
-  }
+  uint8_t conf_level = NxpConfig_GetNum<uint8_t>(NAME_NXPLOG_FWDNLD_LOGLEVEL).value_or(0);
+  gLog_level.dnld_log_level = std::max(level, conf_level);
 }
 
-/*******************************************************************************
- *
- * Function         phNxpLog_SetUciTxLogLevel
- *
- * Description      Sets the UCI transaction layer log level.
- *
- * Returns          void
- *
- ******************************************************************************/
-static void phNxpLog_SetUciTxLogLevel(uint8_t level) {
-  unsigned long num = 0;
-  int len;
-  char valueStr[PROPERTY_VALUE_MAX] = {0};
-  if (NxpConfig_GetNum(NAME_NXPLOG_UCIX_LOGLEVEL, &num, sizeof(num))) {
-    gLog_level.ucix_log_level =
-        (level > (unsigned char)num) ? level : (unsigned char)num;
-  }
-  if (NxpConfig_GetNum(NAME_NXPLOG_UCIR_LOGLEVEL, &num, sizeof(num))) {
-    gLog_level.ucir_log_level =
-        (level > (unsigned char)num) ? level : (unsigned char)num;
-    ;
+void phNxpLog_SetUciTxLogLevel(uint8_t level) {
+  int32_t prop_level = property_get_int32(PROP_NAME_NXPLOG_UCI_LOGLEVEL, 0);
+  if (prop_level > 0) {
+    gLog_level.ucix_log_level = prop_level;
+    gLog_level.ucir_log_level = prop_level;
+    return;
   }
 
-  len = property_get(PROP_NAME_NXPLOG_UCI_LOGLEVEL, valueStr, "");
-  if (len > 0) {
-    /* let Android property override .conf variable */
-    sscanf(valueStr, "%lu", &num);
-    gLog_level.ucix_log_level = (unsigned char)num;
-    gLog_level.ucir_log_level = (unsigned char)num;
-  }
+  uint8_t conf_level_x = NxpConfig_GetNum<uint8_t>(NAME_NXPLOG_UCIX_LOGLEVEL).value_or(0);
+  uint8_t conf_level_r = NxpConfig_GetNum<uint8_t>(NAME_NXPLOG_UCIR_LOGLEVEL).value_or(0);
+  gLog_level.ucix_log_level = std::max(level, conf_level_x);
+  gLog_level.ucir_log_level = std::max(level, conf_level_r);
 }
+
+}   // namespace
 
 /******************************************************************************
  * Function         phNxpLog_InitializeLogLevel
