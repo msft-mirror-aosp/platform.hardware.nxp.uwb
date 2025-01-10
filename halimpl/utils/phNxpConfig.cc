@@ -19,6 +19,7 @@
 //#define LOG_NDEBUG 0
 #define LOG_TAG "NxpUwbConf"
 
+#include <filesystem>
 #include <limits.h>
 #include <sys/stat.h>
 
@@ -50,6 +51,7 @@ static const char default_nxp_config_path[] = "/vendor/etc/libuwb-nxp.conf";
 static const char country_code_config_name[] = "libuwb-countrycode.conf";
 static const char nxp_uci_config_file[] = "libuwb-uci.conf";
 static const char default_uci_config_path[] = "/vendor/etc/";
+static const char factory_file_prefix[] = "cal-factory";
 
 static const char country_code_specifier[] = "<country>";
 static const char sku_specifier[] = "<sku>";
@@ -107,13 +109,19 @@ class CUwbNxpConfig
 {
 public:
     CUwbNxpConfig();
-    CUwbNxpConfig(CUwbNxpConfig&& config);
     CUwbNxpConfig(const char *filepath);
-    virtual ~CUwbNxpConfig();
+
+    // only movable
+    CUwbNxpConfig(CUwbNxpConfig&& config);
     CUwbNxpConfig& operator=(CUwbNxpConfig&& config);
 
-    bool open(const char *filepath);
+    CUwbNxpConfig(CUwbNxpConfig& config) = delete;
+    CUwbNxpConfig& operator=(CUwbNxpConfig& config) = delete;
+
+    virtual ~CUwbNxpConfig();
+
     bool isValid() const { return mValidFile; }
+    bool isFactory() const { return mFactoryFile; }
     void reset() {
         m_map.clear();
         mValidFile = false;
@@ -125,17 +133,20 @@ public:
         return mFilePath.c_str();
     }
 
-    void    dump() const;
+    void dump() const;
 
     const unordered_map<string, uwbParam>& get_data() const {
         return m_map;
     }
+
 private:
-    bool    readConfig();
+    bool readConfig();
+
+    bool mValidFile;
+    std::filesystem::path mFilePath;
+    bool mFactoryFile;
 
     unordered_map<string, uwbParam> m_map;
-    bool    mValidFile;
-    string  mFilePath;
 };
 
 /*******************************************************************************
@@ -391,6 +402,12 @@ bool CUwbNxpConfig::readConfig()
         ALOGI("Extra calibration file %s opened.", name);
     }
 
+    // Checks if this is a factory calibrated file by filename matching
+    std::string filename = mFilePath.stem();
+    if (filename.starts_with(factory_file_prefix)) {
+        mFactoryFile = true;
+    }
+
     return mValidFile;
 }
 
@@ -404,7 +421,7 @@ bool CUwbNxpConfig::readConfig()
 **
 *******************************************************************************/
 CUwbNxpConfig::CUwbNxpConfig() :
-    mValidFile(false)
+    mValidFile(false), mFactoryFile(false)
 {
 }
 
@@ -421,9 +438,9 @@ CUwbNxpConfig::~CUwbNxpConfig()
 {
 }
 
-CUwbNxpConfig::CUwbNxpConfig(const char *filepath)
+CUwbNxpConfig::CUwbNxpConfig(const char *filepath) : mValidFile(false), mFilePath(filepath), mFactoryFile(false)
 {
-    open(filepath);
+    readConfig();
 }
 
 CUwbNxpConfig::CUwbNxpConfig(CUwbNxpConfig&& config)
@@ -443,14 +460,6 @@ CUwbNxpConfig& CUwbNxpConfig::operator=(CUwbNxpConfig&& config)
 
     config.mValidFile = false;
     return *this;
-}
-
-bool CUwbNxpConfig::open(const char *filepath)
-{
-    mValidFile = false;
-    mFilePath = filepath;
-
-    return readConfig();
 }
 
 /*******************************************************************************
@@ -731,7 +740,7 @@ bool CascadeConfig::evaluateExtraConfPaths()
 
         // re-open the file if filepath got re-evaluated.
         if (new_filename != config.getFilePath()) {
-            config.open(new_filename.c_str());
+            config = CUwbNxpConfig(new_filename.c_str());
             updated = true;
         }
     }

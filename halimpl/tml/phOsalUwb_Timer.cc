@@ -364,7 +364,7 @@ static void phOsalUwb_Timer_Expired(union sigval sv) {
 
   /* Post a message on the queue to invoke the function */
   auto msg = std::make_shared<phLibUwb_Message>(PH_LIBUWB_DEFERREDCALL_MSG, &pTimerHandle->tDeferredCallInfo);
-  nxpucihal_ctrl.gDrvCfg.pClientMq->send(msg);
+  nxpucihal_ctrl.pClientMq->send(msg);
 }
 
 /*******************************************************************************

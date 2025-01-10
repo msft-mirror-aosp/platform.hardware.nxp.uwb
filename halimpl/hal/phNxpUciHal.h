@@ -237,7 +237,9 @@ private:
 typedef struct phNxpUciHal_Control {
   phNxpUci_HalStatus halStatus; /* Indicate if hal is open or closed */
   std::thread client_thread;    /* Integration thread handle */
-  phLibUwb_sConfig_t gDrvCfg;   /* Driver config data */
+
+  // a main message queue on the "client" thread.
+  std::shared_ptr<MessageQueue<phLibUwb_Message>> pClientMq;
 
   std::unique_ptr<NxpUwbChip> uwb_chip;
 
@@ -326,23 +328,30 @@ void phNxpUciHal_rx_handler_del(std::shared_ptr<phNxpUciHal_RxHandler> handler);
 
 class UciHalRxHandler {
 public:
-  UciHalRxHandler() {
-  }
+  UciHalRxHandler() {}
   UciHalRxHandler(uint8_t mt, uint8_t gid, uint8_t oid,
                   RxHandlerCallback callback) {
     handler_ = phNxpUciHal_rx_handler_add(mt, gid, oid, false, callback);
   }
   UciHalRxHandler& operator=(UciHalRxHandler &&handler) {
+    Unregister();
     handler_ = std::move(handler.handler_);
     return *this;
   }
-  virtual ~UciHalRxHandler() {
+
+  UciHalRxHandler(const UciHalRxHandler&) = delete;
+  UciHalRxHandler& operator=(const UciHalRxHandler& handler) = delete;
+
+  ~UciHalRxHandler() {
+    Unregister();
+  }
+private:
+  void Unregister() {
     if (handler_) {
       phNxpUciHal_rx_handler_del(handler_);
       handler_.reset();
     }
   }
-private:
   std::shared_ptr<phNxpUciHal_RxHandler> handler_;
 };
 

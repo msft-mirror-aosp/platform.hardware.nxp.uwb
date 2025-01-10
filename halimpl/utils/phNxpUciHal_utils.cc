@@ -138,8 +138,7 @@ void phNxpUciHal_cleanup_monitor(void) {
 }
 
 /* Initialize the callback data */
-tHAL_UWB_STATUS phNxpUciHal_init_cb_data(phNxpUciHal_Sem_t* pCallbackData,
-                                   void* pContext) {
+tHAL_UWB_STATUS phNxpUciHal_init_cb_data(phNxpUciHal_Sem_t* pCallbackData) {
   /* Create semaphore */
   if (sem_init(&pCallbackData->sem, 0, 0) == -1) {
     NXPLOG_UCIHAL_E("Semaphore creation failed");
@@ -148,9 +147,6 @@ tHAL_UWB_STATUS phNxpUciHal_init_cb_data(phNxpUciHal_Sem_t* pCallbackData,
 
   /* Set default status value */
   pCallbackData->status = UWBSTATUS_FAILED;
-
-  /* Copy the context */
-  pCallbackData->pContext = pContext;
 
   /* Add to active semaphore list */
   if (nxpucihal_monitor != nullptr) {
