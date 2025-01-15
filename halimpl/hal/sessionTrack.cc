@@ -603,7 +603,7 @@ private:
       case SessionTrackWorkType::REFRESH_IDLE:
         if (power_state_ == PowerState::SUSPEND) {
           NXPLOG_UCIHAL_D("SessionTrack: resume");
-          phTmlUwb_Resume();
+          phNxpUciHal_hw_resume();
           power_state_ = PowerState::IDLE;
         }
         if (power_state_ == PowerState::IDLE) {
@@ -613,7 +613,7 @@ private:
       case SessionTrackWorkType::ACTIVATE:
         if (power_state_ == PowerState::SUSPEND) {
           NXPLOG_UCIHAL_E("SessionTrack: activated while in suspend!");
-          phTmlUwb_Resume();
+          phNxpUciHal_hw_resume();
         }
         PowerIdleTimerStop();
         power_state_ = PowerState::ACTIVE;
@@ -622,7 +622,7 @@ private:
         if (power_state_ == PowerState::IDLE) {
           NXPLOG_UCIHAL_D("SessionTrack: idle timer expired, go suspend");
           power_state_ = PowerState::SUSPEND;
-          phTmlUwb_Suspend();
+          phNxpUciHal_hw_suspend();
         } else {
           NXPLOG_UCIHAL_E("SessionTrack: idle timer expired while in %d",
             static_cast<int>(power_state_.load()));

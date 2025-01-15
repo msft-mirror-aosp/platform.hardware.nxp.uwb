@@ -947,6 +947,16 @@ void phNxpUciHal_hw_deinit()
   phTmlUwb_Shutdown();
 }
 
+void phNxpUciHal_hw_suspend()
+{
+  nxpucihal_ctrl.uwb_chip->suspend();
+}
+
+void phNxpUciHal_hw_resume()
+{
+  nxpucihal_ctrl.uwb_chip->resume();
+}
+
 /******************************************************************************
  * Function         phNxpUciHal_coreInitialization
  *
