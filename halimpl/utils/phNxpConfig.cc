@@ -23,6 +23,8 @@
 #include <limits.h>
 #include <sys/stat.h>
 
+#include <charconv>
+#include <cinttypes>
 #include <cstddef>
 #include <cstdint>
 #include <iomanip>
@@ -50,73 +52,107 @@
 
 namespace {
 
-// TODO: use constexpr
-static const char default_nxp_config_path[] = "/vendor/etc/libuwb-nxp.conf";
-static const char country_code_config_name[] = "libuwb-countrycode.conf";
-static const char nxp_uci_config_file[] = "libuwb-uci.conf";
-static const char default_uci_config_path[] = "/vendor/etc/";
-static const char factory_file_prefix[] = "cal-factory";
+constexpr std::string_view default_nxp_config_path = "/vendor/etc/libuwb-nxp.conf";
+constexpr std::string_view country_code_config_name = "libuwb-countrycode.conf";
+constexpr std::string_view nxp_uci_config_file = "libuwb-uci.conf";
+constexpr std::string_view default_uci_config_path = "/vendor/etc/";
+constexpr std::string_view factory_file_prefix = "cal-factory";
 
-static const char country_code_specifier[] = "<country>";
-static const char sku_specifier[] = "<sku>";
-static const char extid_specifier[] = "<extid>";
-static const char revision_specifier[] = "<revision>";
+constexpr std::string_view country_code_specifier = "<country>";
+constexpr std::string_view sku_specifier = "<sku>";
+constexpr std::string_view extid_specifier = "<extid>";
+constexpr std::string_view revision_specifier = "<revision>";
 
-static const char extid_config_name[] = "cal.extid";
-static const char extid_default_value[] = "defaultextid";
+constexpr std::string_view extid_config_name = "cal.extid";
+constexpr std::string_view extid_default_value = "defaultextid";
 
-static const char prop_name_calsku[] = "persist.vendor.uwb.cal.sku";
-static const char prop_default_calsku[] = "defaultsku";
+constexpr char prop_name_calsku[] = "persist.vendor.uwb.cal.sku";
+constexpr char prop_default_calsku[] = "defaultsku";
 
-static const char prop_name_revision[] = "persist.vendor.uwb.cal.revision";
-static const char prop_default_revision[] = "defaultrevision";
-
-// TODO: remove this out
-using namespace::std;
+constexpr char prop_name_revision[] = "persist.vendor.uwb.cal.revision";
+constexpr char prop_default_revision[] = "defaultrevision";
 
 class uwbParam
 {
 public:
     enum class type { STRING, NUMBER, BYTEARRAY, STRINGARRAY };
-    uwbParam();
-    uwbParam(const uwbParam& param);
-    uwbParam(uwbParam&& param);
 
-    uwbParam(const string& value);
-    uwbParam(vector<uint8_t>&& value);
-    uwbParam(unsigned long value);
-    uwbParam(vector<string>&& value);
+    uwbParam() : m_numValue(0), m_type(type::NUMBER) {}
 
-    virtual ~uwbParam();
+    // only movable.
+    uwbParam(const uwbParam &param)  = delete;
+
+    uwbParam(uwbParam &&param) :
+        m_numValue(param.m_numValue),
+        m_str_value(std::move(param.m_str_value)),
+        m_arrValue(std::move(param.m_arrValue)),
+        m_arrStrValue(std::move(param.m_arrStrValue)),
+        m_type(param.m_type) {}
+
+    uwbParam(const std::string& value) :
+        m_numValue(0),
+        m_str_value(value),
+        m_type(type::STRING) {}
+
+    uwbParam(uint64_t value) :
+        m_numValue(value),
+        m_type(type::NUMBER) {}
+
+    uwbParam(std::vector<uint8_t> &&value) :
+        m_arrValue(std::move(value)),
+        m_type(type::BYTEARRAY) {}
+
+    uwbParam(std::vector<std::string> &&value) :
+        m_arrStrValue(std::move(value)),
+        m_type(type::STRINGARRAY) {}
 
     type getType() const { return m_type; }
-    unsigned long numValue() const {return m_numValue;}
-    const char*   str_value() const {return m_str_value.c_str();}
-    size_t        str_len() const   {return m_str_value.length();}
-    const uint8_t* arr_value() const { return m_arrValue.data(); }
-    size_t arr_len() const { return m_arrValue.size(); }
+
+    uint64_t numValue() const { return m_numValue; }
+
+    std::string_view str_value() const { return m_str_value; }
+
+    std::span<const uint8_t> arr_value() const { return m_arrValue; }
 
     size_t str_arr_len() const { return m_arrStrValue.size(); }
-    const char* str_arr_elem(const int index) const { return m_arrStrValue[index].c_str(); }
+    std::string_view str_arr_elem(const int index) const { return m_arrStrValue[index]; }
     size_t str_arr_elem_len(const int index) const { return m_arrStrValue[index].length(); }
 
-    void dump(const string &tag) const;
+    void dump(const std::string &tag) const {
+        if (m_type == type::NUMBER) {
+            ALOGV(" - %s = 0x%" PRIx64, tag.c_str(), m_numValue);
+        } else if (m_type == type::STRING) {
+            ALOGV(" - %s = %s", tag.c_str(), m_str_value.c_str());
+        } else if (m_type == type::BYTEARRAY) {
+            std::stringstream ss_hex;
+            ss_hex.fill('0');
+            for (auto b : m_arrValue) {
+                ss_hex << std::setw(2) << std::hex << (int)b << " ";
+            }
+            ALOGV(" - %s = { %s}", tag.c_str(), ss_hex.str().c_str());
+        } else if (m_type == type::STRINGARRAY) {
+            std::stringstream ss;
+            for (auto s : m_arrStrValue) {
+                ss << "\"" << s << "\", ";
+            }
+            ALOGV(" - %s = { %s}", tag.c_str(), ss.str().c_str());
+        }
+    }
 private:
-    // TODO: use uint64_t or uint32_t instead of unsigned long.
-    unsigned long   m_numValue;
-    string          m_str_value;
-    vector<uint8_t>  m_arrValue;
-    vector<string>  m_arrStrValue;
+    uint64_t m_numValue;
+    std::string m_str_value;
+    std::vector<uint8_t>  m_arrValue;
+    std::vector<std::string>  m_arrStrValue;
     type m_type;
 };
 
 class CUwbNxpConfig
 {
 public:
-    using HashType = unordered_map<std::string, uwbParam>;
+    using HashType = std::unordered_map<std::string, uwbParam>;
 
     CUwbNxpConfig();
-    CUwbNxpConfig(const char *filepath);
+    CUwbNxpConfig(std::string_view filepath);
 
     // only movable
     CUwbNxpConfig(CUwbNxpConfig&& config);
@@ -135,7 +171,7 @@ public:
     }
 
     const uwbParam* find(std::string_view key) const;
-    void    setCountry(const string& strCountry);
+    void    setCountry(const std::string& strCountry);
     const char* getFilePath() const {
         return mFilePath.c_str();
     }
@@ -149,9 +185,9 @@ public:
 private:
     bool readConfig();
 
-    bool mValidFile;
     std::filesystem::path mFilePath;
-    bool mFactoryFile;
+    bool mFactoryFile = false;
+    bool mValidFile = false;
 
     HashType m_map;
 };
@@ -248,11 +284,11 @@ bool CUwbNxpConfig::readConfig()
     };
 
     FILE*   fd;
-    string  token;
-    string  strValue;
+    std::string  token;
+    std::string  strValue;
     unsigned long    numValue = 0;
-    vector<uint8_t> arrValue;
-    vector<string> arrStr;
+    std::vector<uint8_t> arrValue;
+    std::vector<std::string> arrStr;
     int     base = 0;
     int     c;
     const char *name = mFilePath.c_str();
@@ -322,7 +358,7 @@ bool CUwbNxpConfig::readConfig()
                 base = 10;
                 numValue = getDigitValue(c, base);
             } else {
-                m_map.try_emplace(token, move(uwbParam(numValue)));
+                m_map.try_emplace(token, uwbParam(numValue));
                 state = END_LINE;
             }
             break;
@@ -330,7 +366,7 @@ bool CUwbNxpConfig::readConfig()
             if (isDigit(c, base)) {
                 numValue *= base;
                 numValue += getDigitValue(c, base);
-            } else {m_map.try_emplace(token, move(uwbParam(numValue)));
+            } else {m_map.try_emplace(token, uwbParam(numValue));
                 state = END_LINE;
             }
             break;
@@ -339,7 +375,8 @@ bool CUwbNxpConfig::readConfig()
                 numValue = getDigitValue(c, base);
                 state = ARR_NUM;
             } else if (c == '}') {
-                m_map.try_emplace(token, move(uwbParam(move(arrValue))));
+                m_map.try_emplace(token, uwbParam(std::move(arrValue)));
+                arrValue = {};
                 state = END_LINE;
             } else if (c == '"') {
                 state = ARR_STR;
@@ -349,7 +386,7 @@ bool CUwbNxpConfig::readConfig()
             break;
         case ARR_STR:
             if (c == '"') {
-                arrStr.emplace_back(move(strValue));
+                arrStr.emplace_back(strValue);
                 strValue.clear();
                 state = ARR_STR_SPACE;
             } else {
@@ -358,7 +395,8 @@ bool CUwbNxpConfig::readConfig()
             break;
         case ARR_STR_SPACE:
             if (c == '}') {
-                m_map.try_emplace(token, move(uwbParam(move(arrStr))));
+                m_map.try_emplace(token, uwbParam(std::move(arrStr)));
+                arrStr = {};
                 state = END_LINE;
             } else if (c == '"') {
                 state = ARR_STR;
@@ -375,14 +413,15 @@ bool CUwbNxpConfig::readConfig()
                 state = END_LINE;
             }
             if (c == '}') {
-                m_map.try_emplace(token, move(uwbParam(move(arrValue))));
+                m_map.try_emplace(token, uwbParam(std::move(arrValue)));
+                arrValue = {};
                 state = END_LINE;
             }
             break;
         case STR_VALUE:
             if (c == '"') {
                 state = END_LINE;
-                m_map.try_emplace(token, move(uwbParam(strValue)));
+                m_map.try_emplace(token, uwbParam(strValue));
             } else {
                 strValue.push_back(c);
             }
@@ -427,10 +466,7 @@ bool CUwbNxpConfig::readConfig()
 ** Returns:     none
 **
 *******************************************************************************/
-CUwbNxpConfig::CUwbNxpConfig() :
-    mValidFile(false), mFactoryFile(false)
-{
-}
+CUwbNxpConfig::CUwbNxpConfig() : mFactoryFile(false), mValidFile(false) {}
 
 /*******************************************************************************
 **
@@ -445,25 +481,27 @@ CUwbNxpConfig::~CUwbNxpConfig()
 {
 }
 
-CUwbNxpConfig::CUwbNxpConfig(const char *filepath) : mValidFile(false), mFilePath(filepath), mFactoryFile(false)
+CUwbNxpConfig::CUwbNxpConfig(std::string_view filepath) : mFilePath(filepath)
 {
     readConfig();
 }
 
 CUwbNxpConfig::CUwbNxpConfig(CUwbNxpConfig&& config)
 {
-    m_map = move(config.m_map);
+    m_map = std::move(config.m_map);
     mValidFile = config.mValidFile;
-    mFilePath = move(config.mFilePath);
+    mFilePath = std::move(config.mFilePath);
+    mFactoryFile = config.mFactoryFile;
 
     config.mValidFile = false;
 }
 
 CUwbNxpConfig& CUwbNxpConfig::operator=(CUwbNxpConfig&& config)
 {
-    m_map = move(config.m_map);
+    m_map = std::move(config.m_map);
     mValidFile = config.mValidFile;
-    mFilePath = move(config.mFilePath);
+    mFilePath = std::move(config.mFilePath);
+    mFactoryFile = config.mFactoryFile;
 
     config.mValidFile = false;
     return *this;
@@ -501,116 +539,40 @@ void CUwbNxpConfig::dump() const
 }
 
 /*******************************************************************************/
-uwbParam::uwbParam() :
-    m_numValue(0),
-    m_type(type::NUMBER)
-{
-}
-
-uwbParam::~uwbParam()
-{
-}
-
-uwbParam::uwbParam(const uwbParam &param) :
-    m_numValue(param.m_numValue),
-    m_str_value(param.m_str_value),
-    m_arrValue(param.m_arrValue),
-    m_arrStrValue(param.m_arrStrValue),
-    m_type(param.m_type)
-{
-}
-
-uwbParam::uwbParam(uwbParam &&param) :
-    m_numValue(param.m_numValue),
-    m_str_value(move(param.m_str_value)),
-    m_arrValue(move(param.m_arrValue)),
-    m_arrStrValue(move(param.m_arrStrValue)),
-    m_type(param.m_type)
-{
-}
-
-uwbParam::uwbParam(const string& value) :
-    m_numValue(0),
-    m_str_value(value),
-    m_type(type::STRING)
-{
-}
-
-uwbParam::uwbParam(unsigned long value) :
-    m_numValue(value),
-    m_type(type::NUMBER)
-{
-}
-
-uwbParam::uwbParam(vector<uint8_t> &&value) :
-    m_arrValue(move(value)),
-    m_type(type::BYTEARRAY)
-{
-}
-
-uwbParam::uwbParam(vector<string> &&value) :
-    m_arrStrValue(move(value)),
-    m_type(type::STRINGARRAY)
-{
-}
-
-
-void uwbParam::dump(const string &tag) const
-{
-    if (m_type == type::NUMBER) {
-        ALOGV(" - %s = 0x%lx", tag.c_str(), m_numValue);
-    } else if (m_type == type::STRING) {
-        ALOGV(" - %s = %s", tag.c_str(), m_str_value.c_str());
-    } else if (m_type == type::BYTEARRAY) {
-        stringstream ss_hex;
-        ss_hex.fill('0');
-        for (auto b : m_arrValue) {
-            ss_hex << setw(2) << hex << (int)b << " ";
-        }
-        ALOGV(" - %s = { %s}", tag.c_str(), ss_hex.str().c_str());
-    } else if (m_type == type::STRINGARRAY) {
-        stringstream ss;
-        for (auto s : m_arrStrValue) {
-            ss << "\"" << s << "\", ";
-        }
-        ALOGV(" - %s = { %s}", tag.c_str(), ss.str().c_str());
-    }
-}
-/*******************************************************************************/
 class RegionCodeMap {
 public:
-    void loadMapping(const char *filepath) {
+    void loadMapping(std::string_view filepath) {
         CUwbNxpConfig config(filepath);
         if (!config.isValid()) {
             ALOGW("Region mapping was not provided.");
             return;
         }
 
-        ALOGI("Region mapping was provided by %s", filepath);
+        ALOGI("Region mapping was provided by %s", std::string(filepath).c_str());
         auto &all_params = config.get_data();
         for (auto &it : all_params) {
             const auto &region_str = it.first;
             const uwbParam *param = &it.second;
 
             // split space-separated strings into set
-            stringstream ss(param->str_value());
-            string cc;
-            unordered_set<string> cc_set;
+            std::stringstream ss(std::string(param->str_value()));
+            std::string cc;
+            std::unordered_set<std::string> cc_set;
             while (ss >> cc) {
               if (cc.length() == 2 && isupper(cc[0]) && isupper(cc[1])) {
-                cc_set.emplace(move(cc));
+                cc_set.emplace(std::move(cc));
               }
             }
-            auto result = m_map.try_emplace(region_str, move(cc_set));
+            auto result = m_map.try_emplace(region_str, std::move(cc_set));
             if (!result.second) {
               // region conlifct : merge
-              result.first->second.merge(move(cc_set));
+              result.first->second.merge(std::move(cc_set));
             }
         }
-        m_config = move(config);
+        m_config = std::move(config);
     }
-    string xlateCountryCode(const char country_code[2]) {
-        string code{country_code[0], country_code[1]};
+    std::string xlateCountryCode(const char country_code[2]) {
+        std::string code{country_code[0], country_code[1]};
         if (m_config.isValid()) {
             for (auto &it : m_map) {
                 const auto &region_str = it.first;
@@ -633,7 +595,7 @@ public:
         for (auto &entry : m_map) {
             const auto &region_str = entry.first;
             const auto &cc_set = entry.second;
-            stringstream ss;
+            std::stringstream ss;
             for (const auto s : cc_set) {
                 ss << "\"" << s << "\", ";
             }
@@ -642,7 +604,7 @@ public:
     }
 private:
     CUwbNxpConfig m_config;
-    unordered_map<string, unordered_set<string>> m_map;
+    std::unordered_map<std::string, std::unordered_set<std::string>> m_map;
 };
 
 /*******************************************************************************/
@@ -650,7 +612,7 @@ class CascadeConfig {
 public:
     CascadeConfig();
 
-    void init(const char *main_config);
+    void init(std::string_view main_config);
     void deinit();
     bool setCountryCode(const char country_code[2]);
 
@@ -663,7 +625,7 @@ private:
     CUwbNxpConfig mUciConfig;
 
     // EXTRA_CONF_PATH[N]
-    std::vector<std::pair<string, CUwbNxpConfig>> mExtraConfig;
+    std::vector<std::pair<std::string, CUwbNxpConfig>> mExtraConfig;
 
     // [COUNTRY_CODE_CAP_FILE_LOCATION]/country_code_config_name
     CUwbNxpConfig mCapsConfig;
@@ -673,10 +635,10 @@ private:
 
     // current set of specifiers for EXTRA_CONF_PATH[]
     struct ExtraConfPathSpecifiers {
-        string mCurSku;
-        string mCurExtid;
-        string mCurRegionCode;
-        string mCurRevision;
+        std::string mCurSku;
+        std::string mCurExtid;
+        std::string mCurRegionCode;
+        std::string mCurRevision;
         void reset() {
             mCurSku.clear();
             mCurExtid.clear();
@@ -715,22 +677,22 @@ bool CascadeConfig::evaluateExtraConfPaths()
 
         auto posSku = filename.find(sku_specifier);
         if (posSku != std::string::npos && !mExtraConfSpecifiers.mCurSku.empty()) {
-            new_filename.replace(posSku, strlen(sku_specifier), mExtraConfSpecifiers.mCurSku);
+            new_filename.replace(posSku, sku_specifier.length(), mExtraConfSpecifiers.mCurSku);
         }
 
         auto posExtid = filename.find(extid_specifier);
         if (posExtid != std::string::npos && !mExtraConfSpecifiers.mCurExtid.empty()) {
-            new_filename.replace(posExtid, strlen(extid_specifier), mExtraConfSpecifiers.mCurExtid);
+            new_filename.replace(posExtid, extid_specifier.length(), mExtraConfSpecifiers.mCurExtid);
         }
 
         auto posCountry = filename.find(country_code_specifier);
         if (posCountry != std::string::npos && !mExtraConfSpecifiers.mCurRegionCode.empty()) {
-            new_filename.replace(posCountry, strlen(country_code_specifier), mExtraConfSpecifiers.mCurRegionCode);
+            new_filename.replace(posCountry, country_code_specifier.length(), mExtraConfSpecifiers.mCurRegionCode);
         }
 
         auto posRevision = filename.find(revision_specifier);
         if (posRevision != std::string::npos && !mExtraConfSpecifiers.mCurRevision.empty()) {
-            new_filename.replace(posRevision, strlen(revision_specifier), mExtraConfSpecifiers.mCurRevision);
+            new_filename.replace(posRevision, revision_specifier.length(), mExtraConfSpecifiers.mCurRevision);
         }
 
         // re-open the file if filepath got re-evaluated.
@@ -742,9 +704,9 @@ bool CascadeConfig::evaluateExtraConfPaths()
     return updated;
 }
 
-void CascadeConfig::init(const char *main_config)
+void CascadeConfig::init(std::string_view main_config)
 {
-    ALOGV("CascadeConfig initialize with %s", main_config);
+    ALOGV("CascadeConfig initialize with %s", std::string(main_config).c_str());
 
     // Main config file
     CUwbNxpConfig config(main_config);
@@ -752,19 +714,19 @@ void CascadeConfig::init(const char *main_config)
         ALOGW("Failed to load main config file");
         return;
     }
-    mMainConfig = move(config);
+    mMainConfig = std::move(config);
 
     {
         // UCI config file
-        std::string uciConfigFilePath = default_uci_config_path;
+        std::string uciConfigFilePath(default_uci_config_path);
         uciConfigFilePath += nxp_uci_config_file;
 
-        CUwbNxpConfig config(uciConfigFilePath.c_str());
+        CUwbNxpConfig config(uciConfigFilePath);
         if (!config.isValid()) {
             ALOGW("Failed to load uci config file:%s",
                     uciConfigFilePath.c_str());
         } else {
-            mUciConfig = move(config);
+            mUciConfig = std::move(config);
         }
     }
 
@@ -805,7 +767,7 @@ void CascadeConfig::init(const char *main_config)
     std::optional<size_t> arrLen = NxpConfig_GetStrArrayLen(NAME_COUNTRY_CODE_CAP_FILE_LOCATION);
     if (arrLen.has_value() && *arrLen > 0) {
         int max_version = -1;
-        string strPickedPath;
+        std::string strPickedPath;
         bool foundCapFile = false;
         CUwbNxpConfig pickedConfig;
 
@@ -813,23 +775,29 @@ void CascadeConfig::init(const char *main_config)
             std::optional<std::string_view> loc = NxpConfig_GetStrArrayVal(NAME_COUNTRY_CODE_CAP_FILE_LOCATION, i);
             if (!loc.has_value()) { continue;  }
 
-            string strPath(*loc);
+            std::string strPath(*loc);
             strPath += country_code_config_name;
             ALOGV("Try to load %s", strPath.c_str());
 
             CUwbNxpConfig config(strPath.c_str());
 
             const uwbParam *param = config.find(NAME_NXP_COUNTRY_CODE_VERSION);
-            int version = param ? atoi(param->str_value()) : -2;
+            int version = -2;
+            if (param) {
+                std::string_view v = param->str_value();
+                int n;
+                auto [ptr, ec] = std::from_chars(v.data(), v.data() + v.size(), n);
+                if (ec == std::errc()) { version = n; }
+            }
             if (version > max_version) {
                 foundCapFile = true;
-                pickedConfig = move(config);
-                strPickedPath = move(strPath);
+                pickedConfig = std::move(config);
+                strPickedPath = std::move(strPath);
                 max_version = version;
             }
         }
         if (foundCapFile) {
-            mCapsConfig = move(pickedConfig);
+            mCapsConfig = std::move(pickedConfig);
             ALOGI("CountryCodeCaps file %s loaded with VERSION=%d", strPickedPath.c_str(), max_version);
         } else {
             ALOGI("No CountryCodeCaps specified");
@@ -861,7 +829,7 @@ void CascadeConfig::deinit()
 
 bool CascadeConfig::setCountryCode(const char country_code[2])
 {
-    string strRegion = mRegionMap.xlateCountryCode(country_code);
+    std::string strRegion = mRegionMap.xlateCountryCode(country_code);
 
     if (strRegion == mExtraConfSpecifiers.mCurRegionCode) {
         ALOGI("Same region code(%c%c --> %s), per-country configuration not updated.",
@@ -934,7 +902,7 @@ std::optional<std::span<const uint8_t>> NxpConfig_GetByteArray(std::string_view 
     if (param == nullptr || param->getType() != uwbParam::type::BYTEARRAY) {
         return std::nullopt;
     }
-    return std::span{param->arr_value(), param->arr_len()};
+    return param->arr_value();
 }
 
 std::optional<uint64_t> NxpConfig_GetUint64(std::string_view key)
