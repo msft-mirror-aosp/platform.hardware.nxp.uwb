@@ -97,7 +97,10 @@
 #define UCI_CMD_PAYLOAD_BYTE_LENGTH 1
 
 /* FW debug and crash log path */
-const char debug_log_path[] = "/data/vendor/uwb/";
+inline constexpr const char debug_log_path[] = "/data/vendor/uwb/";
+
+// Device file
+inline constexpr const char uwb_dev_node[] = "/dev/srxxx";
 
 /* UCI Data */
 #define NXP_MAX_CONFIG_STRING_LEN 2052
@@ -298,7 +301,9 @@ struct phNxpUciHal_RxHandler;
 #define UWB_NXP_ANDROID_MW_RC_VERSION (0x02)   /* Android MW RC Version */
 #define UWB_NXP_ANDROID_MW_DROP_VERSION (0x07) /* Android MW early drops */
 /******************** UCI HAL exposed functions *******************************/
-tHAL_UWB_STATUS phNxpUciHal_init_hw();
+tHAL_UWB_STATUS phNxpUciHal_hw_init();
+void phNxpUciHal_hw_deinit();
+
 tHAL_UWB_STATUS phNxpUciHal_write_unlocked(size_t cmd_len, const uint8_t* p_cmd);
 void phNxpUciHal_read_complete(void* pContext, phTmlUwb_ReadTransactInfo* pInfo);
 
@@ -306,7 +311,6 @@ void phNxpUciHal_read_complete(void* pContext, phTmlUwb_ReadTransactInfo* pInfo)
 void report_uci_message(const uint8_t* buffer, size_t len);
 
 tHAL_UWB_STATUS phNxpUciHal_uwb_reset();
-tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig();
 tHAL_UWB_STATUS phNxpUciHal_process_ext_cmd_rsp(size_t cmd_len, const uint8_t *p_cmd);
 void phNxpUciHal_send_dev_error_status_ntf();
 bool phNxpUciHal_parse(size_t* data_len, uint8_t *p_data);
