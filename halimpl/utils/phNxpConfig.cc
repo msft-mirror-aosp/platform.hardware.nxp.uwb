@@ -614,7 +614,7 @@ public:
     void deinit();
     bool setCountryCode(const char country_code[2]);
 
-    const uwbParam* find(std::string_view key)  const;
+    const uwbParam* find(std::string_view key, bool include_factory)  const;
 private:
     // default_nxp_config_path
     CUwbNxpConfig mMainConfig;
@@ -778,6 +778,8 @@ void CascadeConfig::init(std::string_view main_config)
             ALOGV("Try to load %s", strPath.c_str());
 
             CUwbNxpConfig config(strPath.c_str());
+            // This cannot be provided from factory cal file.
+            if (config.isFactory()) { continue; }
 
             const uwbParam *param = config.find(NAME_NXP_COUNTRY_CODE_VERSION);
             int version = -2;
@@ -805,7 +807,7 @@ void CascadeConfig::init(std::string_view main_config)
     }
 
     // Load region mapping
-    const uwbParam *param = find(NAME_REGION_MAP_PATH);
+    const uwbParam *param = find(NAME_REGION_MAP_PATH, /*include_factory=*/false);
     if (param) {
         mRegionMap.loadMapping(param->str_value());
     }
@@ -841,16 +843,17 @@ bool CascadeConfig::setCountryCode(const char country_code[2])
     return evaluateExtraConfPaths();
 }
 
-const uwbParam* CascadeConfig::find(std::string_view key) const
+const uwbParam* CascadeConfig::find(std::string_view key, bool include_factory) const
 {
     const uwbParam* param = NULL;
 
     param = mCapsConfig.find(key);
     if (param)
-      return param;
+        return param;
 
     for (auto it = mExtraConfig.rbegin(); it != mExtraConfig.rend(); it++) {
         auto &config = it->second;
+        if (!include_factory && config.isFactory()) { continue; }
         param = config.find(key);
         if (param)
             break;
@@ -885,27 +888,27 @@ bool NxpConfig_SetCountryCode(const char country_code[2])
     return gConfig.setCountryCode(country_code);
 }
 
-std::optional<std::string_view> NxpConfig_GetStr(std::string_view key)
+std::optional<std::string_view> NxpConfig_GetStr(std::string_view key, bool include_factory)
 {
-    const uwbParam *param = gConfig.find(key);
+    const uwbParam *param = gConfig.find(key, include_factory);
     if (param == nullptr || param->getType() != uwbParam::type::STRING) {
         return std::nullopt;
     }
     return param->str_value();
 }
 
-std::optional<std::span<const uint8_t>> NxpConfig_GetByteArray(std::string_view key)
+std::optional<std::span<const uint8_t>> NxpConfig_GetByteArray(std::string_view key, bool include_factory)
 {
-    const uwbParam *param = gConfig.find(key);
+    const uwbParam *param = gConfig.find(key, include_factory);
     if (param == nullptr || param->getType() != uwbParam::type::BYTEARRAY) {
         return std::nullopt;
     }
     return param->arr_value();
 }
 
-std::optional<uint64_t> NxpConfig_GetUint64(std::string_view key)
+std::optional<uint64_t> NxpConfig_GetUint64(std::string_view key, bool include_factory)
 {
-    const uwbParam* pParam = gConfig.find(key);
+    const uwbParam* pParam = gConfig.find(key, include_factory);
 
     if ((pParam == nullptr) || (pParam->getType() != uwbParam::type::NUMBER)) {
         return std::nullopt;
@@ -913,18 +916,18 @@ std::optional<uint64_t> NxpConfig_GetUint64(std::string_view key)
     return pParam->numValue();
 }
 
-std::optional<bool> NxpConfig_GetBool(std::string_view key)
+std::optional<bool> NxpConfig_GetBool(std::string_view key, bool include_factory)
 {
-    const uwbParam* pParam = gConfig.find(key);
+    const uwbParam* pParam = gConfig.find(key, include_factory);
     if (pParam == nullptr || pParam->getType() != uwbParam::type::NUMBER) {
         return std::nullopt;
     }
     return pParam->numValue();
 }
 
-std::vector<std::string> NxpConfig_GetStrArray(std::string_view key)
+std::vector<std::string> NxpConfig_GetStrArray(std::string_view key, bool include_factory)
 {
-    const uwbParam* param = gConfig.find(key);
+    const uwbParam* param = gConfig.find(key, include_factory);
     if (param == nullptr || param->getType() != uwbParam::type::STRINGARRAY) {
         return std::vector<std::string>{};
     }
