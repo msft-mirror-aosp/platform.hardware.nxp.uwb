@@ -528,8 +528,10 @@ static std::pair<uint16_t, uint16_t> extcal_get_ant_delay_limits(uint8_t ant_id,
   const std::string key_lower_limit = std::format("cal.ant{}.ch{}.ant_delay.lower_limit", ant_id, ch);
   const std::string key_upper_limit = std::format("cal.ant{}.ch{}.ant_delay.upper_limit", ant_id, ch);
 
-  uint16_t lower_limit = NxpConfig_GetNum<uint16_t>(key_lower_limit).value_or(def_lower_limit);
-  uint16_t upper_limit = NxpConfig_GetNum<uint16_t>(key_upper_limit).value_or(def_upper_limit);
+  uint16_t lower_limit = NxpConfig_GetNum<uint16_t>(
+    key_lower_limit, /*include_factory=*/false).value_or(def_lower_limit);
+  uint16_t upper_limit = NxpConfig_GetNum<uint16_t>(
+    key_upper_limit, /*include_factory=*/false).value_or(def_upper_limit);
 
   return std::make_pair(lower_limit, upper_limit);
 }
