@@ -304,6 +304,9 @@ struct phNxpUciHal_RxHandler;
 tHAL_UWB_STATUS phNxpUciHal_hw_init();
 void phNxpUciHal_hw_deinit();
 
+void phNxpUciHal_hw_suspend();
+void phNxpUciHal_hw_resume();
+
 tHAL_UWB_STATUS phNxpUciHal_write_unlocked(size_t cmd_len, const uint8_t* p_cmd);
 void phNxpUciHal_read_complete(void* pContext, phTmlUwb_ReadTransactInfo* pInfo);
 
