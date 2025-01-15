@@ -53,8 +53,8 @@ inline std::optional<T> NxpConfig_GetNum(std::string_view key) {
 // Returns true or false if key is existed as a number type parameter.
 std::optional<bool> NxpConfig_GetBool(std::string_view key);
 
-std::optional<size_t> NxpConfig_GetStrArrayLen(std::string_view key);
-std::optional<std::string_view> NxpConfig_GetStrArrayVal(std::string_view key, int idx);
+// Returns an array of string.
+std::vector<std::string> NxpConfig_GetStrArray(std::string_view key);
 
 // TODO: use constexpr
 /* libuwb-nxp.conf parameters */
