@@ -33,16 +33,16 @@ void NxpConfig_Init(void);
 void NxpConfig_Deinit(void);
 bool NxpConfig_SetCountryCode(const char country_code[2]);
 
-std::optional<std::string_view> NxpConfig_GetStr(std::string_view key);
+std::optional<std::string_view> NxpConfig_GetStr(std::string_view key, bool include_factory = true);
 
-std::optional<std::span<const uint8_t>> NxpConfig_GetByteArray(std::string_view key);
+std::optional<std::span<const uint8_t>> NxpConfig_GetByteArray(std::string_view key, bool include_factory = true);
 
-std::optional<uint64_t> NxpConfig_GetUint64(std::string_view key);
+std::optional<uint64_t> NxpConfig_GetUint64(std::string_view key, bool include_factory = true);
 
 template <typename T>
-inline std::optional<T> NxpConfig_GetNum(std::string_view key) {
+inline std::optional<T> NxpConfig_GetNum(std::string_view key, bool include_factory = true) {
     static_assert(std::is_integral<T>::value);
-    auto res = NxpConfig_GetUint64(key);
+    auto res = NxpConfig_GetUint64(key, include_factory);
     if (res.has_value() && *res > std::numeric_limits<T>::max()) {
         std::string strkey(key);
         NXPLOG_UCIHAL_W("Config %s overflow", strkey.c_str());
@@ -51,10 +51,10 @@ inline std::optional<T> NxpConfig_GetNum(std::string_view key) {
 }
 
 // Returns true or false if key is existed as a number type parameter.
-std::optional<bool> NxpConfig_GetBool(std::string_view key);
+std::optional<bool> NxpConfig_GetBool(std::string_view key, bool include_factory = true);
 
 // Returns an array of string.
-std::vector<std::string> NxpConfig_GetStrArray(std::string_view key);
+std::vector<std::string> NxpConfig_GetStrArray(std::string_view key, bool include_factory = true);
 
 // TODO: use constexpr
 /* libuwb-nxp.conf parameters */
