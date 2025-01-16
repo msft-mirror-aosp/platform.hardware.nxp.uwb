@@ -17,10 +17,14 @@
 
 #include <array>
 #include <functional>
-#include <string.h>
 #include <list>
 #include <map>
+#include <memory>
 #include <mutex>
+#include <optional>
+#include <span>
+#include <string>
+#include <thread>
 #include <unordered_set>
 #include <vector>
 
@@ -284,7 +288,6 @@ bool phNxpUciHal_parse(size_t* cmdlen, uint8_t* cmd)
  ******************************************************************************/
 tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_callback_t* p_data_cback)
 {
-  static const char uwb_dev_node[256] = "/dev/srxxx";
   tHAL_UWB_STATUS wConfigStatus = UWBSTATUS_SUCCESS;
 
   if (nxpucihal_ctrl.halStatus == HAL_STATUS_OPEN) {
@@ -307,7 +310,7 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_c
 
   CONCURRENCY_LOCK();
 
-  NXPLOG_UCIHAL_E("Assigning the default helios Node: %s", uwb_dev_node);
+  NXPLOG_UCIHAL_D("Assigning the default helios Node: %s", uwb_dev_node);
   /* By default HAL status is HAL_STATUS_OPEN */
   nxpucihal_ctrl.halStatus = HAL_STATUS_OPEN;
 
@@ -321,13 +324,6 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_c
   // Default country code = '00'
   nxpucihal_ctrl.country_code[0] = '0';
   nxpucihal_ctrl.country_code[1] = '0';
-
-  /* Initialize TML layer */
-  wConfigStatus = phTmlUwb_Init(uwb_dev_node, nxpucihal_ctrl.pClientMq);
-  if (wConfigStatus != UWBSTATUS_SUCCESS) {
-    NXPLOG_UCIHAL_E("phTmlUwb_Init Failed");
-    goto clean_and_return;
-  }
 
   /* Create the client thread */
   nxpucihal_ctrl.client_thread =
@@ -612,15 +608,15 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
   nxpucihal_ctrl.pClientMq->send(std::make_shared<phLibUwb_Message>(UCI_HAL_CLOSE_CPLT_MSG));
   nxpucihal_ctrl.client_thread.join();
 
-  status = phTmlUwb_Shutdown();
-
-  phNxpUciHal_rx_handler_destroy();
-
   nxpucihal_ctrl.halStatus = HAL_STATUS_CLOSE;
 
   CONCURRENCY_UNLOCK();
 
-  nxpucihal_ctrl.uwb_chip.reset();
+  phNxpUciHal_hw_deinit();
+
+  phNxpUciHal_rx_handler_destroy();
+
+  nxpucihal_ctrl.uwb_chip = nullptr;
 
   phOsalUwb_Timer_Cleanup();
 
@@ -645,31 +641,26 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
  ******************************************************************************/
 static void parseAntennaConfig(const char *configName)
 {
-  std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
-  size_t retlen = 0;
-  int gotConfig = NxpConfig_GetByteArray(configName, buffer.data(), buffer.size(), &retlen);
-  if (gotConfig) {
-    if (retlen <= UCI_MSG_HDR_SIZE) {
-      NXPLOG_UCIHAL_E("parseAntennaConfig: %s is too short. Aborting.", configName);
-      return;
-    }
+  auto res = NxpConfig_GetByteArray(configName);
+  if (!res.has_value()) {
+    NXPLOG_UCIHAL_D("No antenna pair info found, %s is missing.", configName);
+    return;
   }
-  else
-  {
-    NXPLOG_UCIHAL_E("parseAntennaConfig: Failed to get '%s'. Aborting.", configName);
+  std::span<const uint8_t> data = *res;
+  if (data.size() <= UCI_MSG_HDR_SIZE) {
+    NXPLOG_UCIHAL_D("No antenna pair info found, %s is too short.", configName);
     return;
   }
 
-  const uint16_t dataLength = retlen;
-  const uint8_t *data = buffer.data();
+  int index = 1;  // Excluding number of params
+  while (index < data.size()) {
+    if ((index + 3) > data.size()) {
+      break;
+    }
+    uint8_t tagId = data[index++];
+    uint8_t subTagId = data[index++];
+    uint8_t length = data[index++];
 
-  uint8_t index = 1; // Excluding number of params
-  uint8_t tagId, subTagId;
-  int length;
-  while (index < dataLength) {
-    tagId = data[index++];
-    subTagId = data[index++];
-    length = data[index++];
     if ((ANTENNA_RX_PAIR_DEFINE_TAG_ID == tagId) &&
         (ANTENNA_RX_PAIR_DEFINE_SUB_TAG_ID == subTagId)) {
       nxpucihal_ctrl.numberOfAntennaPairs = data[index];
@@ -679,6 +670,7 @@ static void parseAntennaConfig(const char *configName)
       index = index + length;
     }
   }
+  NXPLOG_UCIHAL_D("No antenna pair info found in from %s.", configName)
 }
 
 /******************************************************************************
@@ -689,12 +681,9 @@ static void parseAntennaConfig(const char *configName)
  * Returns          status
  *
  ******************************************************************************/
-tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig()
+static tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig()
 {
   std::vector<const char *> vendorParamNames;
-  std::array<uint8_t, NXP_MAX_CONFIG_STRING_LEN> buffer;
-  size_t retlen = 0;
-  tHAL_UWB_STATUS status = UWBSTATUS_FAILED;
 
   // Base parameter names
   if (nxpucihal_ctrl.fw_boot_mode == USER_FW_BOOT_MODE) {
@@ -710,15 +699,15 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig()
     per_chip_param = NAME_UWB_CORE_EXT_DEVICE_SR1XX_S_CONFIG;
   }
 
-  if (NxpConfig_GetByteArray(per_chip_param, buffer.data(), buffer.size(),
-                             &retlen)) {
-    if (retlen > 0 && retlen < UCI_MAX_DATA_LEN) {
-      NXPLOG_UCIHAL_D("VendorConfig: apply %s", per_chip_param);
-      status = phNxpUciHal_sendCoreConfig(buffer.data(), retlen);
-      if (status != UWBSTATUS_SUCCESS) {
-        NXPLOG_UCIHAL_E("VendorConfig: failed to apply %s", per_chip_param);
-        return status;
-      }
+  // TODO: split this into a function.
+  auto chip_pkt = NxpConfig_GetByteArray(per_chip_param);
+  if (chip_pkt.has_value()) {
+    NXPLOG_UCIHAL_D("VendorConfig: apply %s", per_chip_param);
+    tHAL_UWB_STATUS status =
+      phNxpUciHal_sendCoreConfig((*chip_pkt).data(), (*chip_pkt).size());
+    if (status != UWBSTATUS_SUCCESS) {
+      NXPLOG_UCIHAL_E("VendorConfig: failed to apply %s", per_chip_param);
+      return status;
     }
   }
 
@@ -740,29 +729,28 @@ tHAL_UWB_STATUS phNxpUciHal_applyVendorConfig()
 
   // Execute
   for (const auto paramName : vendorParamNames) {
-    if (NxpConfig_GetByteArray(paramName, buffer.data(), buffer.size(), &retlen)) {
-      if (retlen > 0 && retlen < UCI_MAX_DATA_LEN) {
-        NXPLOG_UCIHAL_D("VendorConfig: apply %s", paramName);
-        status = phNxpUciHal_send_ext_cmd(retlen, buffer.data());
-        if (status != UWBSTATUS_SUCCESS) {
-          NXPLOG_UCIHAL_E("VendorConfig: failed to apply %s", paramName);
-          return status;
-        }
+    auto extra_pkt = NxpConfig_GetByteArray(paramName);
+    if (extra_pkt.has_value()) {
+      NXPLOG_UCIHAL_D("VendorConfig: apply %s", paramName);
+      tHAL_UWB_STATUS status =
+        phNxpUciHal_send_ext_cmd((*extra_pkt).size(), (*extra_pkt).data());
+      if (status != UWBSTATUS_SUCCESS) {
+        NXPLOG_UCIHAL_E("VendorConfig: failed to apply %s", paramName);
+        return status;
       }
     }
   }
 
   // Low Power Mode
   // TODO: remove this out, this can be move to Chip parameter names
-  uint8_t lowPowerMode = 0;
-  if (NxpConfig_GetNum(NAME_NXP_UWB_LOW_POWER_MODE, &lowPowerMode, sizeof(lowPowerMode))) {
-    NXPLOG_UCIHAL_D("VendorConfig: apply %s", NAME_NXP_UWB_LOW_POWER_MODE);
+  bool lowPowerMode =  NxpConfig_GetBool(NAME_NXP_UWB_LOW_POWER_MODE).value_or(false);
+  NXPLOG_UCIHAL_D("VendorConfig: apply %s", NAME_NXP_UWB_LOW_POWER_MODE);
 
+  if (lowPowerMode) {
     // Core set config packet: GID=0x00 OID=0x04
     const std::vector<uint8_t> packet(
         {((UCI_MT_CMD << UCI_MT_SHIFT) | UCI_GID_CORE), UCI_MSG_CORE_SET_CONFIG,
-         0x00, 0x04, 0x01, LOW_POWER_MODE_TAG_ID, LOW_POWER_MODE_LENGTH,
-         lowPowerMode});
+         0x00, 0x04, 0x01, LOW_POWER_MODE_TAG_ID, LOW_POWER_MODE_LENGTH, 0x01 });
 
     if (phNxpUciHal_send_ext_cmd(packet.size(), packet.data()) != UWBSTATUS_SUCCESS) {
       NXPLOG_UCIHAL_E("VendorConfig: failed to apply NAME_NXP_UWB_LOW_POWER_MODE");
@@ -853,20 +841,27 @@ static bool cacheDevInfoRsp()
 }
 
 /******************************************************************************
- * Function         phNxpUciHal_init_hw
+ * Function         phNxpUciHal_hw_init
  *
  * Description      Init the chip.
  *
  * Returns          status
  *
  ******************************************************************************/
-tHAL_UWB_STATUS phNxpUciHal_init_hw()
+tHAL_UWB_STATUS phNxpUciHal_hw_init()
 {
   tHAL_UWB_STATUS status;
 
   if (nxpucihal_ctrl.halStatus != HAL_STATUS_OPEN) {
     NXPLOG_UCIHAL_E("HAL not initialized");
     return UWBSTATUS_FAILED;
+  }
+
+  // Initiates TML.
+  status = phTmlUwb_Init(uwb_dev_node, nxpucihal_ctrl.pClientMq);
+  if (status != UWBSTATUS_SUCCESS) {
+    NXPLOG_UCIHAL_E("phTmlUwb_Init Failed");
+    return status;
   }
 
   // Device Status Notification
@@ -889,7 +884,6 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
     return status;
   }
 
-  // Initiate UCI packet read
   status = phTmlUwb_StartRead(&phNxpUciHal_read_complete, NULL);
   if (status != UWBSTATUS_SUCCESS) {
     NXPLOG_UCIHAL_E("read status error status = %x", status);
@@ -948,6 +942,21 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
   return UWBSTATUS_SUCCESS;
 }
 
+void phNxpUciHal_hw_deinit()
+{
+  phTmlUwb_Shutdown();
+}
+
+void phNxpUciHal_hw_suspend()
+{
+  nxpucihal_ctrl.uwb_chip->suspend();
+}
+
+void phNxpUciHal_hw_resume()
+{
+  nxpucihal_ctrl.uwb_chip->resume();
+}
+
 /******************************************************************************
  * Function         phNxpUciHal_coreInitialization
  *
@@ -958,7 +967,7 @@ tHAL_UWB_STATUS phNxpUciHal_init_hw()
  ******************************************************************************/
 tHAL_UWB_STATUS phNxpUciHal_coreInitialization()
 {
-  tHAL_UWB_STATUS status = phNxpUciHal_init_hw();
+  tHAL_UWB_STATUS status = phNxpUciHal_hw_init();
   if (status != UWBSTATUS_SUCCESS) {
     nxpucihal_ctrl.pClientMq->send(std::make_shared<phLibUwb_Message>(UCI_HAL_ERROR_MSG));
     return status;
