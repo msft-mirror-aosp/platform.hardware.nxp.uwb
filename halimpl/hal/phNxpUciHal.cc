@@ -378,18 +378,6 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_c
   nxpucihal_ctrl.pClientMq->send(std::make_shared<phLibUwb_Message>(UCI_HAL_OPEN_CPLT_MSG));
 
   return UWBSTATUS_SUCCESS;
-
-clean_and_return:
-  CONCURRENCY_UNLOCK();
-
-  /* Report error status */
-  (*nxpucihal_ctrl.p_uwb_stack_cback)(HAL_UWB_OPEN_CPLT_EVT, HAL_UWB_ERROR_EVT);
-
-  nxpucihal_ctrl.p_uwb_stack_cback = NULL;
-  nxpucihal_ctrl.p_uwb_stack_data_cback = NULL;
-  phNxpUciHal_cleanup_monitor();
-  nxpucihal_ctrl.halStatus = HAL_STATUS_CLOSE;
-  return wConfigStatus;
 }
 
 /******************************************************************************
@@ -1016,25 +1004,6 @@ tHAL_UWB_STATUS phNxpUciHal_coreInitialization()
   report_uci_message(dev_ready_ntf, sizeof(dev_ready_ntf));
 
   return UWBSTATUS_SUCCESS;
-}
-
-/******************************************************************************
- * Function         phNxpUciHal_sessionInitialization
- *
- * Description      This function performs session initialization
- *
- * Returns          status
- *
- ******************************************************************************/
-tHAL_UWB_STATUS phNxpUciHal_sessionInitialization(uint32_t sessionId) {
-  NXPLOG_UCIHAL_D(" %s: Enter", __func__);
-  tHAL_UWB_STATUS status = UWBSTATUS_SUCCESS;
-
-  if (nxpucihal_ctrl.halStatus != HAL_STATUS_OPEN) {
-    NXPLOG_UCIHAL_E("HAL not initialized");
-    return UWBSTATUS_FAILED;
-  }
-  return status;
 }
 
 /******************************************************************************
