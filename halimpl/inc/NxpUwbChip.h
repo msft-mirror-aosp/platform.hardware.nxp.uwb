@@ -74,6 +74,10 @@ public:
 
   // Get supported channels
   virtual tHAL_UWB_STATUS get_supported_channels(const uint8_t **cal_channels, uint8_t *nr) = 0;
+
+  // Suspend/Resume, this is called only when configuration file has AUTO_SUSPEND_ENABLED=1.
+  virtual void suspend() {}
+  virtual void resume() {}
 };
 
 std::unique_ptr<NxpUwbChip> GetUwbChip();

@@ -329,6 +329,9 @@ public:
   tHAL_UWB_STATUS apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len);
   tHAL_UWB_STATUS get_supported_channels(const uint8_t **cal_channels, uint8_t *nr);
 
+  void suspend() override;
+  void resume() override;
+
 private:
   tHAL_UWB_STATUS check_binding();
   bool onDeviceStatusNtf(size_t packet_len, const uint8_t* packet);
@@ -580,6 +583,16 @@ NxpUwbChipHbciModule::get_supported_channels(const uint8_t **cal_channels, uint8
   *cal_channels = sr100_cal_channels;
   *nr = std::size(sr100_cal_channels);
   return UWBSTATUS_SUCCESS;
+}
+
+void NxpUwbChipHbciModule::suspend()
+{
+  phTmlUwb_Suspend();
+}
+
+void NxpUwbChipHbciModule::resume()
+{
+  phTmlUwb_Resume();
 }
 
 std::unique_ptr<NxpUwbChip> GetUwbChip()
