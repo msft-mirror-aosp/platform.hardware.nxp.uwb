@@ -42,6 +42,5 @@ uint16_t phNxpUciHal_open(uwb_stack_callback_t* p_cback,
 int32_t phNxpUciHal_write(size_t data_len, const uint8_t* p_data);
 uint16_t phNxpUciHal_close();
 uint16_t phNxpUciHal_coreInitialization();
-uint16_t phNxpUciHal_sessionInitialization(uint32_t sessionId);
 
 #endif /* _PHNXPUCIHAL_ADAPTATION_H_ */
