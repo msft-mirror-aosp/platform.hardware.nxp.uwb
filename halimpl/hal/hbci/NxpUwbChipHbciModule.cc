@@ -1,3 +1,5 @@
+#include <optional>
+#include <string_view>
 #include <vector>
 
 #include "NxpUwbChip.h"
@@ -271,20 +273,17 @@ exit_check_binding_status:
 static int16_t sr1xx_extra_group_delay(const uint8_t ch)
 {
   int16_t required_compensation = 0;
-  char calibrated_with_fw[15] = {0};
 
   /* Calibrated with D4X and we are on D5X or later */
   bool is_calibrated_with_d4x = false;
 
-  int has_calibrated_with_fw_config = NxpConfig_GetStr(
-      "cal.fw_version", calibrated_with_fw, sizeof(calibrated_with_fw) - 1);
+  std::optional<std::string_view> res = NxpConfig_GetStr("cal.fw_version");
 
-  if (has_calibrated_with_fw_config) {
+  if (res.has_value()) {
+    std::string_view fw_version = *res;
     // Conf file has entry of `cal.fw_version`
-    if ( ( 0 == memcmp("48.", calibrated_with_fw, 3)) ||
-         ( 0 == memcmp("49.", calibrated_with_fw, 3))) {
-      is_calibrated_with_d4x = true;
-    }
+    is_calibrated_with_d4x =
+      fw_version.starts_with("48.") || fw_version.starts_with("49.");
   }
   else
   {
@@ -303,15 +302,10 @@ static int16_t sr1xx_extra_group_delay(const uint8_t ch)
 
     // Calibrated with D49
     // Required extra negative offset, Channel specific, but antenna agnostic.
-    unsigned short cal_chx_extra_d49_offset_n = 0;
     char key[32];
     std::snprintf(key, sizeof(key), "cal.ch%u.extra_d49_offset_n", ch);
-    int has_extra_d49_offset_n = NxpConfig_GetNum(
-      key, &cal_chx_extra_d49_offset_n, sizeof(cal_chx_extra_d49_offset_n));
-
-    if (has_extra_d49_offset_n) { /*< Extra correction from conf file ... */
-      required_compensation -= cal_chx_extra_d49_offset_n;
-    }
+    uint16_t cal_chx_extra_d49_offset_n = NxpConfig_GetNum<uint16_t>(key).value_or(0);
+    required_compensation -= cal_chx_extra_d49_offset_n;
   }
   else
   {
@@ -334,6 +328,9 @@ public:
   tHAL_UWB_STATUS read_otp(extcal_param_id_t id, uint8_t *data, size_t data_len, size_t *retlen);
   tHAL_UWB_STATUS apply_calibration(extcal_param_id_t id, const uint8_t ch, const uint8_t *data, size_t data_len);
   tHAL_UWB_STATUS get_supported_channels(const uint8_t **cal_channels, uint8_t *nr);
+
+  void suspend() override;
+  void resume() override;
 
 private:
   tHAL_UWB_STATUS check_binding();
@@ -408,9 +405,8 @@ tHAL_UWB_STATUS NxpUwbChipHbciModule::check_binding()
       return UWBSTATUS_SUCCESS;
   }
 
-  unsigned long val = 0;
-  NxpConfig_GetNum(NAME_UWB_BINDING_LOCKING_ALLOWED, &val, sizeof(val));
-  bool isBindingLockingAllowed = (val != 0);
+  bool isBindingLockingAllowed =
+    NxpConfig_GetBool(NAME_UWB_BINDING_LOCKING_ALLOWED).value_or(false);
   if (!isBindingLockingAllowed) {
     return UWBSTATUS_SUCCESS;
   }
@@ -587,6 +583,16 @@ NxpUwbChipHbciModule::get_supported_channels(const uint8_t **cal_channels, uint8
   *cal_channels = sr100_cal_channels;
   *nr = std::size(sr100_cal_channels);
   return UWBSTATUS_SUCCESS;
+}
+
+void NxpUwbChipHbciModule::suspend()
+{
+  phTmlUwb_Suspend();
+}
+
+void NxpUwbChipHbciModule::resume()
+{
+  phTmlUwb_Resume();
 }
 
 std::unique_ptr<NxpUwbChip> GetUwbChip()
