@@ -137,6 +137,36 @@ static void phNxpUciHal_rx_handler_destroy(void)
   rx_handlers.clear();
 }
 
+
+bool  nxp_properitory_ntf_skip_cb(size_t data_len, const uint8_t *p_data) {
+  bool is_handled = false;
+  const uint8_t mt = (p_data[0] & UCI_MT_MASK) >> UCI_MT_SHIFT;
+  const uint8_t gid = p_data[0] & UCI_GID_MASK;
+  const uint8_t oid = p_data[1] & UCI_OID_MASK;
+  if (mt == UCI_MT_NTF) { // must be true.
+    if (gid == UCI_GID_PROPRIETARY
+      && oid == EXT_UCI_PROP_GEN_DEBUG_NTF_0x18
+      && data_len == 9
+      && p_data[4] == 0x07
+      && p_data[5] == 0x29
+      && p_data[6] == 0x01
+    ) {
+      //  0  1  2  3  4  5  6  7  8
+      // 6E 18 00 05 07 29 01 00 64.
+      // b/381330041
+      NXPLOG_UCIHAL_D("%s: Skip 6E180015072901.... packet", __FUNCTION__);
+      is_handled = true;
+    }
+  }
+  else
+  {
+    // Not possible. We registered only for NTF
+    NXPLOG_UCIHAL_E("%s: Wrong MT: %d", __FUNCTION__, mt);
+  }
+  return is_handled;
+};
+
+
 /******************************************************************************
  * Function         phNxpUciHal_client_thread
  *
@@ -340,22 +370,14 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_c
   phNxpUciHal_rx_handler_add(UCI_MT_RSP, UCI_GID_CORE, UCI_MSG_CORE_GET_CAPS_INFO,
     false, phNxpUciHal_handle_get_caps_info);
 
+
+  phNxpUciHal_rx_handler_add(UCI_MT_NTF, UCI_GID_PROPRIETARY, EXT_UCI_PROP_GEN_DEBUG_NTF_0x18, false,
+                                      nxp_properitory_ntf_skip_cb);
+
   /* Call open complete */
   nxpucihal_ctrl.pClientMq->send(std::make_shared<phLibUwb_Message>(UCI_HAL_OPEN_CPLT_MSG));
 
   return UWBSTATUS_SUCCESS;
-
-clean_and_return:
-  CONCURRENCY_UNLOCK();
-
-  /* Report error status */
-  (*nxpucihal_ctrl.p_uwb_stack_cback)(HAL_UWB_OPEN_CPLT_EVT, HAL_UWB_ERROR_EVT);
-
-  nxpucihal_ctrl.p_uwb_stack_cback = NULL;
-  nxpucihal_ctrl.p_uwb_stack_data_cback = NULL;
-  phNxpUciHal_cleanup_monitor();
-  nxpucihal_ctrl.halStatus = HAL_STATUS_CLOSE;
-  return wConfigStatus;
 }
 
 /******************************************************************************
@@ -982,25 +1004,6 @@ tHAL_UWB_STATUS phNxpUciHal_coreInitialization()
   report_uci_message(dev_ready_ntf, sizeof(dev_ready_ntf));
 
   return UWBSTATUS_SUCCESS;
-}
-
-/******************************************************************************
- * Function         phNxpUciHal_sessionInitialization
- *
- * Description      This function performs session initialization
- *
- * Returns          status
- *
- ******************************************************************************/
-tHAL_UWB_STATUS phNxpUciHal_sessionInitialization(uint32_t sessionId) {
-  NXPLOG_UCIHAL_D(" %s: Enter", __func__);
-  tHAL_UWB_STATUS status = UWBSTATUS_SUCCESS;
-
-  if (nxpucihal_ctrl.halStatus != HAL_STATUS_OPEN) {
-    NXPLOG_UCIHAL_E("HAL not initialized");
-    return UWBSTATUS_FAILED;
-  }
-  return status;
 }
 
 /******************************************************************************

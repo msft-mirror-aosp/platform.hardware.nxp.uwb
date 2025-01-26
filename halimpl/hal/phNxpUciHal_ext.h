@@ -35,6 +35,8 @@
 #define UCI_EXT_PARAM_TX_PULSE_SHAPE_CONFIG    0x28
 #define UCI_EXT_PARAM_CLK_CONFIG_CTRL          0x30
 
+#define EXT_UCI_PROP_GEN_DEBUG_NTF_0x18        0x18
+
 #define UCI_PARAM_ID_LOW_POWER_MODE            0x01
 
 /* customer specific calib params */
