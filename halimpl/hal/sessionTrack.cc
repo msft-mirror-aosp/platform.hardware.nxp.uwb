@@ -1,6 +1,8 @@
 #include <bit>
 #include <mutex>
 #include <random>
+#include <optional>
+#include <span>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -109,7 +111,7 @@ private:
   bool calibration_delayed_;
   std::atomic<PowerState> power_state_;
   bool idle_timer_started_;
-  unsigned long idle_timeout_ms_;
+  uint32_t idle_timeout_ms_;
   bool override_sts_index_for_ccc_;
 
   std::thread worker_thread_;
@@ -119,34 +121,27 @@ private:
 
 public:
   SessionTrack() :
-    auto_suspend_enabled_(false),
-    delete_ursk_ccc_enabled_(false),
-    calibration_delayed_(false),
-    power_state_(PowerState::IDLE),
-    idle_timer_started_(false),
-    idle_timeout_ms_(kAutoSuspendTimeoutDefaultMs_),
-    override_sts_index_for_ccc_(true)
-  {
+      calibration_delayed_(false),
+      power_state_(PowerState::IDLE),
+      idle_timer_started_(false)  {
     sessions_.clear();
 
     msgq_ = std::make_unique<MessageQueue<SessionTrackMsg>>("SessionTrack");
     worker_thread_ = std::thread(&SessionTrack::PowerManagerWorker, this);
 
-    unsigned long numval = 0;
-
-    if (NxpConfig_GetNum(NAME_DELETE_URSK_FOR_CCC_SESSION, &numval, sizeof(numval)) && numval) {
-      delete_ursk_ccc_enabled_ = true;
-    }
+    delete_ursk_ccc_enabled_ =
+      NxpConfig_GetBool(NAME_DELETE_URSK_FOR_CCC_SESSION).value_or(false);
 
     // Default on
-    if (NxpConfig_GetNum(NAME_OVERRIDE_STS_INDEX_FOR_CCC_SESSION, &numval, sizeof(numval)) && !numval) {
-      override_sts_index_for_ccc_ = false;
-    }
+    override_sts_index_for_ccc_ =
+      NxpConfig_GetBool(NAME_OVERRIDE_STS_INDEX_FOR_CCC_SESSION).value_or(true);
 
-    if (NxpConfig_GetNum(NAME_AUTO_SUSPEND_ENABLE, &numval, sizeof(numval)) && numval) {
-      auto_suspend_enabled_ = true;
+    auto_suspend_enabled_ =
+      NxpConfig_GetBool(NAME_AUTO_SUSPEND_ENABLE).value_or(false);
 
-      NxpConfig_GetNum(NAME_AUTO_SUSPEND_TIMEOUT_MS, &idle_timeout_ms_, sizeof(idle_timeout_ms_));
+    if (auto_suspend_enabled_) {
+      idle_timeout_ms_ = NxpConfig_GetNum<uint32_t>(
+        NAME_AUTO_SUSPEND_TIMEOUT_MS).value_or(kAutoSuspendTimeoutDefaultMs_);
 
       // Idle timer is only activated when AUTO_SUSPEND_ENABLED=1
       // device suspend won't be triggered when it's not activated.
@@ -567,7 +562,7 @@ private:
     if (!auto_suspend_enabled_)
       return;
 
-    NXPLOG_UCIHAL_D("SessionTrack: refresh idle timer, %lums", idle_timeout_ms_);
+    NXPLOG_UCIHAL_D("SessionTrack: refresh idle timer, %ums", idle_timeout_ms_);
     if (idle_timer_started_) {
       if (phOsalUwb_Timer_Stop(idle_timer_) != UWBSTATUS_SUCCESS) {
         NXPLOG_UCIHAL_E("SessionTrack: idle timer stop failed");
@@ -608,7 +603,7 @@ private:
       case SessionTrackWorkType::REFRESH_IDLE:
         if (power_state_ == PowerState::SUSPEND) {
           NXPLOG_UCIHAL_D("SessionTrack: resume");
-          phTmlUwb_Resume();
+          phNxpUciHal_hw_resume();
           power_state_ = PowerState::IDLE;
         }
         if (power_state_ == PowerState::IDLE) {
@@ -618,7 +613,7 @@ private:
       case SessionTrackWorkType::ACTIVATE:
         if (power_state_ == PowerState::SUSPEND) {
           NXPLOG_UCIHAL_E("SessionTrack: activated while in suspend!");
-          phTmlUwb_Resume();
+          phNxpUciHal_hw_resume();
         }
         PowerIdleTimerStop();
         power_state_ = PowerState::ACTIVE;
@@ -627,7 +622,7 @@ private:
         if (power_state_ == PowerState::IDLE) {
           NXPLOG_UCIHAL_D("SessionTrack: idle timer expired, go suspend");
           power_state_ = PowerState::SUSPEND;
-          phTmlUwb_Suspend();
+          phNxpUciHal_hw_suspend();
         } else {
           NXPLOG_UCIHAL_E("SessionTrack: idle timer expired while in %d",
             static_cast<int>(power_state_.load()));

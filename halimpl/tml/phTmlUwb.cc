@@ -22,8 +22,6 @@
 #include <phNxpUciHal.h>
 #include <errno.h>
 
-extern phNxpUciHal_Control_t nxpucihal_ctrl;
-
 /*
  * Duration of Timer to wait after sending an Uci packet
  */
@@ -103,6 +101,8 @@ static void phTmlUwb_WaitWriteComplete(void);
 static void phTmlUwb_SignalWriteComplete(void);
 static int phTmlUwb_WaitReadInit(void);
 
+static void phTmlUwb_DeferredCall(std::shared_ptr<phLibUwb_Message> msg);
+
 /* Function definitions */
 
 /*******************************************************************************
@@ -166,7 +166,7 @@ tHAL_UWB_STATUS phTmlUwb_Init(const char* pDevName,
     return UWBSTATUS_FAILED;
   }
 
-  // Start TML thread (to handle write and read operations)
+  // Start TML writer thread.
   if (UWBSTATUS_SUCCESS != phTmlUwb_StartWriterThread()) {
     return PHUWBSTVAL(CID_UWB_TML, UWBSTATUS_FAILED);
   }
@@ -672,7 +672,7 @@ static void phTmlUwb_StopWriterThread(void)
 ** Returns          None
 **
 *******************************************************************************/
-void phTmlUwb_DeferredCall(std::shared_ptr<phLibUwb_Message> msg)
+static void phTmlUwb_DeferredCall(std::shared_ptr<phLibUwb_Message> msg)
 {
   gpphTmlUwb_Context->pClientMq->send(msg);
 }

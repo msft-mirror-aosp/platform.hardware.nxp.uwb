@@ -110,7 +110,6 @@ void onServiceDied(void *cookie) {
 
 ::ndk::ScopedAStatus UwbChip::sessionInit(int32_t sessionId) {
       LOG(INFO) << "AIDL-SessionInitialization Enter";
-      phNxpUciHal_sessionInitialization(sessionId);
       return ndk::ScopedAStatus::ok();
 }
 }  // namespace impl
