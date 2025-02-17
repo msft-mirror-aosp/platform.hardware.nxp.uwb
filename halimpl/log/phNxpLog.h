@@ -17,6 +17,7 @@
 #if !defined(NXPLOG__H_INCLUDED)
 #define NXPLOG__H_INCLUDED
 #include <log/log.h>
+#include <thread>
 
 typedef struct uci_log_level {
   uint8_t global_log_level;
@@ -28,8 +29,24 @@ typedef struct uci_log_level {
   uint8_t ucir_log_level;
 } uci_log_level_t;
 
+typedef struct {
+  std::thread log_thread_handler;
+  FILE *FwCrashLogFile;
+} phNxpUciHalLog_Control_t;
+
+typedef struct uci_debug_log_file {
+  FILE *debuglogFile;
+  bool is_log_file_required;
+  uint32_t fileSize;
+  bool init_sequence_started;
+} uci_debug_log_file_t;
+
 /* global log level Ref */
 extern uci_log_level_t gLog_level;
+extern uci_debug_log_file_t gLogFile;
+
+void phNxpLog_printErrorLogsTime(const char *format, ...);
+
 /* define log module included when compile */
 #define ENABLE_EXTNS_TRACES TRUE
 #define ENABLE_HAL_TRACES TRUE
@@ -146,10 +163,11 @@ extern const char* NXPLOG_ITEM_HCPR; /* Android logging tag for NxpHcpR   */
     if ((gLog_level.hal_log_level >= NXPLOG_LOG_WARN_LOGLEVEL))   \
       LOG_PRI(ANDROID_LOG_WARN, NXPLOG_ITEM_UCIHAL, __VA_ARGS__); \
   }
-#define NXPLOG_UCIHAL_E(...)                                       \
-  {                                                                \
-    if (gLog_level.hal_log_level >= NXPLOG_LOG_ERROR_LOGLEVEL)     \
-      LOG_PRI(ANDROID_LOG_ERROR, NXPLOG_ITEM_UCIHAL, __VA_ARGS__); \
+#define NXPLOG_UCIHAL_E(...)                                                   \
+  {                                                                            \
+    if (gLog_level.hal_log_level >= NXPLOG_LOG_ERROR_LOGLEVEL)                 \
+      LOG_PRI(ANDROID_LOG_ERROR, NXPLOG_ITEM_UCIHAL, __VA_ARGS__);             \
+    phNxpLog_printErrorLogsTime(__VA_ARGS__);                                  \
   }
 #else
 #define NXPLOG_UCIHAL_V(...)
@@ -359,5 +377,12 @@ extern const char* NXPLOG_ITEM_HCPR; /* Android logging tag for NxpHcpR   */
 #endif /* NXP_VRBS_REQ */
 
 void phNxpLog_InitializeLogLevel(void);
+/* Log functions */
+void phNxpUciHalProp_trigger_fw_crash_log_dump();
+bool phNxpUciHal_dump_log(size_t data_len, const uint8_t *p_rx_data);
+void phNxpUciLog_initialize();
+void phNxpUciLog_deinitialize();
+void phNxpUciHalProp_print_log(uint8_t what, const uint8_t *p_data,
+                               uint16_t len);
 
 #endif /* NXPLOG__H_INCLUDED */
