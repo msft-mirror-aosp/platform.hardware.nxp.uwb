@@ -1,7 +1,7 @@
 /******************************************************************************
  *
  *  Copyright (C) 2011-2012 Broadcom Corporation
- *  Copyright 2018-2019, 2023 NXP
+ *  Copyright 2018-2019, 2023-2025 NXP
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -106,6 +106,7 @@ std::vector<std::string> NxpConfig_GetStrArray(std::string_view key, bool includ
 #define NAME_AUTO_SUSPEND_TIMEOUT_MS    "AUTO_SUSPEND_TIMEOUT_MS"
 
 #define NAME_DELETE_URSK_FOR_CCC_SESSION    "DELETE_URSK_FOR_CCC_SESSION"
+#define NAME_DELETE_URSK_FOR_ALIRO_SESSION    "DELETE_URSK_FOR_ALIRO_SESSION"
 
 /* In case the HAL has to set STS index for CCC */
 #define NAME_OVERRIDE_STS_INDEX_FOR_CCC_SESSION    "OVERRIDE_STS_INDEX_FOR_CCC_SESSION"
