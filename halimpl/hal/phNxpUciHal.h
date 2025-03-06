@@ -276,6 +276,9 @@ typedef struct phNxpUciHal_Control {
   uint8_t cal_rx_antenna_mask;
   uint8_t cal_tx_antenna_mask;
 
+  bool_t recovery_ongoing;
+  bool_t uwb_device_initialized;
+
   // Current country code
   uint8_t country_code[2];
 } phNxpUciHal_Control_t;
