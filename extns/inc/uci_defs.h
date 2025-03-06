@@ -29,6 +29,7 @@
 #define UCI_MSG_HDR_SIZE 4 /* per UCI spec */
 #define UCI_RESPONSE_STATUS_OFFSET 4
 #define UCI_CMD_SESSION_ID_OFFSET 4
+#define UCI_RESPONSE_PAYLOAD_OFFSET 5
 
 /* UCI Command and Notification Format:
  * 4 byte message header:
@@ -187,6 +188,7 @@ constexpr uint8_t kSessionType_CCCRanging = 0xA0;
 #define UCI_STATUS_BUFFER_UNDERFLOW 0x58
 #define UCI_STATUS_LOW_VBAT 0x59
 #define UCI_STATUS_HW_RESET 0xFE
+#define UWBS_STATUS_ERROR 0xFF /* error occurred in UWBS*/
 
 /* Status code for feature not supported */
 #define UCI_STATUS_FEATURE_NOT_SUPPORTED 0x55
