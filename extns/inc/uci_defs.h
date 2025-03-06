@@ -1,5 +1,5 @@
 /*
- * Copyright 2018-2024 NXP
+ * Copyright 2018-2025 NXP
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -117,6 +117,7 @@
 constexpr uint8_t kSessionType_Ranging = 0x00;
 constexpr uint8_t kSessionType_RangingAndData = 0x01;
 constexpr uint8_t kSessionType_CCCRanging = 0xA0;
+constexpr uint8_t kSessionType_AliroRanging = 0xA2;
 
 /*********************************************************
  * UCI session config Group-2: Opcodes and size of command
