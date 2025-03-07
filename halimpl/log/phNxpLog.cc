@@ -31,9 +31,11 @@ const char* NXPLOG_ITEM_UCIX = "NxpUciX";
 const char* NXPLOG_ITEM_UCIR = "NxpUciR";
 const char* NXPLOG_ITEM_FWDNLD = "NxpFwDnld";
 const char* NXPLOG_ITEM_TML = "NxpUwbTml";
+const char *NXP_HAL_ERROR = "NxpHalE";
 
 /* global log level structure */
 uci_log_level_t gLog_level;
+uci_debug_log_file_t gLogFile;
 
 namespace {
 
@@ -110,6 +112,16 @@ void phNxpLog_SetUciTxLogLevel(uint8_t level) {
   gLog_level.ucir_log_level = std::max(level, conf_level_r);
 }
 
+void phNxpLog_EnableDebugLogFile() {
+  gLogFile.is_log_file_required =
+      NxpConfig_GetBool(NAME_UWB_UCIX_UCIR_ERROR_LOG).value_or(false);
+}
+
+void phNxpLog_MaxFileSize() {
+  gLogFile.fileSize =
+      NxpConfig_GetNum<uint32_t>(NAME_UWB_DEBUG_LOG_FILE_SIZE).value_or(0);
+}
+
 }   // namespace
 
 /******************************************************************************
@@ -152,6 +164,8 @@ void phNxpLog_InitializeLogLevel(void) {
   phNxpLog_SetTmlLogLevel(level);
   phNxpLog_SetDnldLogLevel(level);
   phNxpLog_SetUciTxLogLevel(level);
+  phNxpLog_EnableDebugLogFile();
+  phNxpLog_MaxFileSize();
 
   ALOGV("%s: global =%u, Fwdnld =%u, extns =%u, \
                 hal =%u, tml =%u, ucir =%u, \
@@ -160,4 +174,31 @@ void phNxpLog_InitializeLogLevel(void) {
            gLog_level.extns_log_level, gLog_level.hal_log_level,
            gLog_level.tml_log_level, gLog_level.ucir_log_level,
            gLog_level.ucix_log_level);
+}
+
+void phNxpLog_printErrorLogsTime(const char *format, ...) {
+  char yy_time[20] = "";
+  time_t current_time = time(0);
+  tm *dd_mm_tm = localtime(&current_time);
+  if (gLogFile.is_log_file_required && gLogFile.debuglogFile != NULL) {
+    if ((ftell(gLogFile.debuglogFile) + strlen(yy_time) +
+         strlen(NXP_HAL_ERROR) + 100) > gLogFile.fileSize) {
+      if (fseek(gLogFile.debuglogFile, 9L, SEEK_SET)) {
+        NXPLOG_UCIHAL_E("phNxpUciHalProp_print_log: fseek() failed at %d",
+                        __LINE__);
+        return;
+      }
+      if (ftell(gLogFile.debuglogFile) > gLogFile.fileSize) {
+        return;
+      }
+    }
+
+    strftime(yy_time, sizeof(yy_time), "%x %T", dd_mm_tm);
+    fprintf(gLogFile.debuglogFile, "\n%s %s:", yy_time, NXP_HAL_ERROR);
+    va_list arg;
+    va_start(arg, format);
+    // fprintf (stdout, format, arg);
+    vfprintf(gLogFile.debuglogFile, format, arg);
+    va_end(arg);
+  }
 }
