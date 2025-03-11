@@ -166,6 +166,23 @@ bool  nxp_properitory_ntf_skip_cb(size_t data_len, const uint8_t *p_data) {
   return is_handled;
 };
 
+bool phNxpUciHal_handle_dev_error_ntf(size_t packet_len,
+                                      const uint8_t *packet) {
+  if (packet_len > UCI_RESPONSE_STATUS_OFFSET) {
+    if (UWBS_STATUS_ERROR == packet[UCI_RESPONSE_STATUS_OFFSET]) {
+      if (nxpucihal_ctrl.recovery_ongoing == true) {
+        NXPLOG_UCIHAL_D("Fw crashed during recovery, ignore packet");
+      } else {
+        nxpucihal_ctrl.recovery_ongoing = true;
+        phNxpUciHalProp_trigger_fw_crash_log_dump();
+      }
+      return true;
+    }
+  } else {
+    NXPLOG_UCIHAL_E("[%s] Invalid packet length: %d", __func__, packet_len);
+  }
+  return false;
+}
 
 /******************************************************************************
  * Function         phNxpUciHal_client_thread
@@ -329,6 +346,7 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_c
 
   /* initialize trace level */
   phNxpLog_InitializeLogLevel();
+  phNxpUciLog_initialize();
 
   /*Create the timer for extns write response*/
   timeoutTimerId = phOsalUwb_Timer_Create();
@@ -373,6 +391,10 @@ tHAL_UWB_STATUS phNxpUciHal_open(uwb_stack_callback_t* p_cback, uwb_stack_data_c
 
   phNxpUciHal_rx_handler_add(UCI_MT_NTF, UCI_GID_PROPRIETARY, EXT_UCI_PROP_GEN_DEBUG_NTF_0x18, false,
                                       nxp_properitory_ntf_skip_cb);
+
+  phNxpUciHal_rx_handler_add(UCI_MT_NTF, UCI_GID_CORE,
+                             UCI_MSG_CORE_DEVICE_STATUS_NTF, false,
+                             phNxpUciHal_handle_dev_error_ntf);
 
   /* Call open complete */
   nxpucihal_ctrl.pClientMq->send(std::make_shared<phLibUwb_Message>(UCI_HAL_OPEN_CPLT_MSG));
@@ -515,7 +537,7 @@ static void handle_rx_packet(uint8_t *buffer, size_t length)
     }
     // End of UCI_MT_NTF
   } else if (mt == UCI_MT_RSP) {
-    if (nxpucihal_ctrl.hal_ext_enabled) {
+    if (nxpucihal_ctrl.hal_ext_enabled && !isSkipPacket) {
       isSkipPacket = true;
 
       if (pbf) {
@@ -645,6 +667,8 @@ tHAL_UWB_STATUS phNxpUciHal_close() {
   phNxpUciHal_cleanup_monitor();
 
   NxpConfig_Deinit();
+
+  phNxpUciLog_deinitialize();
 
   NXPLOG_UCIHAL_D("phNxpUciHal_close completed");
 
@@ -878,6 +902,7 @@ tHAL_UWB_STATUS phNxpUciHal_hw_init()
     NXPLOG_UCIHAL_E("HAL not initialized");
     return UWBSTATUS_FAILED;
   }
+  nxpucihal_ctrl.uwb_device_initialized = false;
 
   // Initiates TML.
   status = phTmlUwb_Init(uwb_dev_node, nxpucihal_ctrl.pClientMq);
@@ -958,6 +983,8 @@ tHAL_UWB_STATUS phNxpUciHal_hw_init()
     return status;
   }
   phNxpUciHal_extcal_handle_coreinit();
+  nxpucihal_ctrl.uwb_device_initialized = true;
+  nxpucihal_ctrl.recovery_ongoing = false;
 
   phNxpUciHal_getVersionInfo();
 

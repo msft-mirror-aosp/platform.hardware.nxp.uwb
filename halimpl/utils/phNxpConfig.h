@@ -1,7 +1,7 @@
 /******************************************************************************
  *
  *  Copyright (C) 2011-2012 Broadcom Corporation
- *  Copyright 2018-2019, 2023 NXP
+ *  Copyright 2018-2019, 2023-2025 NXP
  *
  *  Licensed under the Apache License, Version 2.0 (the "License");
  *  you may not use this file except in compliance with the License.
@@ -76,6 +76,8 @@ std::vector<std::string> NxpConfig_GetStrArray(std::string_view key, bool includ
 #define NAME_UWB_CORE_EXT_DEVICE_SR1XX_S_CONFIG "UWB_CORE_EXT_DEVICE_SR1XX_S_CONFIG"
 #define NAME_COUNTRY_CODE_CAP_FILE_LOCATION "COUNTRY_CODE_CAP_FILE_LOCATION"
 #define NAME_UWB_VENDOR_CAPABILITY "UWB_VENDOR_CAPABILITY"
+#define NAME_UWB_UCIX_UCIR_ERROR_LOG "UWB_UCIX_UCIR_ERROR_LOG"
+#define NAME_UWB_DEBUG_LOG_FILE_SIZE "UWB_DEBUG_LOG_FILE_SIZE"
 
 #define NAME_UWB_BINDING_LOCKING_ALLOWED "UWB_BINDING_LOCKING_ALLOWED"
 #define NAME_NXP_UWB_PROD_FW_FILENAME "NXP_UWB_PROD_FW_FILENAME"
@@ -104,6 +106,7 @@ std::vector<std::string> NxpConfig_GetStrArray(std::string_view key, bool includ
 #define NAME_AUTO_SUSPEND_TIMEOUT_MS    "AUTO_SUSPEND_TIMEOUT_MS"
 
 #define NAME_DELETE_URSK_FOR_CCC_SESSION    "DELETE_URSK_FOR_CCC_SESSION"
+#define NAME_DELETE_URSK_FOR_ALIRO_SESSION    "DELETE_URSK_FOR_ALIRO_SESSION"
 
 /* In case the HAL has to set STS index for CCC */
 #define NAME_OVERRIDE_STS_INDEX_FOR_CCC_SESSION    "OVERRIDE_STS_INDEX_FOR_CCC_SESSION"
