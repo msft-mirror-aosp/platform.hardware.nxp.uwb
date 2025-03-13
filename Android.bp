@@ -82,11 +82,6 @@ cc_library_shared {
         "halimpl/utils",
         "extns/inc",
     ],
-    required: [
-        "libuwb-uci.conf",
-        "libuwb-nxp.conf",
-        "libuwb-countrycode.conf",
-    ],
     cflags: [
         "-DGENERIC",
         "-DBUILDCFG=1",
