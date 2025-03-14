@@ -668,38 +668,38 @@ CascadeConfig::CascadeConfig()
 
 bool CascadeConfig::evaluateExtraConfPaths()
 {
-    bool updated = false;
+    int nr_updated = 0;
 
     for (auto& [filename, config] : mExtraConfig) {
         std::string new_filename(filename);
 
-        auto posSku = filename.find(sku_specifier);
+        auto posSku = new_filename.find(sku_specifier);
         if (posSku != std::string::npos && !mExtraConfSpecifiers.mCurSku.empty()) {
             new_filename.replace(posSku, sku_specifier.length(), mExtraConfSpecifiers.mCurSku);
         }
 
-        auto posExtid = filename.find(extid_specifier);
+        auto posExtid = new_filename.find(extid_specifier);
         if (posExtid != std::string::npos && !mExtraConfSpecifiers.mCurExtid.empty()) {
             new_filename.replace(posExtid, extid_specifier.length(), mExtraConfSpecifiers.mCurExtid);
         }
 
-        auto posCountry = filename.find(country_code_specifier);
+        auto posCountry = new_filename.find(country_code_specifier);
         if (posCountry != std::string::npos && !mExtraConfSpecifiers.mCurRegionCode.empty()) {
             new_filename.replace(posCountry, country_code_specifier.length(), mExtraConfSpecifiers.mCurRegionCode);
         }
 
-        auto posRevision = filename.find(revision_specifier);
+        auto posRevision = new_filename.find(revision_specifier);
         if (posRevision != std::string::npos && !mExtraConfSpecifiers.mCurRevision.empty()) {
             new_filename.replace(posRevision, revision_specifier.length(), mExtraConfSpecifiers.mCurRevision);
         }
-
         // re-open the file if filepath got re-evaluated.
         if (new_filename != config.getFilePath()) {
             config = CUwbNxpConfig(new_filename.c_str());
-            updated = true;
+            ++nr_updated;
         }
     }
-    return updated;
+    ALOGI("%d new configuration files found.", nr_updated);
+    return (nr_updated > 0);
 }
 
 void CascadeConfig::init(std::string_view main_config)
