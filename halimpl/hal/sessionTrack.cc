@@ -28,10 +28,12 @@ extern phNxpUciHal_Control_t nxpucihal_ctrl;
 //
 // 2. Issue URSK_DELETE_CMD on SESSION_DEINIT_RSP (optional/experimental)
 //
-// Calls URSK_DELETE_CMD for every CCC session closing,
-// for the cases where CCC session ID was created but not started.
-// (This is only activated when DELETE_URSK_FOR_CCC_SESSION=1 is set
-// from config)
+// Calls URSK_DELETE_CMD for every aliro or CCC session closing,
+// for the cases where aliro or CCC session ID was created but not started.
+// This behavior is controlled via configuration flags:
+// - DELETE_URSK_FOR_CCC_SESSION=1
+// - DELETE_URSK_FOR_ALIRO_SESSION=1
+// If enabled, the command will be issued accordingly.
 //
 // 3. Call suspend to kernel driver on idle (optional/experimental)
 //
@@ -108,6 +110,7 @@ private:
 
   bool auto_suspend_enabled_;
   bool delete_ursk_ccc_enabled_;
+  bool delete_ursk_aliro_enabled_;
   bool calibration_delayed_;
   std::atomic<PowerState> power_state_;
   bool idle_timer_started_;
@@ -130,7 +133,10 @@ public:
     worker_thread_ = std::thread(&SessionTrack::PowerManagerWorker, this);
 
     delete_ursk_ccc_enabled_ =
-      NxpConfig_GetBool(NAME_DELETE_URSK_FOR_CCC_SESSION).value_or(false);
+        NxpConfig_GetBool(NAME_DELETE_URSK_FOR_CCC_SESSION).value_or(false);
+
+    delete_ursk_aliro_enabled_ =
+        NxpConfig_GetBool(NAME_DELETE_URSK_FOR_ALIRO_SESSION).value_or(false);
 
     // Default on
     override_sts_index_for_ccc_ =
@@ -526,11 +532,14 @@ private:
     pSessionInfo->session_state_ = session_state;
 
     if (session_state == UCI_MSG_SESSION_STATE_DEINIT) {
-      if (delete_ursk_ccc_enabled_ &&
-          pSessionInfo->session_type_ == kSessionType_CCCRanging) {
+      if ((delete_ursk_ccc_enabled_ &&
+          pSessionInfo->session_type_ == kSessionType_CCCRanging)
+          || (delete_ursk_aliro_enabled_ &&
+            pSessionInfo->session_type_ == kSessionType_AliroRanging)) {
 
-        // If this CCC ranging session, issue DELETE_URSK_CMD for this session.
-        // This is executed on client thread, we shouldn't block the execution of this thread.
+        // If CCC or Aliro ranging session, issue DELETE_URSK_CMD for this
+        // session. This is executed on client thread, we shouldn't block the
+        // execution of this thread.
         QueueDeleteUrsk(pSessionInfo);
       }
       RemoveSession(session_handle);

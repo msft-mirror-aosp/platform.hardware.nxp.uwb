@@ -285,6 +285,8 @@ void phNxpUciHal_print_packet(enum phNxpUciHal_Pkt_Type what, const uint8_t* p_d
     break;
   }
 
+  phNxpUciHalProp_print_log(what, p_data, len);
+
   return;
 }
 
